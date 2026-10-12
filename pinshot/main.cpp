@@ -22,6 +22,14 @@
 #include <QAbstractTextDocumentLayout>
 #include <QtMath>
 #include <QToolButton>
+#include <QComboBox>
+#include <QFontDatabase>
+#include <QSlider>
+#include <QVBoxLayout>
+#include <QDialog>
+#include <QRegularExpression>
+#include <QDoubleValidator>
+#include <QLineEdit>
 #include <QPainterPath>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -34,6 +42,7 @@
 #include <QAbstractNativeEventFilter>
 #include <QTimer>
 #include <QFontMetrics>
+#include <QFontInfo>
 #include <QMimeData>
 #include <QEventLoop>
 #include <QThread>
@@ -240,7 +249,7 @@ private:
 // in code so no resource files ship and any icon stays crisp at every scale.
 
 enum class Icon { Save, Copy, Pin, LongShot, Cancel, Rect, Ellipse, Arrow, Pen, Marker, Text,
-                  Number, Mosaic, Eraser, Undo, Redo, ArrowBoth, ArrowLine, ArrowHollow };
+                  Number, Mosaic, Eraser, Undo, Redo, ArrowBoth, ArrowLine, ArrowHollow, Palette };
 
 static void buildIconPath(QPainterPath &path, Icon icon)
 {
@@ -331,6 +340,15 @@ static void buildIconPath(QPainterPath &path, Icon icon)
         path.moveTo(15, 14); path.lineTo(20, 9); path.lineTo(15, 4);
         path.moveTo(20, 9); path.lineTo(9, 9); path.quadTo(4, 9, 4, 14); path.lineTo(4, 20);
         break;
+    case Icon::Palette:
+        path.moveTo(12, 3);
+        path.cubicTo(7, 3, 3, 7, 3, 12); path.cubicTo(3, 17, 7, 21, 12, 21);
+        path.cubicTo(15, 21, 15, 18, 13.5, 17); path.cubicTo(12, 15, 14, 13, 16, 14);
+        path.cubicTo(19, 15, 21, 14, 21, 11); path.cubicTo(21, 6, 17, 3, 12, 3);
+        path.closeSubpath();
+        for (const QPointF &dot : {QPointF(7, 10), QPointF(10, 6.5), QPointF(15, 7), QPointF(6.5, 14)})
+            path.addEllipse(dot, 0.55, 0.55);
+        break;
     }
 }
 
@@ -346,12 +364,13 @@ static QIcon makeIcon(Icon icon)
         QPainter p(&pm);
         p.setRenderHint(QPainter::Antialiasing);
         p.scale(16.0 / 24.0, 16.0 / 24.0);
-        QPen pen(QColor("#ececec"), 1.75 * 24.0 / 16.0);  // Renders 1.75px at the 16px size.
+        QPen pen(Qt::white, 1.75 * 24.0 / 16.0);   // Renders 1.75px at the 16px size.
         pen.setCapStyle(Qt::RoundCap);
         pen.setJoinStyle(Qt::RoundJoin);
         p.setPen(pen);
         p.drawPath(path);
-        result.addPixmap(pm);
+        for (QIcon::Mode mode : {QIcon::Normal, QIcon::Disabled, QIcon::Active, QIcon::Selected})
+            for (QIcon::State state : {QIcon::Off, QIcon::On}) result.addPixmap(pm, mode, state);
     }
     return result;
 }
@@ -365,6 +384,168 @@ static QToolButton *iconButton(Icon icon, const QString &tip)
     button->setCursor(Qt::PointingHandCursor);
     return button;
 }
+
+// ---------- Compact hue/saturation wheel; brightness is controlled by a slider. ----------
+class ColorWheel : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit ColorWheel(const QColor &color, QWidget *parent = nullptr) : QWidget(parent)
+    {
+        setFixedSize(220, 220);
+        setFocusPolicy(Qt::StrongFocus);
+        setCursor(Qt::CrossCursor);
+        setAccessibleName(QStringLiteral("圆形颜色选择器"));
+        setToolTip(QStringLiteral("点击或拖动选色；左右调整色相，上下调整饱和度"));
+        setCurrentColor(color);
+    }
+    QRectF wheelRect() const
+    {
+        const qreal side = qMin(width(), height()) - 20;
+        return QRectF((width() - side) / 2, (height() - side) / 2, side, side);
+    }
+    QColor currentColor() const { return m_color; }
+    QColor brightColor() const { return QColor::fromHsvF(m_hue, m_saturation, 1).toRgb(); }
+    int brightness() const { return qRound(m_value * 255); }
+    void setCurrentColor(const QColor &color)
+    {
+        if (!color.isValid() || color.toRgb() == m_color) return;
+        m_color = color.toRgb();
+        if (color.hsvHueF() >= 0) m_hue = color.hsvHueF();
+        if (color.valueF() > 0) m_saturation = color.hsvSaturationF(); // Black keeps the last wheel position.
+        m_value = color.valueF();
+        update();
+        emit colorChanged(m_color);
+    }
+    void setBrightness(int value)
+    {
+        const qreal next = qBound(0, value, 255) / 255.0;
+        if (next == m_value) return;
+        m_value = next;
+        updateColor();
+    }
+    static int testRendering()
+    {
+        ColorWheel wheel(Qt::cyan);
+        wheel.show();
+        QApplication::processEvents();
+        const QImage image = wheel.grab().toImage();
+        const qreal dpr = image.devicePixelRatio();
+        const QRectF circle = wheel.wheelRect();
+        const QColor center = image.pixelColor(qRound(circle.center().x() * dpr), qRound(circle.center().y() * dpr));
+        const QColor rim = image.pixelColor(qRound((circle.right() - 6) * dpr), qRound(circle.center().y() * dpr));
+        if (image.width() != qRound(wheel.width() * dpr) || image.pixelColor(0, 0) != QColor(29, 31, 35)
+            || center.red() < 250 || center.green() < 250 || center.blue() < 250
+            || rim.red() < 250 || rim.green() >= 32 || rim.blue() >= 32) {
+            std::fprintf(stderr, "FAIL: circular color rendering at DPR %.2f\n", double(dpr));
+            return 1;
+        }
+        const QPointF point = circle.center();
+        for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+            QMouseEvent event(type, point, wheel.mapToGlobal(point.toPoint()), Qt::LeftButton,
+                              type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(&wheel, &event);
+        }
+        if (wheel.currentColor() != QColor(Qt::white)) {
+            std::fprintf(stderr, "FAIL: logical color-wheel hit testing at DPR %.2f\n", double(dpr));
+            return 1;
+        }
+        std::printf("PASS: circular color rendering and hit testing at DPR %.2f\n", double(dpr));
+        return 0;
+    }
+signals:
+    void colorChanged(const QColor &color);
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        const QRectF circle = wheelRect();
+        const int side = qRound(circle.width() * devicePixelRatioF());
+        if (m_disc.width() != side) {                 // Cache physical pixels; pointer drags only move the marker.
+            m_disc = QImage(side, side, QImage::Format_ARGB32);
+            m_disc.fill(Qt::transparent);
+            const qreal radius = side / 2.0;
+            for (int y = 0; y < side; ++y) {
+                QRgb *row = reinterpret_cast<QRgb *>(m_disc.scanLine(y));
+                for (int x = 0; x < side; ++x) {
+                    const qreal dx = x + 0.5 - radius, dy = radius - y - 0.5;
+                    const qreal distance = qSqrt(dx * dx + dy * dy);
+                    const qreal coverage = qBound(qreal(0), radius - distance + 0.5, qreal(1));
+                    if (coverage <= 0) continue;
+                    qreal hue = qAtan2(dy, dx) / (2 * M_PI);
+                    if (hue < 0) hue += 1;
+                    QColor color = QColor::fromHsvF(hue, qMin(qreal(1), distance / radius), 1);
+                    color.setAlpha(qRound(coverage * 255));
+                    row[x] = color.rgba();
+                }
+            }
+        }
+        QPainter p(this);
+        p.fillRect(rect(), QColor(29, 31, 35));
+        p.setRenderHint(QPainter::Antialiasing);
+        p.drawImage(circle, m_disc);
+        p.setPen(QPen(QColor("#626468"), 1));
+        p.setBrush(QColor(0, 0, 0, qRound((1 - m_value) * 255)));
+        p.drawEllipse(circle);
+        const qreal angle = m_hue * 2 * M_PI;
+        const qreal radius = circle.width() / 2 * m_saturation;
+        const QPointF marker = circle.center() + QPointF(qCos(angle) * radius, -qSin(angle) * radius);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(Qt::black, 3));
+        p.drawEllipse(marker, 5, 5);
+        p.setPen(QPen(Qt::white, 1.5));
+        p.drawEllipse(marker, 5, 5);
+    }
+    void mousePressEvent(QMouseEvent *e) override
+    {
+        const QRectF circle = wheelRect();
+        if (e->button() != Qt::LeftButton || QLineF(circle.center(), e->pos()).length() > circle.width() / 2) return;
+        m_dragging = true;
+        setFocus(Qt::MouseFocusReason);
+        selectAt(e->pos());
+    }
+    void mouseMoveEvent(QMouseEvent *e) override
+    {
+        if (m_dragging && (e->buttons() & Qt::LeftButton)) selectAt(e->pos());
+    }
+    void mouseReleaseEvent(QMouseEvent *e) override
+    {
+        if (e->button() == Qt::LeftButton) m_dragging = false;
+    }
+    void keyPressEvent(QKeyEvent *e) override
+    {
+        if (e->key() == Qt::Key_Left || e->key() == Qt::Key_Right) {
+            m_hue += e->key() == Qt::Key_Right ? 1.0 / 360 : -1.0 / 360;
+            if (m_hue < 0) m_hue += 1;
+            if (m_hue >= 1) m_hue -= 1;
+        } else if (e->key() == Qt::Key_Up || e->key() == Qt::Key_Down) {
+            m_saturation = qBound(qreal(0), m_saturation + (e->key() == Qt::Key_Up ? 0.01 : -0.01), qreal(1));
+        } else { QWidget::keyPressEvent(e); return; }
+        updateColor();
+    }
+private:
+    void selectAt(const QPoint &point)
+    {
+        const QRectF circle = wheelRect();
+        const QPointF delta = point - circle.center();
+        const qreal distance = qSqrt(delta.x() * delta.x() + delta.y() * delta.y());
+        if (distance > 0.01) {
+            m_hue = qAtan2(-delta.y(), delta.x()) / (2 * M_PI);
+            if (m_hue < 0) m_hue += 1;
+        }
+        m_saturation = qMin(qreal(1), distance / (circle.width() / 2));
+        updateColor();
+    }
+    void updateColor()
+    {
+        m_color = QColor::fromHsvF(m_hue, m_saturation, m_value).toRgb();
+        update();
+        emit colorChanged(m_color);
+    }
+    QImage m_disc;
+    QColor m_color;
+    qreal m_hue = 0, m_saturation = 1, m_value = 1;
+    bool m_dragging = false;
+};
 
 // ---------- Manual scrolling capture ----------
 // shortcut: Textureless or identical repeated overlaps cannot be uniquely aligned; add scroll-position data if needed.
@@ -621,7 +802,7 @@ private:
     void buildUi()
     {
         const QString barQss =
-            "QWidget{background:#2d2d2d;border-radius:4px;}"
+            "QWidget{background:rgb(29,31,35);border-radius:4px;}"
             "QLabel{color:#fff;font-size:13px;padding:0 8px;}"
             "QToolButton{background:transparent;border:none;border-radius:3px;padding:4px;}"
             "QToolButton:hover{background:#454545;}";
@@ -1424,12 +1605,11 @@ public:
             "background:#2d2d2d;color:#fff;padding:2px 6px;border-radius:3px;font-size:12px;");
         m_sizeTip->hide();
 
-        // Frosted status bar: the overlay paints a blurred snapshot behind this transparent
-        // container, so the glass effect follows the frozen frame at every position.
+        // The overlay paints matching solid backgrounds for both toolbar containers.
         m_tools = new QWidget(this);
         m_tools->setStyleSheet(
-            "QToolButton{background:transparent;border:none;border-radius:3px;padding:4px;}"
-            "QToolButton:hover{background:rgba(255,255,255,38);}");
+            "QToolButton{color:#fff;background:transparent;border:none;border-radius:3px;padding:4px;}"
+            "QToolButton:hover,QToolButton:checked{background:rgba(255,255,255,38);}");
         auto *save = iconButton(Icon::Save, QStringLiteral("保存到文件 (Ctrl+S)"));
         auto *copy = iconButton(Icon::Copy, QStringLiteral("复制到剪贴板 (Ctrl+C)"));
         auto *pin = iconButton(Icon::Pin, QStringLiteral("贴在屏幕上 (Enter / 双击)"));
@@ -1454,9 +1634,8 @@ public:
         m_shapeButton->setToolTip(QStringLiteral("形状：矩形/椭圆 (R=矩形 / O=椭圆)"));
         m_shapeButton->setCheckable(true);
         m_shapeButton->setCursor(Qt::PointingHandCursor);
-        connect(m_shapeButton, &QToolButton::toggled, this, [this](bool on) {
-            if (on) selectTool(m_shapeEllipse ? ATool::Ellipse : ATool::Rect);
-            else if (m_atool == ATool::Rect || m_atool == ATool::Ellipse) setToolNone();
+        connect(m_shapeButton, &QToolButton::clicked, this, [this] {
+            selectTool(m_shapeEllipse ? ATool::Ellipse : ATool::Rect);
             setCursor(Qt::CrossCursor);
             update();
         });
@@ -1475,9 +1654,8 @@ public:
             auto *button = iconButton(t.icon, QString::fromUtf8(t.tip));
             button->setCheckable(true);
             const ATool tool = t.tool;
-            connect(button, &QToolButton::toggled, this, [this, tool](bool on) {
-                if (on) selectTool(tool);
-                else if (m_atool == tool) setToolNone();
+            connect(button, &QToolButton::clicked, this, [this, tool] {
+                selectTool(tool);
                 setCursor(Qt::CrossCursor);
                 update();
             });
@@ -1491,11 +1669,15 @@ public:
 
         m_toolOptions = new QWidget(this);
         m_toolOptions->setStyleSheet(QStringLiteral(
-            "QToolButton{background:transparent;border:none;border-radius:3px;padding:3px;}"
-            "QToolButton:hover{background:rgba(255,255,255,38);}"
-            "QLabel{color:#e8e8e8;font-size:12px;border:none;}"));
+            "QToolButton{color:#fff;background:transparent;border:none;border-radius:3px;padding:3px;}"
+            "QToolButton:hover,QToolButton:checked{background:rgba(255,255,255,38);}"
+            "QLabel{color:#fff;font-size:12px;border:none;}"
+            "QComboBox{color:#fff;background:rgb(29,31,35);border:1px solid #626468;"
+            "padding:1px 3px;font-size:12px;}"
+            "QComboBox QAbstractItemView{color:#fff;background:rgb(29,31,35);selection-background-color:#007aff;}"
+            "QLineEdit{color:#fff;background:transparent;border:none;selection-background-color:#007aff;}"));
         m_toolOptions->hide();
-        buildToolLayout(Qt::Horizontal);
+        buildToolLayout();
         m_tools->adjustSize();
         m_tools->hide();
 
@@ -1686,8 +1868,7 @@ public:
               "a locked selection does not chase the cursor across detected areas");
         mouseMove(screenOrigin + QPoint(320, 210));  // Back inside the selection.
         check(overlay.m_hover.isNull(), "hover re-detection stays off inside the locked selection too");
-        // Toolbar placement: horizontal strip flush with the selection's bottom-right corner
-        // by default, flipping to a vertical strip on its right side at the screen bottom.
+        // Both rows stay horizontal and move above the selection when the screen bottom is full.
         const QRect avail = QGuiApplication::primaryScreen()->availableGeometry()
                                .translated(-overlay.geometry().topLeft());
         overlay.m_sel = QRect(avail.topLeft() + QPoint(60, 60), QSize(640, 120));
@@ -1699,10 +1880,9 @@ public:
               "toolbar docks below the selection, flush with its right edge");
         overlay.m_sel = QRect(avail.left() + 40, avail.bottom() + 1 - 150, 300, 150);
         overlay.placeToolbar();
-        check(overlay.m_tools->x() >= overlay.m_sel.right() + 1
-                  && overlay.m_tools->y() + overlay.m_tools->height() == overlay.m_sel.bottom() + 1
-                  && overlay.m_tools->height() > overlay.m_tools->width(),
-              "toolbar flips to a vertical strip on the selection's right side at the screen bottom");
+        check(overlay.m_tools->y() + overlay.m_tools->height() <= overlay.m_sel.top()
+                  && overlay.m_tools->width() > overlay.m_tools->height(),
+              "the horizontal toolbar moves above the selection at the screen bottom");
         // Annotation editing: shortcuts, shift constraints, selection, re-tune, delete,
         // undo/redo, marker, the text editor, sequence numbers, blur, and the eraser.
         auto mouse = [&overlay](QEvent::Type type, const QPoint &local,
@@ -1745,10 +1925,13 @@ public:
                          Qt::ScrollUpdate, false);
         QApplication::sendEvent(&overlay, &tune);
         check(overlay.m_anns[0].pen == 4, "the wheel retunes the selected annotation");
+        const QColor originalShapeColor = overlay.m_anns[0].color;
+        const int beforeColorUndo = overlay.m_undoStack.size();
         overlay.pickToolColor(ATool::Rect, QColor("#1c1c1e"));
-        check(overlay.m_anns[0].color == QColor("#1c1c1e")
+        check(overlay.m_anns[0].color == originalShapeColor
+                  && overlay.m_undoStack.size() == beforeColorUndo
                   && overlay.m_colorShape == QColor("#1c1c1e"),
-              "the options strip recolors the selected annotation");
+              "color selection updates the tool default without recoloring a committed selection");
         QKeyEvent del(QEvent::KeyPress, Qt::Key_Delete, Qt::NoModifier);
         QApplication::sendEvent(&overlay, &del);
         check(overlay.m_anns.isEmpty(), "delete removes the selected annotation");
@@ -1925,6 +2108,104 @@ public:
         mouse(QEvent::MouseButtonPress, annOrigin + QPoint(60, 75));
         mouse(QEvent::MouseButtonRelease, annOrigin + QPoint(60, 75));
         check(overlay.m_anns.size() < beforeErase, "the eraser's reach tracks its thickness");
+        overlay.m_anns.clear();
+        overlay.m_selAnn = -1;
+        // Every tool exposes an editable size, and clicking it again keeps its options open.
+        for (ATool tool : {ATool::Rect, ATool::Ellipse, ATool::Arrow, ATool::Pen, ATool::Marker,
+                           ATool::Text, ATool::Number, ATool::Mosaic, ATool::Eraser}) {
+            overlay.selectTool(tool);
+            overlay.m_toolBtn[int(tool)]->click();
+            overlay.m_toolBtn[int(tool)]->click();
+            check(overlay.m_atool == tool && overlay.m_toolOptions->isVisible() && overlay.m_sizeInput,
+                  "repeated toolbar clicks keep the matching options and numeric control visible");
+            const bool colored = tool != ATool::Mosaic && tool != ATool::Eraser;
+            const QList<QToolButton *> swatches = overlay.m_toolOptions->findChildren<QToolButton *>(QStringLiteral("presetColor"));
+            check((overlay.m_colorButton != nullptr) == colored && swatches.size() == (colored ? 8 : 0),
+                  "colored tools expose eight common colors and a palette button, not a dense color grid");
+            if (colored)
+                check(overlay.m_colorButton->text().isEmpty() && !overlay.m_colorButton->icon().isNull()
+                          && overlay.m_colorButton->toolButtonStyle() == Qt::ToolButtonIconOnly,
+                      "every palette button uses a white icon without a text label");
+            for (QToolButton *swatch : swatches)
+                check(swatch->y() == swatches.first()->y(), "common color presets stay in one spacious row");
+        }
+        check(parseAnnotationColor(QStringLiteral("rgb(0, 128,255)")) == QColor(0, 128, 255)
+                  && parseAnnotationColor(QStringLiteral("#A1b2C3")) == QColor("#a1b2c3")
+                  && !parseAnnotationColor(QStringLiteral("rgb(256,0,0)")).isValid()
+                  && !parseAnnotationColor(QStringLiteral("rgb(-1,0,0)")).isValid()
+                  && !parseAnnotationColor(QStringLiteral("#12xz56")).isValid()
+                  && !parseAnnotationColor(QStringLiteral("#12345678")).isValid(),
+              "manual colors validate channel bounds and exactly six hexadecimal digits");
+        overlay.selectTool(ATool::Pen);
+        QLineEdit *sizeEdit = overlay.m_sizeInput->findChild<QLineEdit *>();
+        sizeEdit->setText(QStringLiteral("6"));
+        QKeyEvent sizeEnter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QApplication::sendEvent(sizeEdit, &sizeEnter);
+        check(overlay.m_apen == 6 && overlay.m_sizeInput->currentText().toDouble() == 6 && overlay.isVisible(),
+              "typing a width and pressing Enter changes the tool without pinning the capture");
+        QWheelEvent sizeWheel(QPointF(10, 10), QPointF(sizeEdit->mapToGlobal(QPoint(10, 10))),
+                             QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                             Qt::ScrollUpdate, false);
+        QApplication::sendEvent(sizeEdit, &sizeWheel);
+        check(overlay.m_apen == 7 && overlay.m_sizeInput->currentText().toDouble() == 7,
+              "wheel input over the numeric field uses the same width and updates the displayed value");
+        const QPoint sizeStroke = annOrigin + QPoint(15, 15);
+        mouse(QEvent::MouseButtonPress, sizeStroke);
+        overlay.tuneWidth(1, sizeStroke);
+        mouse(QEvent::MouseMove, sizeStroke + QPoint(20, 10));
+        overlay.pickToolColor(ATool::Pen, QColor("#007aff"));
+        check(overlay.m_tools->isVisible() && overlay.m_toolOptions->isVisible()
+                  && overlay.m_sizeInput->currentText().toDouble() == 8 && overlay.m_ann.pen == 8,
+              "drawing keeps both bars visible and wheel changes update the live stroke and number");
+        check(overlay.m_ann.color == QColor("#007aff"), "color changes apply to the in-progress stroke");
+        mouse(QEvent::MouseButtonRelease, sizeStroke + QPoint(20, 10));
+        overlay.m_sizeInput->lineEdit()->setText(QStringLiteral("9"));
+        QApplication::sendEvent(overlay.m_sizeInput->lineEdit(), &sizeEnter);
+        check(overlay.m_anns.last().pen == 9 && overlay.m_sizeInput->currentText().toDouble() == 9,
+              "the numeric field retunes the selected object");
+        overlay.undoAnnotation();
+        check(overlay.m_anns.last().pen == 8, "one undo restores the width before a numeric edit");
+        overlay.redoAnnotation();
+        check(overlay.m_anns.last().pen == 9, "redo reapplies the numeric width edit");
+        overlay.selectTool(ATool::Eraser);
+        overlay.setToolSize(99);
+        check(overlay.toolSize() == 12 && overlay.m_sizeInput->currentText().toDouble() == 12,
+              "width input stays within the supported range");
+        overlay.setToolSize(0);
+        check(overlay.toolSize() == 1 && overlay.m_sizeInput->currentText().toDouble() == 1,
+              "width input cannot become zero or negative");
+        overlay.placeToolbar();
+        overlay.showToolBars();
+        check(overlay.m_toolOptions->x() == overlay.m_tools->x()
+                  && overlay.m_toolOptions->y() == overlay.m_tools->geometry().bottom() + 1
+                  && overlay.m_toolOptions->width() == overlay.m_tools->width(),
+              "the main toolbar and its options form aligned, gapless horizontal rows");
+        for (QWidget *bar : {overlay.m_tools, overlay.m_toolOptions}) {
+            const QImage painted = overlay.grab(bar->geometry()).toImage();
+            const qreal dpr = painted.devicePixelRatio();
+            const QColor background = painted.pixelColor(qRound(10 * dpr), qRound((bar->height() - 2) * dpr));
+            if (background != QColor(29, 31, 35))
+                std::fprintf(stderr, "bar background %d,%d,%d size=%dx%d dpr=%.2f main=%d\n",
+                             background.red(), background.green(), background.blue(),
+                             bar->width(), bar->height(), double(dpr), bar == overlay.m_tools);
+            check(background == QColor(29, 31, 35),
+                  "main and option bars render the exact solid background color");
+        }
+        for (QWidget *widget : overlay.m_toolButtons) {
+            const QIcon icon = static_cast<QToolButton *>(widget)->icon();
+            for (QIcon::Mode mode : {QIcon::Normal, QIcon::Disabled}) {
+                const QImage pixels = icon.pixmap(QSize(16, 16), mode).toImage();
+                bool white = true, visible = false;
+                for (int y = 0; y < pixels.height(); ++y)
+                    for (int x = 0; x < pixels.width(); ++x) {
+                        const QColor color = pixels.pixelColor(x, y);
+                        if (!color.alpha()) continue;
+                        visible = true;
+                        if (color.red() != 255 || color.green() != 255 || color.blue() != 255) white = false;
+                    }
+                check(visible && white, "toolbar icons stay white in normal and disabled states");
+            }
+        }
         overlay.m_anns.clear();
         overlay.m_undoStack.clear();
         overlay.m_redoStack.clear();
@@ -2196,14 +2477,14 @@ public:
         check(!overlay.m_inspector->isVisible(),
               "the color value card stays hidden inside a locked selection");
         // Instant annotation: a rectangle stroke commits, composes, and undoes.
-        overlay.m_atool = ATool::Rect;
+        overlay.selectTool(ATool::Rect);
         const QRect annRect = overlay.m_sel.adjusted(12, 12, -12, -12);
         const QPoint annA = annRect.topLeft(), annB = annRect.bottomRight();
         QMouseEvent annPress(QEvent::MouseButtonPress, annA, annA + overlay.geometry().topLeft(),
                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(&overlay, &annPress);
-        check(overlay.m_live && !overlay.m_tools->isVisible(),
-              "an annotation drag starts inside the selection and clears the status bar");
+        check(overlay.m_live && overlay.m_tools->isVisible() && overlay.m_toolOptions->isVisible(),
+              "an annotation drag keeps the active toolbar and options visible");
         QMouseEvent annMove(QEvent::MouseMove, annB, annB + overlay.geometry().topLeft(),
                             Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(&overlay, &annMove);
@@ -2270,8 +2551,19 @@ public:
         overlay.placeToolbar();
         overlay.showToolBars();
         overlay.selectTool(ATool::Text);
+        QLineEdit *fontEdit = overlay.m_sizeInput->findChild<QLineEdit *>();
+        fontEdit->setText(QStringLiteral("10.5"));
+        QKeyEvent fontEnter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QApplication::sendEvent(fontEdit, &fontEnter);
+        check(overlay.m_afont == 10.5 && overlay.m_sizeInput->currentText().toDouble() == 10.5
+                  && static_cast<const QDoubleValidator *>(overlay.m_sizeInput->validator())->top() == 1638
+                  && overlay.m_sizeInput->findText(QStringLiteral("12")) >= 0 && overlay.isVisible(),
+              "the editable font control accepts fractional point sizes without pinning the capture");
         overlay.beginTextEdit(origin + QPoint(20, 20));
         QApplication::processEvents();
+        check(overlay.m_editor->font().pointSizeF() == 10.5 && overlay.m_editor->font().pixelSize() == -1
+                  && qAbs(QFontInfo(overlay.m_editor->font()).pixelSize() - 10.5 * overlay.logicalDpiY() / 72.0) <= 1,
+              "font sizes use standard points and the screen DPI, not pixels mislabeled as points");
         auto key = [&overlay](int code, Qt::KeyboardModifiers mods = Qt::NoModifier,
                               const QString &text = QString()) {
             QKeyEvent ev(QEvent::KeyPress, code, mods, text);
@@ -2302,6 +2594,22 @@ public:
         cur.setPosition(3, QTextCursor::KeepAnchor);
         overlay.m_editor->setTextCursor(cur);
         const int anchor = cur.anchor(), position = cur.position();
+        QComboBox *fontFamily = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("annotationFont"));
+        check(fontFamily && fontFamily->focusPolicy() == Qt::NoFocus,
+              "the text options include a font-family selector without stealing input focus");
+        fontFamily->setCurrentText(QStringLiteral("Arial"));
+        check(fontFamily->currentText() == QStringLiteral("Arial") && fontFamily->itemIcon(fontFamily->currentIndex()).isNull(),
+              "the font field displays a plain family name without a prefixed label or icon");
+        fontEdit = overlay.m_sizeInput->findChild<QLineEdit *>();
+        fontEdit->setFocus();
+        fontEdit->setText(QStringLiteral("12"));
+        QApplication::sendEvent(fontEdit, &fontEnter);
+        check(overlay.editorActive() && overlay.m_editor->font().pointSizeF() == 12
+                  && overlay.m_editor->font().family() == QStringLiteral("Arial")
+                  && overlay.m_editor->textCursor().anchor() == anchor
+                  && overlay.m_editor->textCursor().position() == position
+                  && overlay.m_textView->hasFocus(),
+              "editing the size keeps live text and its selection, then returns keyboard focus");
         for (QToolButton *button : overlay.m_toolOptions->findChildren<QToolButton *>()) {
             check(button->focusPolicy() == Qt::NoFocus, "text options do not steal keyboard focus");
             if (button->text() == QStringLiteral("B") || button->text() == QStringLiteral("I"))
@@ -2310,6 +2618,7 @@ public:
         }
         overlay.editorFontStep(1);
         check(overlay.editorActive() && overlay.m_editor->font().bold() && overlay.m_editor->font().italic()
+                  && overlay.m_editFont == 12.5 && overlay.m_sizeInput->currentText().toDouble() == 12.5
                   && overlay.m_editor->defaultTextColor() == QColor("#007aff")
                   && overlay.m_editor->textCursor().anchor() == anchor
                   && overlay.m_editor->textCursor().position() == position,
@@ -2353,6 +2662,7 @@ public:
         key(Qt::Key_Escape);
         check(!overlay.editorActive() && overlay.isVisible() && overlay.m_anns.size() == 1
                   && overlay.m_atool == ATool::Text && overlay.m_anns[0].bold && overlay.m_anns[0].italic
+                  && overlay.m_anns[0].family == QStringLiteral("Arial")
                   && overlay.m_anns[0].color == QColor("#007aff"),
               "Escape finishes text input in one transaction and keeps the capture open");
         check(overlay.cropped().toImage() == liveCapture,
@@ -2412,14 +2722,138 @@ public:
         overlay.undoAnnotation();
         check(overlay.m_anns.size() == 1 && overlay.m_anns[0].text == QStringLiteral("旋转文字"),
               "undo restores deleted text with its formatting and rotation");
+        for (ATool tool : {ATool::Arrow, ATool::Marker}) {
+            Annotation previous;
+            previous.tool = tool;
+            previous.color = tool == ATool::Arrow ? QColor("#34c759") : QColor("#ffcc00");
+            previous.a = origin + QPoint(450, 200);
+            previous.b = origin + QPoint(520, 220);
+            previous.stroke << previous.a << previous.b;
+            overlay.m_anns.append(previous);
+        }
+        QVector<QColor> previousColors;
+        for (const Annotation &ann : overlay.m_anns) previousColors.append(ann.color);
         overlay.selectTool(ATool::Text);
         overlay.beginTextEdit(origin + QPoint(300, 40));
         overlay.m_editor->setPlainText(QStringLiteral("未结束也能输出"));
+        cur = overlay.m_editor->textCursor();
+        cur.setPosition(1);
+        cur.setPosition(3, QTextCursor::KeepAnchor);
+        overlay.m_editor->setTextCursor(cur);
+        const int paletteUndoCount = overlay.m_undoStack.size();
+        overlay.m_colorButton->click();
+        QApplication::processEvents();
+        check(overlay.m_colorDialog && overlay.m_colorDialog->isVisible() && overlay.editorActive(),
+              "opening the non-modal palette keeps native text editing live");
+        auto typeColor = [](QLineEdit *field, const QString &text) {
+            field->setFocus();
+            field->selectAll();
+            QKeyEvent input(QEvent::KeyPress, 0, Qt::NoModifier, text);
+            QApplication::sendEvent(field, &input);
+        };
+        typeColor(overlay.m_rgbInput, QStringLiteral("rgb(255,0,0)"));
+        check(overlay.m_editor->defaultTextColor() == QColor(Qt::red)
+                  && overlay.m_colorWheel->currentColor() == QColor(Qt::red)
+                  && overlay.m_hexInput->text() == QStringLiteral("#ff0000")
+                  && overlay.m_editor->textCursor().anchor() == cur.anchor()
+                  && overlay.m_editor->textCursor().position() == cur.position(),
+              "RGB typing synchronizes the live text, picker, HEX value, and text selection");
+        QKeyEvent colorEnter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QApplication::sendEvent(overlay.m_rgbInput, &colorEnter);
+        check(overlay.editorActive() && overlay.m_colorDialog->isVisible() && overlay.isVisible(),
+              "Enter in a color field does not commit text or pin the capture");
+        typeColor(overlay.m_hexInput, QStringLiteral("#123ABC"));
+        check(overlay.m_editor->defaultTextColor() == QColor("#123abc")
+                  && overlay.m_rgbInput->text() == QStringLiteral("rgb(18,58,188)")
+                  && overlay.m_colorWheel->currentColor() == QColor("#123abc")
+                  && overlay.m_colorBrightness->value() == 188,
+              "HEX typing synchronizes RGB, the picker, and the current text");
+        typeColor(overlay.m_rgbInput, QStringLiteral("rgb(300,0,0)"));
+        typeColor(overlay.m_hexInput, QStringLiteral("#nothex"));
+        check(overlay.m_editor->defaultTextColor() == QColor("#123abc")
+                  && overlay.m_colorWheel->currentColor() == QColor("#123abc"),
+              "invalid or incomplete manual colors never change the annotation or picker");
+        ColorWheel *picker = overlay.m_colorWheel;
+        check(picker && picker->width() == picker->height()
+                  && overlay.m_colorDialog->findChildren<QLineEdit *>().size() == 2
+                  && overlay.m_colorDialog->findChildren<QToolButton *>().isEmpty()
+                  && overlay.m_colorDialog->width() < 300 && overlay.m_colorDialog->height() < 350,
+              "the compact palette only contains a circular wheel, brightness, preview, and two color fields");
+        const QColor beforeDrag = picker->currentColor();
+        const QPoint pickerStart(picker->width() / 3, picker->height() / 3);
+        for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseMove, QEvent::MouseButtonRelease}) {
+            const QPoint at = type == QEvent::MouseButtonPress ? pickerStart : pickerStart + QPoint(30, 15);
+            QMouseEvent mouse(type, at, picker->mapToGlobal(at),
+                              type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                              type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(picker, &mouse);
+        }
+        const QColor draggedColor = picker->currentColor();
+        check(draggedColor != beforeDrag && overlay.m_editor->defaultTextColor() == draggedColor
+                  && overlay.m_rgbInput->text() == rgbColorText(draggedColor)
+                  && overlay.m_hexInput->text() == draggedColor.name(),
+              "clicking and dragging the circular color wheel updates live text and both manual fields");
+        auto wheelClick = [picker](const QPointF &point) {
+            for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+                QMouseEvent event(type, point, picker->mapToGlobal(point.toPoint()), Qt::LeftButton,
+                                  type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+                QApplication::sendEvent(picker, &event);
+            }
+        };
+        overlay.m_colorBrightness->setValue(255);
+        const QRectF circle = picker->wheelRect();
+        wheelClick(QPointF(circle.right(), circle.center().y()));
+        check(picker->currentColor() == QColor(Qt::red), "the wheel's right edge selects fully saturated red");
+        wheelClick(QPointF(circle.left(), circle.center().y()));
+        check(picker->currentColor() == QColor(Qt::cyan), "the opposite wheel edge selects cyan");
+        wheelClick(circle.center());
+        check(picker->currentColor() == QColor(Qt::white), "the wheel center selects neutral white");
+        wheelClick(circle.topLeft());
+        check(picker->currentColor() == QColor(Qt::white), "clicking outside the circle does not select a color");
+        overlay.m_colorBrightness->setValue(128);
+        check(picker->currentColor() == QColor(128, 128, 128)
+                  && overlay.m_rgbInput->text() == QStringLiteral("rgb(128,128,128)")
+                  && overlay.m_hexInput->text() == QStringLiteral("#808080"),
+              "brightness adjusts grayscale and synchronizes both color fields");
+        overlay.m_colorBrightness->setValue(0);
+        wheelClick(QPointF(circle.left(), circle.center().y()));
+        check(picker->currentColor() == QColor(Qt::black), "wheel selection at zero brightness stays black");
+        overlay.m_colorBrightness->setValue(255);
+        check(picker->currentColor() == QColor(Qt::cyan), "raising brightness preserves the color chosen while black");
+        QKeyEvent wheelKey(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
+        QApplication::sendEvent(picker, &wheelKey);
+        check(picker->currentColor() != QColor(Qt::cyan)
+                  && overlay.m_editor->defaultTextColor() == picker->currentColor(),
+              "keyboard wheel adjustment remains accessible and updates the active text");
+        const QImage renderedWheel = picker->grab().toImage();
+        const qreal wheelDpr = renderedWheel.devicePixelRatio();
+        const QColor centerPixel = renderedWheel.pixelColor(qRound(circle.center().x() * wheelDpr),
+                                                            qRound(circle.center().y() * wheelDpr));
+        const QColor rimPixel = renderedWheel.pixelColor(qRound((circle.right() - 6) * wheelDpr),
+                                                         qRound(circle.center().y() * wheelDpr));
+        if (renderedWheel.pixelColor(0, 0) != QColor(29, 31, 35)
+            || centerPixel.red() < 250 || centerPixel.green() < 250 || centerPixel.blue() < 250
+            || rimPixel.red() < 250 || rimPixel.green() >= 32 || rimPixel.blue() >= 32)
+            std::fprintf(stderr, "wheel pixels corner=%s center=%s rim=%s dpr=%.2f\n",
+                         qPrintable(renderedWheel.pixelColor(0, 0).name()), qPrintable(centerPixel.name()),
+                         qPrintable(rimPixel.name()), double(wheelDpr));
+        check(renderedWheel.pixelColor(0, 0) == QColor(29, 31, 35)
+                  && centerPixel.red() >= 250 && centerPixel.green() >= 250 && centerPixel.blue() >= 250
+                  && rimPixel.red() >= 250 && rimPixel.green() < 32 && rimPixel.blue() < 32,
+              "the rendered wheel has a neutral center, a red rim, and dark corners at the active DPI");
+        for (int i = 0; i < previousColors.size(); ++i)
+            check(overlay.m_anns[i].color == previousColors[i],
+                  "palette changes leave earlier text, arrows, and marker strokes unchanged");
+        check(overlay.m_undoStack.size() == paletteUndoCount, "palette changes stay inside the current text transaction");
+        QKeyEvent paletteEscape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(overlay.m_colorDialog, &paletteEscape);
+        check(overlay.editorActive() && overlay.isVisible() && overlay.m_textView->hasFocus(),
+              "closing the palette returns keyboard focus without closing or committing the text");
         QPixmap pinned;
         QObject::connect(&overlay, &CaptureOverlay::grabbed, [&pinned](const QPixmap &pix) { pinned = pix; });
         const QImage expected = overlay.cropped().toImage();
         overlay.pinCapture();
-        check(!pinned.isNull() && pinned.toImage() == expected && overlay.m_anns.size() == 2,
+        check(!pinned.isNull() && pinned.toImage() == expected && overlay.m_anns.size() == 4,
               "capture actions commit the live text and output it exactly once");
         std::puts("PASS: native text input, multiline layout, live formatting, re-editing, rotation, undo, and output");
         return 0;
@@ -2481,27 +2915,11 @@ protected:
                 p.drawRect(h);
             }
         for (QWidget *glass : {m_tools, m_toolOptions}) {
-            if (!glass->isVisible()) continue;       // Frosted glass: blurred frame plus tint.
+            if (!glass->isVisible()) continue;
             const QRect bar = glass->geometry();
-            const qreal dpr = m_shot.devicePixelRatioF();
-            const QRect src(qRound(bar.x() * dpr), qRound(bar.y() * dpr),
-                            qMax(1, qRound(bar.width() * dpr)),
-                            qMax(1, qRound(bar.height() * dpr)));
-            const QSize grain(qMax(1, bar.width() / 6), qMax(1, bar.height() / 6));
-            const QPixmap blur = m_shot.copy(src)
-                .scaled(grain, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
-                .scaled(bar.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-            QPainterPath frost;
-            frost.addRoundedRect(bar, 8, 8);
-            p.save();
-            p.setClipPath(frost);
-            p.drawPixmap(bar.topLeft(), blur);
-            p.fillRect(bar, QColor(18, 18, 24, 168));
-            p.restore();
-            QPen edge(QColor(255, 255, 255, 30), 1);
-            p.setPen(edge);
-            p.setBrush(Qt::NoBrush);
-            p.drawRoundedRect(bar, 8, 8);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(29, 31, 35));
+            p.drawRect(bar);
         }
     }
     void mousePressEvent(QMouseEvent *e) override
@@ -2515,7 +2933,7 @@ protected:
             if (m_live) { m_live = false; commitAnnotation(); }
             else if (wasEditing) return;
             else if (m_atool != ATool::None) setToolNone();
-            else if (m_selAnn >= 0) { m_selAnn = -1; update(); }
+            else if (m_selAnn >= 0) { m_selAnn = -1; updateToolOptions(); update(); }
             else if (m_mode == Adjusting) { resetSelection(); } else { close(); }
             return;
         }
@@ -2554,12 +2972,13 @@ protected:
                 Annotation ann;
                 ann.tool = ATool::Number;
                 ann.color = m_acolor;
-                ann.font = qBound(14, m_afont, 48);
-                const int s = ann.font * 2;
+                ann.font = m_afont;
+                const int s = numberDiameter(ann);
                 ann.rect = QRect(e->pos() - QPoint(s / 2, s / 2), QSize(s, s));
                 m_anns.append(ann);
                 normalizeNumbers();
                 m_selAnn = m_anns.size() - 1;        // Auto-select fresh annotations.
+                syncSizeInput();
                 update(ann.rect.adjusted(-8, -8, 8, 8));
                 return;
             }
@@ -2580,10 +2999,12 @@ protected:
                 m_selAnn = hit;
                 m_itemDrag = H_Move;
                 m_pressAnn = m_anns[hit];
+                updateToolOptions();
                 update();
                 return;
             }
             m_selAnn = -1;
+            updateToolOptions();
         }
         if (m_mode == Adjusting) {
             m_drag = hitHandle(e->pos());
@@ -2720,6 +3141,7 @@ protected:
     }
     void wheelEvent(QWheelEvent *e) override
     {
+        if (!e->angleDelta().y()) return;
         if (editorActive()) {                        // Wheel retunes the live text editor.
             editorFontStep(e->angleDelta().y() > 0 ? 1 : -1);
             return;
@@ -2745,6 +3167,7 @@ protected:
     }
     void closeEvent(QCloseEvent *e) override
     {
+        if (m_colorDialog) m_colorDialog->close();
         cancelDetection();
         if (m_detector) m_detector->stop();
         QWidget::closeEvent(e);
@@ -2792,7 +3215,7 @@ protected:
             if (m_live) { m_live = false; endAnnotationDrag(); }
             else if (editorActive()) commitTextEdit();
             else if (m_atool != ATool::None) setToolNone();
-            else if (m_selAnn >= 0) { m_selAnn = -1; update(); }
+            else if (m_selAnn >= 0) { m_selAnn = -1; updateToolOptions(); update(); }
             else close();
             break;
         case Qt::Key_Space:
@@ -2896,7 +3319,8 @@ private:
         QPoint a, b;                                 // Arrow endpoints.
         QPolygonF stroke;                            // Pen / Marker polyline.
         QString text;                                // Text / Number content.
-        int font = 0;                                // Text / Number pixel font size.
+        qreal font = 15;                             // Text / Number point size (1/72 inch).
+        QString family = QStringLiteral("Microsoft YaHei UI");
         int arrowStyle = 0;                          // 0 single, 1 double, 2 none, 3 hollow.
         bool bold = false;                           // Text weight / slant.
         bool italic = false;
@@ -3046,7 +3470,7 @@ private:
                 if (ann.tool == ATool::Text) {       // Resize letters, not an invisible wrapping box.
                     const qreal scale = qMax(qreal(ann.rect.width()) / qMax(1, r.width()),
                                              qreal(ann.rect.height()) / qMax(1, r.height()));
-                    ann.font = qBound(12, qRound(m_pressAnn.font * scale), 72);
+                    ann.font = qBound(qreal(1), qRound(m_pressAnn.font * scale * 2) / 2.0, qreal(1638));
                     fitTextAnnotation(ann);
                     if (m_itemDrag == H_TL) ann.rect.moveBottomRight(fixed);
                     else if (m_itemDrag == H_TR) ann.rect.moveBottomLeft(fixed);
@@ -3059,6 +3483,7 @@ private:
             }
         }
         m_anns[m_selAnn] = ann;
+        syncSizeInput();
     }
     void pushUndo()                                  // Snapshot stacks: one list per step.
     {
@@ -3102,15 +3527,20 @@ private:
         m_anns.removeAt(m_selAnn);
         m_selAnn = -1;
         normalizeNumbers();
+        updateToolOptions();
         update();
     }
     static QFont textFont(const Annotation &ann)
     {
-        QFont font(QStringLiteral("Microsoft YaHei UI"));
-        font.setPixelSize(ann.font);
+        QFont font(ann.family);
+        font.setPointSizeF(ann.font);
         font.setBold(ann.bold);
         font.setItalic(ann.italic);
         return font;
+    }
+    static int numberDiameter(const Annotation &ann)
+    {
+        return qMax(1, QFontInfo(textFont(ann)).pixelSize()) * 2;
     }
     static void setupTextDocument(QTextDocument &doc, const Annotation &ann)
     {
@@ -3139,6 +3569,7 @@ private:
         ann.tool = ATool::Text;
         ann.text = m_editor->toPlainText();
         ann.font = m_editFont;
+        ann.family = m_editFamily;
         ann.color = m_editColor;
         ann.bold = m_editBold;
         ann.italic = m_editItalic;
@@ -3161,6 +3592,34 @@ private:
     }
     bool eventFilter(QObject *obj, QEvent *ev) override
     {
+        if (m_colorDialog && (obj == m_rgbInput || obj == m_hexInput) && ev->type() == QEvent::KeyPress) {
+            const int key = static_cast<QKeyEvent *>(ev)->key();
+            if (key == Qt::Key_Return || key == Qt::Key_Enter) {
+                const QColor color = parseAnnotationColor(static_cast<QLineEdit *>(obj)->text());
+                if (color.isValid()) pickToolColor(m_colorDialogTool, color);
+                return true;                         // Enter applies a color; it never pins the capture.
+            }
+        }
+        if (m_sizeInput && (obj == m_sizeInput || obj == m_sizeInput->findChild<QLineEdit *>())) {
+            if (ev->type() == QEvent::Wheel) {
+                const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
+                if (delta) tuneWidth(delta > 0 ? 1 : -1, mapFromGlobal(QCursor::pos()));
+                ev->accept();
+                return true;
+            }
+            if (ev->type() == QEvent::KeyPress) {
+                const int key = static_cast<QKeyEvent *>(ev)->key();
+                if (key == Qt::Key_Return || key == Qt::Key_Enter || key == Qt::Key_Escape) {
+                    if (key == Qt::Key_Escape) syncSizeInput();
+                    else commitSizeInput();
+                    if (editorActive()) {
+                        m_textView->setFocus();
+                        m_editor->setFocus();
+                    } else setFocus();
+                    return true;
+                }
+            }
+        }
         if (editorActive() && (obj == m_textView || obj == m_textView->viewport())) {
             if (ev->type() == QEvent::InputMethod) {
                 m_textPreedit = !static_cast<QInputMethodEvent *>(ev)->preeditString().isEmpty();
@@ -3231,6 +3690,7 @@ private:
         commitTextEdit();
         m_editAnn = existing;
         m_editFont = existing >= 0 ? m_anns[existing].font : m_afont;
+        m_editFamily = existing >= 0 ? m_anns[existing].family : m_afamily;
         m_editColor = existing >= 0 ? m_anns[existing].color : m_acolor;
         m_editBold = existing >= 0 ? m_anns[existing].bold : m_abold;
         m_editItalic = existing >= 0 ? m_anns[existing].italic : m_aitalic;
@@ -3238,6 +3698,7 @@ private:
         m_selAnn = existing;
         m_acolor = m_colorText = m_editColor;
         m_afont = m_editFont;
+        m_afamily = m_editFamily;
         m_abold = m_editBold;
         m_aitalic = m_editItalic;
         syncToolButtons();
@@ -3294,6 +3755,7 @@ private:
     }
     void commitTextEdit()
     {
+        if (m_colorDialog) m_colorDialog->close();
         if (m_committingText || !editorActive()) return;
         m_committingText = true;
         QGuiApplication::inputMethod()->commit();
@@ -3306,7 +3768,7 @@ private:
         bool changed = !text.trimmed().isEmpty();
         if (replace) {
             const Annotation &old = m_anns[m_editAnn];
-            changed = old.text != text || old.rect != edited.rect || old.font != edited.font
+            changed = old.text != text || old.rect != edited.rect || old.font != edited.font || old.family != edited.family
                 || old.color != edited.color || old.bold != edited.bold || old.italic != edited.italic
                 || old.rot != edited.rot;
         }
@@ -3327,6 +3789,7 @@ private:
         m_editAnn = -1;
         m_committingText = false;
         setFocus();
+        syncSizeInput();
         update();
     }
     void applyEditorFont()                          // Size, weight, and slant in one place.
@@ -3334,6 +3797,7 @@ private:
         if (!m_editor) return;
         Annotation ann;
         ann.font = m_editFont;
+        ann.family = m_editFamily;
         ann.bold = m_editBold;
         ann.italic = m_editItalic;
         m_editor->setFont(textFont(ann));
@@ -3342,9 +3806,7 @@ private:
     }
     void editorFontStep(int dir)
     {
-        m_editFont = qBound(12, m_editFont + dir * 2, 72);
-        m_afont = m_editFont;
-        applyEditorFont();
+        setToolSize(m_editFont + dir * 0.5);
     }
     void tipPosition(const QPoint &at)
     {
@@ -3368,38 +3830,72 @@ private:
         translateAnnotation(m_anns[m_selAnn], d);
         update();
     }
-    void tuneWidth(int dir, const QPoint &at)         // Wheel and +/- share this path.
+    ATool optionsTool() const
     {
-        if (m_selAnn >= 0 && m_selAnn < m_anns.size()) {
-            Annotation &ann = m_anns[m_selAnn];       // Retune the selected annotation.
-            const bool texty = ann.tool == ATool::Text || ann.tool == ATool::Number;
-            int &value = texty ? ann.font : ann.pen;
-            const int next = qBound(texty ? 12 : 1, value + (texty ? dir * 2 : dir),
-                                    texty ? 72 : 12);
-            if (next == value) return;
+        if (editorActive()) return ATool::Text;
+        if (m_live) return m_ann.tool;
+        if (m_atool != ATool::Eraser && m_selAnn >= 0 && m_selAnn < m_anns.size())
+            return m_anns[m_selAnn].tool;
+        return m_atool;
+    }
+    qreal toolSize() const
+    {
+        if (editorActive()) return m_editFont;
+        const ATool tool = optionsTool();
+        const bool texty = tool == ATool::Text || tool == ATool::Number;
+        if (m_live) return texty ? m_ann.font : m_ann.pen;
+        if (m_atool != ATool::Eraser && m_selAnn >= 0 && m_selAnn < m_anns.size())
+            return texty ? m_anns[m_selAnn].font : m_anns[m_selAnn].pen;
+        return texty ? m_afont : m_apen;
+    }
+    void syncSizeInput()
+    {
+        if (!m_sizeInput) return;
+        const QSignalBlocker lock(m_sizeInput);
+        m_sizeInput->setEditText(QString::number(toolSize()));
+    }
+    void commitSizeInput()
+    {
+        if (!m_sizeInput) return;
+        bool ok = false;
+        const qreal value = m_sizeInput->currentText().toDouble(&ok);
+        if (ok && m_sizeInput->lineEdit()->hasAcceptableInput()) setToolSize(value);
+        syncSizeInput();
+    }
+    void setToolSize(qreal value)                    // Numeric edits and wheel input share validation and undo.
+    {
+        const ATool tool = optionsTool();
+        if (tool == ATool::None || !qIsFinite(value)) return;
+        const bool texty = tool == ATool::Text || tool == ATool::Number;
+        value = texty ? qBound(qreal(1), value, qreal(1638)) : qBound(1, qRound(value), 12);
+        if (value == toolSize()) { syncSizeInput(); return; }
+        if (editorActive()) {
+            m_afont = m_editFont = value;
+            applyEditorFont();
+        } else if (m_live) {
+            m_ann.pen = m_apen = qRound(value);
+        } else if (m_atool != ATool::Eraser && m_selAnn >= 0 && m_selAnn < m_anns.size()) {
             pushUndo();
-            value = next;
+            Annotation &ann = m_anns[m_selAnn];
+            if (texty) ann.font = value; else ann.pen = qRound(value);
             if (ann.tool == ATool::Text) fitTextAnnotation(ann);
             if (ann.tool == ATool::Number) {          // Circles stay square and wrap the digits.
-                const int s = ann.font * 2;
+                const int s = numberDiameter(ann);
                 ann.rect = QRect(ann.rect.center() - QPoint(s / 2, s / 2), QSize(s, s));
             }
-            m_sizeTip->setText(texty ? QStringLiteral("字号 %1").arg(ann.font)
-                                     : QStringLiteral("粗细 %1").arg(ann.pen));
-            tipPosition(at);
-            m_sizeTip->show();
-            update();
-            return;
-        }
-        if (m_atool == ATool::Text) {                 // Otherwise tune the tool defaults.
-            m_afont = qBound(12, m_afont + dir * 2, 72);
-            m_sizeTip->setText(QStringLiteral("字号 %1").arg(m_afont));
-        } else if (m_atool != ATool::None) {
-            m_apen = qBound(1, m_apen + dir, 12);
-            m_sizeTip->setText(QStringLiteral("粗细 %1").arg(m_apen));
-        } else {
-            return;
-        }
+        } else if (texty) m_afont = value;
+        else m_apen = qRound(value);
+        syncSizeInput();
+        update();
+    }
+    void tuneWidth(int dir, const QPoint &at)
+    {
+        const ATool tool = optionsTool();
+        if (tool == ATool::None) return;
+        const bool texty = tool == ATool::Text || tool == ATool::Number;
+        setToolSize(toolSize() + dir * (texty ? 0.5 : 1));
+        m_sizeTip->setText(texty ? QStringLiteral("字号 %1 pt").arg(toolSize())
+                               : QStringLiteral("粗细 %1").arg(toolSize()));
         tipPosition(at);
         m_sizeTip->show();
     }
@@ -3415,14 +3911,7 @@ private:
         if (m_atool == ATool::Pen || m_atool == ATool::Marker) m_ann.stroke << pos;
         else if (m_atool == ATool::Arrow) m_ann.a = m_ann.b = pos;
         else m_ann.rect = QRect(pos, pos);
-        if (m_tools->isVisible()) {                  // The status bar steps aside while drawing.
-            update(m_tools->geometry());
-            m_tools->hide();
-            if (m_toolOptions->isVisible()) {
-                update(m_toolOptions->geometry());
-                m_toolOptions->hide();
-            }
-        }
+        syncSizeInput();                             // Keep the active options visible while drawing.
         m_inspector->hide();
         m_sizeTip->hide();
     }
@@ -3482,6 +3971,7 @@ private:
         m_sizeTip->hide();
         placeToolbar();
         showToolBars();
+        syncSizeInput();
         update();
     }
     void setToolNone()
@@ -3527,8 +4017,9 @@ private:
         default: return m_acolor;
         }
     }
-    void pickToolColor(ATool family, const QColor &color)
+    void pickToolColor(ATool family, const QColor &color, QLineEdit *source = nullptr)
     {
+        if (!color.isValid()) return;
         switch (family) {
         case ATool::Rect: case ATool::Ellipse: m_colorShape = color; break;
         case ATool::Arrow: m_colorArrow = color; break;
@@ -3547,16 +4038,118 @@ private:
         if (editorActive() && family == ATool::Text) {
             m_editColor = color;
             applyEditorFont();
-        } else if (m_selAnn >= 0 && m_selAnn < m_anns.size()
-            && [](ATool a, ATool b) {
-                   const bool shapes = (a == ATool::Rect || a == ATool::Ellipse)
-                                    && (b == ATool::Rect || b == ATool::Ellipse);
-                   return a == b || shapes;
-               }(m_anns[m_selAnn].tool, family)) {   // Recolor the matching selection in place.
-            pushUndo();
-            m_anns[m_selAnn].color = color;
+        } else if (m_live && sameFamily) {
+            m_ann.color = color;                    // Committed annotations retain their original colors.
             update();
         }
+        if (m_colorButton && (optionsTool() == family
+            || ((optionsTool() == ATool::Rect || optionsTool() == ATool::Ellipse) && family == ATool::Rect)))
+            m_colorButton->setStyleSheet(QStringLiteral("QToolButton{border:1px solid %1;padding:3px;}").arg(color.name()));
+        if (m_colorDialog && m_colorDialogTool == family) {
+            const QSignalBlocker lock(m_colorWheel);
+            m_colorWheel->setCurrentColor(color);
+            const QSignalBlocker sliderLock(m_colorBrightness);
+            m_colorBrightness->setValue(m_colorWheel->brightness());
+            m_colorBrightness->setStyleSheet(QStringLiteral(
+                "QSlider::groove:vertical{width:12px;border:1px solid #626468;"
+                "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 %1,stop:1 #000000);}"
+                "QSlider::handle:vertical{background:#fff;border:1px solid #626468;height:8px;margin:0 -3px;}")
+                .arg(m_colorWheel->brightColor().name()));
+            m_colorPreview->setStyleSheet(QStringLiteral("background:%1;border:1px solid #929498;border-radius:3px;").arg(color.name()));
+            for (QLineEdit *field : {m_rgbInput.data(), m_hexInput.data()}) {
+                if (!field || field == source) continue;
+                const QSignalBlocker fieldLock(field);
+                field->setText(field == m_rgbInput ? rgbColorText(color) : color.name());
+                field->setStyleSheet(QString());
+            }
+        }
+    }
+    static QString rgbColorText(const QColor &color)
+    {
+        return QStringLiteral("rgb(%1,%2,%3)").arg(color.red()).arg(color.green()).arg(color.blue());
+    }
+    static QColor parseAnnotationColor(const QString &text)
+    {
+        const QString value = text.trimmed();
+        static const QRegularExpression hex(QStringLiteral("^#[0-9a-fA-F]{6}$"));
+        if (hex.match(value).hasMatch()) return QColor(value);
+        static const QRegularExpression rgb(QStringLiteral("^rgb\\(\\s*(\\d{1,3})\\s*,\\s*(\\d{1,3})\\s*,\\s*(\\d{1,3})\\s*\\)$"),
+                                             QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch match = rgb.match(value);
+        if (!match.hasMatch()) return {};
+        const int r = match.captured(1).toInt(), g = match.captured(2).toInt(), b = match.captured(3).toInt();
+        return r <= 255 && g <= 255 && b <= 255 ? QColor(r, g, b) : QColor();
+    }
+    void showColorPalette(ATool family, QToolButton *anchor)
+    {
+        if (m_colorDialog) m_colorDialog->close();
+        auto *dialog = new QDialog(this, Qt::Popup | Qt::FramelessWindowHint);
+        m_colorDialog = dialog;
+        m_colorDialogTool = family;
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->setWindowTitle(QStringLiteral("调色板"));
+        dialog->setStyleSheet(QStringLiteral(
+            "QDialog{background:rgb(29,31,35);border:1px solid #626468;}"
+            "QLineEdit{color:#fff;background:rgb(29,31,35);border:1px solid #626468;"
+            "padding:3px;font-size:12px;selection-background-color:#007aff;}"));
+        auto *layout = new QVBoxLayout(dialog);
+        layout->setContentsMargins(12, 12, 12, 12);
+        layout->setSpacing(8);
+        auto *top = new QHBoxLayout;
+        top->setSpacing(8);
+        m_colorWheel = new ColorWheel(toolColor(family), dialog);
+        top->addWidget(m_colorWheel);
+        m_colorBrightness = new QSlider(Qt::Vertical, dialog);
+        m_colorBrightness->setRange(0, 255);
+        m_colorBrightness->setFixedSize(18, 200);
+        m_colorBrightness->setAccessibleName(QStringLiteral("明暗"));
+        m_colorBrightness->setToolTip(QStringLiteral("拖动调整明暗"));
+        top->addWidget(m_colorBrightness);
+        layout->addLayout(top);
+        auto *bottom = new QHBoxLayout;
+        bottom->setSpacing(8);
+        m_colorPreview = new QLabel(dialog);
+        m_colorPreview->setFixedSize(32, 54);
+        m_colorPreview->setToolTip(QStringLiteral("当前颜色"));
+        bottom->addWidget(m_colorPreview);
+        auto *fields = new QVBoxLayout;
+        fields->setSpacing(4);
+        m_rgbInput = new QLineEdit(dialog);
+        m_hexInput = new QLineEdit(dialog);
+        m_rgbInput->setPlaceholderText(QStringLiteral("rgb(255,0,0)"));
+        m_hexInput->setPlaceholderText(QStringLiteral("#ff0000"));
+        m_rgbInput->setToolTip(QStringLiteral("RGB 分量为 0–255，例如 rgb(255,0,0)"));
+        m_hexInput->setToolTip(QStringLiteral("六位 HEX 颜色，例如 #ff0000"));
+        m_rgbInput->setAccessibleName(QStringLiteral("RGB 颜色"));
+        m_hexInput->setAccessibleName(QStringLiteral("HEX 颜色"));
+        for (QLineEdit *field : {m_rgbInput.data(), m_hexInput.data()}) {
+            field->installEventFilter(this);
+            fields->addWidget(field);
+            connect(field, &QLineEdit::textEdited, this, [this, family, field](const QString &text) {
+                const QColor color = parseAnnotationColor(text);
+                field->setStyleSheet(color.isValid() ? QString() : QStringLiteral("border:1px solid #ff3b30;"));
+                if (color.isValid()) pickToolColor(family, color, field);
+            });
+        }
+        bottom->addLayout(fields);
+        layout->addLayout(bottom);
+        connect(m_colorBrightness, &QSlider::valueChanged, m_colorWheel, &ColorWheel::setBrightness);
+        connect(m_colorWheel, &ColorWheel::colorChanged, this,
+                [this, family](const QColor &color) { pickToolColor(family, color); });
+        connect(dialog, &QDialog::finished, this, [this] {
+            if (!isVisible()) return;
+            if (editorActive()) { m_textView->setFocus(); m_editor->setFocus(); }
+            else setFocus();
+        });
+        pickToolColor(family, toolColor(family));
+        dialog->show();
+        dialog->adjustSize();
+        const QPoint below = anchor->mapToGlobal(QPoint(0, anchor->height()));
+        const QScreen *screen = QGuiApplication::screenAt(below);
+        const QRect available = (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry();
+        const int y = below.y() + dialog->height() <= available.bottom() + 1 ? below.y()
+            : qMax(available.top(), anchor->mapToGlobal(QPoint()).y() - dialog->height());
+        dialog->move(qBound(available.left(), below.x(), available.right() + 1 - dialog->width()), y);
     }
     void pickArrowStyle(int style)
     {
@@ -3592,15 +4185,38 @@ private:
             update();
         }
     }
+    void setTextFamily(const QFont &font)
+    {
+        m_afamily = font.family();
+        if (editorActive()) {
+            m_editFamily = m_afamily;
+            applyEditorFont();
+        } else if (m_selAnn >= 0 && m_selAnn < m_anns.size() && m_anns[m_selAnn].tool == ATool::Text
+                   && m_anns[m_selAnn].family != m_afamily) {
+            pushUndo();
+            m_anns[m_selAnn].family = m_afamily;
+            fitTextAnnotation(m_anns[m_selAnn]);
+            update();
+        }
+    }
     // Options strip under the toolbar: contents follow the armed tool.
     void updateToolOptions()
     {
-        if (m_atool == ATool::None || m_live) { m_toolOptions->hide(); return; }
+        if (m_colorDialog) m_colorDialog->close();
+        const QRect old = m_toolOptions->geometry();
+        const ATool tool = optionsTool();
+        if (tool == ATool::None) {
+            m_toolOptions->hide();
+            update(old);
+            return;
+        }
+        m_sizeInput = nullptr;
+        m_colorButton = nullptr;
         delete m_toolOptions->layout();              // Drops the previous row.
-        const QList<QWidget *> stale = m_toolOptions->findChildren<QWidget *>();
+        const QList<QWidget *> stale = m_toolOptions->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly);
         for (QWidget *w : stale) delete w;
         auto *lay = new QHBoxLayout(m_toolOptions);
-        lay->setContentsMargins(4, 4, 4, 4);
+        lay->setContentsMargins(4, 2, 4, 2);
         lay->setSpacing(2);
         auto addOption = [this](QHBoxLayout *l, Icon icon, const QString &tip, bool on,
                                 const std::function<void()> &apply) {
@@ -3622,25 +4238,67 @@ private:
                                               "#007aff", "#af52de", "#ffffff", "#1c1c1e"};
             for (const QColor &color : swatches) {
                 auto *swatch = new QToolButton;
+                swatch->setObjectName(QStringLiteral("presetColor"));
                 swatch->setFixedSize(18, 18);
                 swatch->setFocusPolicy(Qt::NoFocus);
                 swatch->setCursor(Qt::PointingHandCursor);
                 swatch->setToolTip(color.name());
-                swatch->setStyleSheet(QString("QToolButton{background:%1;border-radius:3px;"
-                                              "border:none;}")
+                swatch->setStyleSheet(QString("QToolButton{background:%1;border:1px solid #929498;}")
                                           .arg(color.name()));
                 connect(swatch, &QToolButton::clicked, this,
                         [this, family, color] { pickToolColor(family, color); });
                 l->addWidget(swatch);
             }
+            m_colorButton = iconButton(Icon::Palette, QStringLiteral("调色板：点击或拖动选色，或输入 RGB / HEX"));
+            m_colorButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+            m_colorButton->setFocusPolicy(Qt::NoFocus);
+            m_colorButton->setCursor(Qt::PointingHandCursor);
+            m_colorButton->setStyleSheet(QStringLiteral("QToolButton{border:1px solid %1;padding:3px;}").arg(toolColor(family).name()));
+            QToolButton *button = m_colorButton;
+            connect(button, &QToolButton::clicked, this, [this, family, button] { showColorPalette(family, button); });
+            l->addWidget(button);
         };
-        switch (m_atool) {
+        const bool texty = tool == ATool::Text || tool == ATool::Number;
+        auto addSize = [this, lay, texty] {
+            if (!texty) lay->addWidget(new QLabel(QStringLiteral("粗细")));
+            m_sizeInput = new QComboBox;
+            m_sizeInput->setEditable(true);
+            m_sizeInput->setInsertPolicy(QComboBox::NoInsert);
+            m_sizeInput->setCompleter(nullptr);
+            auto *validator = new QDoubleValidator(1, texty ? 1638 : 12, texty ? 1 : 0, m_sizeInput);
+            validator->setNotation(QDoubleValidator::StandardNotation);
+            validator->setLocale(QLocale::c());
+            m_sizeInput->setValidator(validator);
+            if (texty) {
+                for (qreal size : {5.5, 6.5, 7.5, 8., 9., 10., 10.5, 11., 12., 14., 15., 16.,
+                                   18., 20., 22., 24., 26., 28., 36., 42., 48., 54., 72.})
+                    m_sizeInput->addItem(QString::number(size));
+            } else {
+                for (int size = 1; size <= 12; ++size) m_sizeInput->addItem(QString::number(size));
+            }
+            m_sizeInput->setToolTip(texty ? QStringLiteral("标准字号 (pt)：小四=12，五号=10.5")
+                                        : QStringLiteral("输入、下拉选择或滚轮调节粗细"));
+            m_sizeInput->setFocusPolicy(Qt::ClickFocus);
+            m_sizeInput->setFixedWidth(texty ? 62 : 48);
+            m_sizeInput->installEventFilter(this);
+            m_sizeInput->lineEdit()->installEventFilter(this);
+            syncSizeInput();
+            connect(m_sizeInput->lineEdit(), &QLineEdit::editingFinished, this, &CaptureOverlay::commitSizeInput);
+            connect(m_sizeInput, QOverload<int>::of(&QComboBox::activated), this, [this](int) {
+                commitSizeInput();
+                if (editorActive()) { m_textView->setFocus(); m_editor->setFocus(); }
+                else setFocus();
+            });
+            lay->addWidget(m_sizeInput);
+        };
+        switch (tool) {
         case ATool::Rect:
         case ATool::Ellipse:
             addOption(lay, Icon::Rect, QStringLiteral("矩形"), !m_shapeEllipse,
                       [this] { selectTool(ATool::Rect); });
             addOption(lay, Icon::Ellipse, QStringLiteral("椭圆"), m_shapeEllipse,
                       [this] { selectTool(ATool::Ellipse); });
+            addSize();
             addSeparator(lay);
             addSwatches(lay, ATool::Rect);
             break;
@@ -3652,6 +4310,7 @@ private:
             for (int k = 0; k < 4; ++k)
                 addOption(lay, styles[k].icon, QString::fromUtf8(styles[k].tip),
                           m_arrowStyle == k, [this, k] { pickArrowStyle(k); });
+            addSize();
             addSeparator(lay);
             addSwatches(lay, ATool::Arrow);
             break;
@@ -3677,26 +4336,42 @@ private:
             connect(italic, &QToolButton::toggled, this, &CaptureOverlay::setTextItalic);
             lay->addWidget(bold);
             lay->addWidget(italic);
+            auto *font = new QComboBox;
+            font->setObjectName(QStringLiteral("annotationFont"));
+            font->setEditable(false);
+            font->addItems(QFontDatabase().families());
+            font->setFocusPolicy(Qt::NoFocus);
+            font->setFixedWidth(145);
+            font->setToolTip(QStringLiteral("字体"));
+            font->setCurrentText(editorActive() ? m_editFamily
+                : m_selAnn >= 0 && m_selAnn < m_anns.size() ? m_anns[m_selAnn].family : m_afamily);
+            connect(font, &QComboBox::currentTextChanged, this,
+                    [this](const QString &family) { setTextFamily(QFont(family)); });
+            lay->addWidget(font);
+            addSize();
             addSeparator(lay);
             addSwatches(lay, ATool::Text);
             break;
         }
         case ATool::Mosaic:
         case ATool::Eraser: {
-            auto *hint = new QLabel(m_atool == ATool::Mosaic ? QStringLiteral("滚轮调节块大小")
+            addSize();
+            auto *hint = new QLabel(tool == ATool::Mosaic ? QStringLiteral("滚轮调节块大小")
                                                              : QStringLiteral("滚轮调节粗细"));
             lay->addWidget(hint);
             break;
         }
         default:
-            addSwatches(lay, m_atool);              // Pen, Marker, Number.
+            addSize();
+            addSeparator(lay);
+            addSwatches(lay, tool);                 // Pen, Marker, Number.
             break;
         }
-        m_toolOptions->adjustSize();
-        positionToolOptions();
+        for (int i = 0; i < lay->count(); ++i) lay->itemAt(i)->widget()->show();
         m_toolOptions->show();
+        placeToolbar();
         m_toolOptions->raise();
-        update(m_toolOptions->geometry().adjusted(-1, -1, 1, 1));
+        update(old.united(m_toolOptions->geometry()).adjusted(-1, -1, 1, 1));
     }
     // Shared by the overlay (logical coords, origin 0, scale 1) and cropped() (native crop
     // coords): annotations are stored overlay-local and mapped through this transform.
@@ -3763,8 +4438,7 @@ private:
         }
         case ATool::Number: {                        // Filled circle with a sequence digit.
             if (ann.text.isEmpty()) break;
-            QFont font(QStringLiteral("Microsoft YaHei UI"));
-            font.setPixelSize(ann.font);
+            QFont font = textFont(ann);
             font.setBold(true);
             p.setPen(Qt::NoPen);
             p.setBrush(ann.color);
@@ -4036,6 +4710,7 @@ private:
 
     void resetSelection()
     {
+        if (m_colorDialog) m_colorDialog->close();
         m_mode = Selecting;                         // m_hover is kept: the next mouse move refreshes it.
         m_sel = QRect();
         m_drag = H_None;
@@ -4202,65 +4877,45 @@ private:
         m_sizeTip->move(r.topLeft() - QPoint(0, m_sizeTip->height() + 4));
         m_sizeTip->show();
     }
-    // The status bar holds every action icon in one of two layouts: a horizontal strip
-    // flush with the selection's bottom-right corner, or a vertical strip on its right
-    // side when the bottom edge has no room.
-    void buildToolLayout(Qt::Orientation orientation)
+    void buildToolLayout()
     {
-        if (m_toolOrientation == int(orientation)) return;
-        delete m_tools->layout();
-        QBoxLayout *lay = orientation == Qt::Horizontal
-            ? static_cast<QBoxLayout *>(new QHBoxLayout(m_tools))
-            : static_cast<QBoxLayout *>(new QVBoxLayout(m_tools));
+        if (m_tools->layout()) return;
+        auto *lay = new QHBoxLayout(m_tools);
         lay->setContentsMargins(4, 4, 4, 4);
         lay->setSpacing(2);
         for (QWidget *button : m_toolButtons) lay->addWidget(button);
-        m_toolOrientation = int(orientation);
         m_tools->adjustSize();
     }
     void placeToolbar()
     {
-        const QRect old = m_tools->geometry();
+        const QRect old = m_tools->geometry().united(m_toolOptions->geometry());
         const QScreen *screen = QGuiApplication::screenAt(m_sel.center() + geometry().topLeft());
         const QRect avail = (screen ? screen : QGuiApplication::primaryScreen())
                               ->availableGeometry().translated(-geometry().topLeft());
-        buildToolLayout(Qt::Horizontal);
-        const QSize h = m_tools->size();
-        buildToolLayout(Qt::Vertical);
-        const QSize v = m_tools->size();
+        const QSize main = m_tools->sizeHint();
+        const QSize options = optionsTool() == ATool::None ? QSize(0, 0) : m_toolOptions->sizeHint();
+        const int width = qMax(main.width(), options.width());
+        const int height = main.height() + options.height();
         const int selRight = m_sel.right() + 1, selBottom = m_sel.bottom() + 1;
-        const int hx = qBound(avail.left(), selRight - h.width(), avail.right() + 1 - h.width());
-        if (selBottom + 6 + h.height() <= avail.bottom() + 1) {
-            buildToolLayout(Qt::Horizontal);
-            m_tools->move(hx, selBottom + 6);         // Default: bottom-right of the selection.
-        } else if (selRight + 6 + v.width() <= avail.right() + 1) {
-            buildToolLayout(Qt::Vertical);
-            m_tools->move(selRight + 6,
-                          qBound(avail.top(), selBottom - v.height(), avail.bottom() + 1 - v.height()));
-        } else if (m_sel.top() - 6 - h.height() >= avail.top()) {
-            buildToolLayout(Qt::Horizontal);
-            m_tools->move(hx, m_sel.top() - 6 - h.height());
-        } else {                                       // Selection covers the screen: dock inside.
-            buildToolLayout(Qt::Vertical);
-            m_tools->move(avail.right() + 1 - v.width() - 8, avail.bottom() + 1 - v.height() - 8);
-        }
+        const int x = qBound(avail.left(), selRight - width, avail.right() + 1 - width);
+        const int y = selBottom + 6 + height <= avail.bottom() + 1 ? selBottom + 6
+            : m_sel.top() - 6 - height >= avail.top() ? m_sel.top() - 6 - height
+            : qMax(avail.top(), avail.bottom() + 1 - height - 8);
+        m_tools->setGeometry(x, y, width, main.height());
         positionToolOptions();
         const QRect glass = m_toolOptions->isVisible()
             ? m_tools->geometry().united(m_toolOptions->geometry()) : m_tools->geometry();
-        update(glass.united(old).adjusted(-1, -1, 1, 1));   // Repaint both frost regions.
+        update(glass.united(old).adjusted(-1, -1, 1, 1));
     }
     void positionToolOptions()                      // Option strip hugs the toolbar's bottom edge.
     {
-        if (!m_toolOptions->isVisible() && m_atool == ATool::None) return;
-        m_toolOptions->adjustSize();
+        if (!m_toolOptions->isVisible() && optionsTool() == ATool::None) return;
         const QRect bar = m_tools->geometry();
-        const int y = bar.bottom() + 1 + 4;
-        m_toolOptions->move(qBound(0, bar.left(), width() - m_toolOptions->width()),
-                            y + m_toolOptions->height() + 8 <= height() ? y
-                                                                        : qMax(0, bar.top() - 4 - m_toolOptions->height()));
+        m_toolOptions->setGeometry(bar.left(), bar.bottom() + 1, bar.width(), m_toolOptions->sizeHint().height());
     }
-    void hideToolBars()                             // Both bars step aside during drags.
+    void hideToolBars()
     {
+        if (optionsTool() != ATool::None) return;     // Active tool options remain available throughout a drag.
         if (m_toolOptions->isVisible()) {
             update(m_toolOptions->geometry());
             m_toolOptions->hide();
@@ -4273,7 +4928,7 @@ private:
     void showToolBars()
     {
         m_tools->show();
-        if (m_atool != ATool::None && !m_live) {
+        if (optionsTool() != ATool::None) {
             positionToolOptions();
             m_toolOptions->show();
         }
@@ -4301,6 +4956,7 @@ private slots:
         m_selAnn = -1;
         normalizeNumbers();
         syncUndoButtons();
+        updateToolOptions();
         update();
     }
     void redoAnnotation()
@@ -4312,6 +4968,7 @@ private slots:
         m_selAnn = -1;
         normalizeNumbers();
         syncUndoButtons();
+        updateToolOptions();
         update();
     }
     void saveCapture()
@@ -4387,11 +5044,11 @@ private:
     QLabel *m_sizeTip = nullptr;
     QWidget *m_tools = nullptr;
     QVector<QWidget *> m_toolButtons;
-    int m_toolOrientation = -1;
     ATool m_atool = ATool::None;
     QColor m_acolor = QColor("#ff3b30");             // Red first: the loudest marking color.
     int m_apen = 3;
-    int m_afont = 20;                                // Base text/number font size (px).
+    qreal m_afont = 15;                              // Base text/number font size (pt).
+    QString m_afamily = QStringLiteral("Microsoft YaHei UI");
     bool m_afill = false;                            // Default fill mode for rect / ellipse.
     bool m_spaceHeld = false;                        // Space turns the next drag into a move.
     bool m_nudging = false;                          // Coalesces WASD bursts into one undo step.
@@ -4413,12 +5070,21 @@ private:
     QPointF m_textMoveOrigin;
     int m_editAnn = -1;                              // Annotation being re-edited.
     QColor m_editColor = QColor("#ff3b30");
-    int m_editFont = 20;
+    qreal m_editFont = 15;
+    QString m_editFamily;
     bool m_committingText = false;
     HIMC m_imeCtx = nullptr;                         // Detached IME context for text editing.
     QToolButton *m_shapeButton = nullptr;            // Merged rect / ellipse tool button.
     QVector<QToolButton *> m_toolBtn;                // Tool button per ATool id (shape shared).
     QWidget *m_toolOptions = nullptr;                // Per-tool option strip under the toolbar.
+    QComboBox *m_sizeInput = nullptr;                 // Editable width / point-size presets.
+    QToolButton *m_colorButton = nullptr;
+    QPointer<QDialog> m_colorDialog;
+    QPointer<ColorWheel> m_colorWheel;
+    QPointer<QSlider> m_colorBrightness;
+    QPointer<QLabel> m_colorPreview;
+    QPointer<QLineEdit> m_rgbInput, m_hexInput;
+    ATool m_colorDialogTool = ATool::None;
     bool m_shapeEllipse = false;                     // Current sub-shape of the shape button.
     int m_arrowStyle = 0;                            // 0 single, 1 double, 2 none, 3 hollow.
     bool m_abold = false, m_aitalic = false;         // Text tool defaults.
@@ -4533,6 +5199,8 @@ int main(int argc, char **argv)
         return CaptureOverlay::testWindowDetection();
     if (app.arguments().contains(QStringLiteral("--test-text-annotation")))
         return CaptureOverlay::testTextAnnotation();
+    if (app.arguments().contains(QStringLiteral("--test-color-wheel")))
+        return ColorWheel::testRendering();
     const int probe = app.arguments().indexOf(QStringLiteral("--probe-uia"));
     if (probe > 0 && probe + 2 < app.arguments().size()) {
         // Diagnostic: run the production element engines at one native-pixel screen point.
