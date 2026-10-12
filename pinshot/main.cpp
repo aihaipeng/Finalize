@@ -822,6 +822,16 @@ public:
         QKeyEvent copyImage(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
         QApplication::sendEvent(&overlay, &copyImage);
         check(clipboard->image() == cropped && !overlay.isVisible(), "Ctrl+C still copies only the selection and closes capture");
+        QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        for (const Mode mode : {Selecting, Adjusting}) {
+            overlay.m_mode = mode;
+            overlay.show();
+            inspector->show();
+            overlay.m_tools->setVisible(mode == Adjusting);
+            QApplication::sendEvent(&overlay, &escape);
+            check(!overlay.isVisible() && !inspector->isVisible() && !overlay.m_tools->isVisible(),
+                  "Escape exits capture before and after selecting a region");
+        }
         clipboard->setMimeData(saved);
         std::puts("PASS: pixel sampling, magnifier, color shortcuts, and capture regression checks");
         return 0;
@@ -920,7 +930,7 @@ protected:
     {
         switch (e->key()) {
         case Qt::Key_Escape:
-            if (m_mode == Adjusting) resetSelection(); else close();
+            close();
             break;
         case Qt::Key_Return:
         case Qt::Key_Enter:
