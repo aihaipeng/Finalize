@@ -9,4 +9,6 @@ pinshot/release/
 moc_*.cpp
 moc_predefs.h
 AGENTS.md
+CONTEXT.md
+MAPPING.md
 pinshot/README.md
