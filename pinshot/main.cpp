@@ -12,7 +12,8 @@
 #include <QSystemTrayIcon>
 #include <QMenu>
 #include <QLabel>
-#include <QPushButton>
+#include <QToolButton>
+#include <QPainterPath>
 #include <QHBoxLayout>
 #include <QClipboard>
 #include <QFileDialog>
@@ -221,6 +222,75 @@ private:
     QPoint m_dragOff;
     bool m_borderOn = true;
 };
+
+// ---------- Shared icon set for all buttons. ----------
+// Stroke glyphs on a 24-unit grid with 2-unit round strokes, following the free
+// Feather/Lucide line-icon style: one vocabulary for every button in the app, painted
+// in code so no resource files ship and any icon stays crisp at every scale.
+
+enum class Icon { Save, Copy, Pin, LongShot, Cancel };
+
+static void buildIconPath(QPainterPath &path, Icon icon)
+{
+    switch (icon) {
+    case Icon::Save:                                  // Floppy disk with label slot.
+        path.moveTo(16, 3); path.lineTo(5, 3); path.lineTo(3, 5); path.lineTo(3, 19);
+        path.lineTo(5, 21); path.lineTo(19, 21); path.lineTo(21, 19); path.lineTo(21, 8);
+        path.lineTo(16, 3);
+        path.moveTo(7, 21); path.lineTo(7, 13); path.lineTo(17, 13); path.lineTo(17, 21);
+        path.moveTo(7, 3); path.lineTo(7, 8); path.lineTo(15, 8); path.lineTo(15, 3);
+        break;
+    case Icon::Copy:                                  // Two stacked sheets.
+        path.addRoundedRect(9, 9, 12, 12, 2, 2);
+        path.moveTo(6, 15); path.lineTo(5, 15); path.quadTo(3, 15, 3, 13); path.lineTo(3, 5);
+        path.quadTo(3, 3, 5, 3); path.lineTo(13, 3); path.quadTo(15, 3, 15, 5); path.lineTo(15, 6);
+        break;
+    case Icon::Pin:                                   // Thumbtack: head plus needle.
+        path.addRoundedRect(7, 3, 10, 9, 3, 3);
+        path.moveTo(12, 12); path.lineTo(12, 21);
+        break;
+    case Icon::LongShot:                              // Chevrons pointing down: scrolling capture.
+        path.moveTo(7, 6); path.lineTo(12, 11); path.lineTo(17, 6);
+        path.moveTo(7, 13); path.lineTo(12, 18); path.lineTo(17, 13);
+        break;
+    case Icon::Cancel:                                // Cross.
+        path.moveTo(6, 6); path.lineTo(18, 18);
+        path.moveTo(18, 6); path.lineTo(6, 18);
+        break;
+    }
+}
+
+static QIcon makeIcon(Icon icon)
+{
+    QPainterPath path;
+    buildIconPath(path, icon);
+    QIcon result;
+    for (int px : {16, 24, 32}) {                     // 1x / 1.5x / 2x variants of one logical size.
+        QPixmap pm(px, px);
+        pm.setDevicePixelRatio(px / 16.0);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.scale(16.0 / 24.0, 16.0 / 24.0);
+        QPen pen(QColor("#ececec"), 1.6);             // Fine hairline strokes at 16px.
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        p.setPen(pen);
+        p.drawPath(path);
+        result.addPixmap(pm);
+    }
+    return result;
+}
+
+static QToolButton *iconButton(Icon icon, const QString &tip)
+{
+    auto *button = new QToolButton;
+    button->setIcon(makeIcon(icon));
+    button->setIconSize(QSize(16, 16));
+    button->setToolTip(tip);
+    button->setCursor(Qt::PointingHandCursor);
+    return button;
+}
 
 // ---------- Manual scrolling capture ----------
 // shortcut: Textureless or identical repeated overlaps cannot be uniquely aligned; add scroll-position data if needed.
@@ -479,26 +549,26 @@ private:
         const QString barQss =
             "QWidget{background:#2d2d2d;border-radius:4px;}"
             "QLabel{color:#fff;font-size:13px;padding:0 8px;}"
-            "QPushButton{color:#fff;background:transparent;border:none;padding:4px 10px;font-size:13px;}"
-            "QPushButton:hover{background:#454545;border-radius:3px;}";
+            "QToolButton{background:transparent;border:none;border-radius:3px;padding:4px;}"
+            "QToolButton:hover{background:#454545;}";
         m_bar = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
         m_bar->setStyleSheet(barQss);
         auto *lay = new QHBoxLayout(m_bar);
         lay->setContentsMargins(6, 0, 4, 0);
         m_label = new QLabel;
-        auto *save = new QPushButton(QStringLiteral("保存"));
-        auto *copy = new QPushButton(QStringLiteral("复制"));
-        auto *pin = new QPushButton(QStringLiteral("贴图"));
-        auto *no = new QPushButton(QStringLiteral("取消"));
+        auto *save = iconButton(Icon::Save, QStringLiteral("保存到文件"));
+        auto *copy = iconButton(Icon::Copy, QStringLiteral("复制到剪贴板"));
+        auto *pin = iconButton(Icon::Pin, QStringLiteral("贴在屏幕上"));
+        auto *no = iconButton(Icon::Cancel, QStringLiteral("取消 (Esc)"));
         lay->addWidget(m_label);
         lay->addWidget(save);
         lay->addWidget(copy);
         lay->addWidget(pin);
         lay->addWidget(no);
-        connect(save, &QPushButton::clicked, this, &LongCapture::saveCapture);
-        connect(copy, &QPushButton::clicked, this, &LongCapture::copyCapture);
-        connect(pin, &QPushButton::clicked, this, &LongCapture::finish);
-        connect(no, &QPushButton::clicked, this, &LongCapture::cancel);
+        connect(save, &QToolButton::clicked, this, &LongCapture::saveCapture);
+        connect(copy, &QToolButton::clicked, this, &LongCapture::copyCapture);
+        connect(pin, &QToolButton::clicked, this, &LongCapture::finish);
+        connect(no, &QToolButton::clicked, this, &LongCapture::cancel);
         updateLabel();
         // Keep the toolbar below the selection and the preview alongside it on the same screen.
         const QScreen *scr = QGuiApplication::screenAt(m_region.center());
@@ -1280,29 +1350,22 @@ public:
             "background:#2d2d2d;color:#fff;padding:2px 6px;border-radius:3px;font-size:12px;");
         m_sizeTip->hide();
 
-        // Dark rounded toolbar: save / copy / pin.
+        // Frosted status bar: the overlay paints a blurred snapshot behind this transparent
+        // container, so the glass effect follows the frozen frame at every position.
         m_tools = new QWidget(this);
         m_tools->setStyleSheet(
-            "QWidget{background:#2d2d2d;border-radius:4px;}"
-            "QPushButton{color:#fff;background:transparent;border:none;padding:4px 12px;font-size:13px;}"
-            "QPushButton:hover{background:#454545;border-radius:3px;}");
-        auto *lay = new QHBoxLayout(m_tools);
-        lay->setContentsMargins(4, 0, 4, 0);
-        lay->setSpacing(2);
-        auto addBtn = [&lay](const QString &text, const char *tip) {
-            auto *b = new QPushButton(text);
-            b->setToolTip(QString::fromUtf8(tip));
-            lay->addWidget(b);
-            return b;
-        };
-        connect(addBtn(QStringLiteral("保存"), "保存到文件 (Ctrl+S)"), &QPushButton::clicked,
-                this, &CaptureOverlay::saveCapture);
-        connect(addBtn(QStringLiteral("复制"), "复制到剪贴板 (Ctrl+C)"), &QPushButton::clicked,
-                this, &CaptureOverlay::copyCapture);
-        connect(addBtn(QStringLiteral("贴图"), "贴在屏幕上 (Enter / 双击)"), &QPushButton::clicked,
-                this, &CaptureOverlay::pinCapture);
-        connect(addBtn(QStringLiteral("长截图"), "手动滚动拼接长图"), &QPushButton::clicked,
-                this, &CaptureOverlay::longCapture);
+            "QToolButton{background:transparent;border:none;border-radius:3px;padding:4px;}"
+            "QToolButton:hover{background:rgba(255,255,255,38);}");
+        auto *save = iconButton(Icon::Save, QStringLiteral("保存到文件 (Ctrl+S)"));
+        auto *copy = iconButton(Icon::Copy, QStringLiteral("复制到剪贴板 (Ctrl+C)"));
+        auto *pin = iconButton(Icon::Pin, QStringLiteral("贴在屏幕上 (Enter / 双击)"));
+        auto *scroll = iconButton(Icon::LongShot, QStringLiteral("长截图：手动滚动拼接长图"));
+        m_toolButtons = {save, copy, pin, scroll};
+        connect(save, &QToolButton::clicked, this, &CaptureOverlay::saveCapture);
+        connect(copy, &QToolButton::clicked, this, &CaptureOverlay::copyCapture);
+        connect(pin, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
+        connect(scroll, &QToolButton::clicked, this, &CaptureOverlay::longCapture);
+        buildToolLayout(Qt::Horizontal);
         m_tools->adjustSize();
         m_tools->hide();
 
@@ -1493,6 +1556,23 @@ public:
               "a locked selection does not chase the cursor across detected areas");
         mouseMove(screenOrigin + QPoint(320, 210));  // Back inside the selection.
         check(overlay.m_hover.isNull(), "hover re-detection stays off inside the locked selection too");
+        // Toolbar placement: horizontal strip flush with the selection's bottom-right corner
+        // by default, flipping to a vertical strip on its right side at the screen bottom.
+        const QRect avail = QGuiApplication::primaryScreen()->availableGeometry()
+                               .translated(-overlay.geometry().topLeft());
+        overlay.m_sel = QRect(avail.topLeft() + QPoint(60, 60), QSize(240, 120));
+        overlay.m_mode = Adjusting;
+        overlay.placeToolbar();
+        check(overlay.m_tools->y() >= overlay.m_sel.bottom() + 1
+                  && overlay.m_tools->x() + overlay.m_tools->width() == overlay.m_sel.right() + 1
+                  && overlay.m_tools->width() > overlay.m_tools->height(),
+              "toolbar docks below the selection, flush with its right edge");
+        overlay.m_sel = QRect(avail.left() + 40, avail.bottom() + 1 - 150, 300, 150);
+        overlay.placeToolbar();
+        check(overlay.m_tools->x() >= overlay.m_sel.right() + 1
+                  && overlay.m_tools->y() + overlay.m_tools->height() == overlay.m_sel.bottom() + 1
+                  && overlay.m_tools->height() > overlay.m_tools->width(),
+              "toolbar flips to a vertical strip on the selection's right side at the screen bottom");
         overlay.m_windowRects.clear();
         overlay.m_sel = QRect(2, 2, 30, 20);
         overlay.m_mode = Adjusting;
@@ -1736,6 +1816,27 @@ public:
         check(overlay.m_queryId == lockedQueryId && !overlay.m_queryPending && overlay.m_hover.isNull()
                   && overlay.m_sel == expectedButton,
               "the locked selection stays put while the mouse keeps moving");
+        // The status bar steps aside while the selection is dragged and returns on release.
+        overlay.m_drag = H_BR;
+        overlay.m_pressSel = overlay.m_sel;
+        overlay.m_pressPos = expectedButton.bottomRight();
+        const QPoint grown = expectedButton.bottomRight() + QPoint(40, 30);
+        QMouseEvent dragMove(QEvent::MouseMove, grown, grown + overlay.geometry().topLeft(),
+                             Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &dragMove);
+        check(!overlay.m_tools->isVisible() && !overlay.m_inspector->isVisible()
+                  && overlay.m_sel != expectedButton,
+              "the status bar and pixel inspector hide while the selection is being dragged");
+        QMouseEvent dragRelease(QEvent::MouseButtonRelease, grown, grown + overlay.geometry().topLeft(),
+                                Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &dragRelease);
+        check(overlay.m_tools->isVisible() && overlay.m_tools->y() > overlay.m_sel.bottom(),
+              "the status bar returns below the resized selection once the drag ends");
+        QMouseEvent hoverAfter(QEvent::MouseMove, grown + QPoint(6, 0), grown + QPoint(6, 0) + overlay.geometry().topLeft(),
+                               Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &hoverAfter);
+        check(overlay.m_inspector->isVisible(),
+              "the pixel inspector comes back on the next hover move after the drag");
         bool pinned = false;
         QObject::connect(&overlay, &CaptureOverlay::grabbed, &overlay, [&pinned](const QPixmap &pix) { pinned = !pix.isNull(); });
         overlay.resetSelection();
@@ -1802,6 +1903,27 @@ protected:
                 p.fillRect(h, Qt::white);
                 p.drawRect(h);
             }
+        if (m_tools->isVisible()) {                 // Frosted glass: blurred frozen frame plus tint.
+            const QRect bar = m_tools->geometry();
+            const qreal dpr = m_shot.devicePixelRatioF();
+            const QRect src(qRound(bar.x() * dpr), qRound(bar.y() * dpr),
+                            qMax(1, qRound(bar.width() * dpr)), qMax(1, qRound(bar.height() * dpr)));
+            const QSize grain(qMax(1, bar.width() / 6), qMax(1, bar.height() / 6));
+            const QPixmap blur = m_shot.copy(src)
+                .scaled(grain, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .scaled(bar.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            QPainterPath frost;
+            frost.addRoundedRect(bar, 8, 8);
+            p.save();
+            p.setClipPath(frost);
+            p.drawPixmap(bar.topLeft(), blur);
+            p.fillRect(bar, QColor(18, 18, 24, 168));
+            p.restore();
+            QPen edge(QColor(255, 255, 255, 30), 1);
+            p.setPen(edge);
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(bar, 8, 8);
+        }
     }
     void mousePressEvent(QMouseEvent *e) override
     {
@@ -1852,6 +1974,12 @@ protected:
             && (pos - m_pressPos).manhattanLength() < QApplication::startDragDistance()) return;
         m_dragStarted = true;
         cancelDetection();
+        if (m_tools->isVisible()) {                 // The status bar steps aside during drags.
+            update(m_tools->geometry());
+            m_tools->hide();
+        }
+        m_inspector->hide();                        // So does the pixel inspector (this event
+                                                    // ran updateInspector before the drag started).
         if (!m_hover.isNull())
             m_hover = QRect();                      // A drag replaces the hover preview with the selection.
         if (m_drag == H_New) {                      // New selection.
@@ -1963,6 +2091,7 @@ private:
         connect(detector, &QThread::finished, detector, &QObject::deleteLater);
         connect(detector, &WindowDetector::gotTargets, this, [this, detector](const WindowTargets &targets, quint64 id) {
             // Arrives in query order from one worker; the newest table lands last.
+            Q_UNUSED(id);
             if (detector == m_detector && isVisible()) setWindowTargets(targets);
         }, Qt::QueuedConnection);
         connect(detector, &WindowDetector::gotRect, this, [this, detector](const QRect &rect, quint64 id) {
@@ -2127,6 +2256,10 @@ private:
 
     void updateInspector()
     {
+        if (m_drag != H_None && m_dragStarted) {      // The pixel inspector steps aside during drags.
+            m_inspector->hide();
+            return;
+        }
         POINT cursor;
         if (GetCursorPos(&cursor)) {
             const QPoint pixel(cursor.x, cursor.y);
@@ -2320,17 +2453,49 @@ private:
         m_sizeTip->move(r.topLeft() - QPoint(0, m_sizeTip->height() + 4));
         m_sizeTip->show();
     }
+    // The status bar holds every action icon in one of two layouts: a horizontal strip
+    // flush with the selection's bottom-right corner, or a vertical strip on its right
+    // side when the bottom edge has no room.
+    void buildToolLayout(Qt::Orientation orientation)
+    {
+        if (m_toolOrientation == int(orientation)) return;
+        delete m_tools->layout();
+        QBoxLayout *lay = orientation == Qt::Horizontal
+            ? static_cast<QBoxLayout *>(new QHBoxLayout(m_tools))
+            : static_cast<QBoxLayout *>(new QVBoxLayout(m_tools));
+        lay->setContentsMargins(4, 4, 4, 4);
+        lay->setSpacing(2);
+        for (QWidget *button : m_toolButtons) lay->addWidget(button);
+        m_toolOrientation = int(orientation);
+        m_tools->adjustSize();
+    }
     void placeToolbar()
     {
-        m_tools->adjustSize();
-        const int vw = width(), vh = height();
-        int x = m_sel.center().x() - m_tools->width() / 2;
-        x = qBound(0, x, vw - m_tools->width());
-        int y = m_sel.bottom() + 8;
-        if (y + m_tools->height() > vh)             // No room below: place above the selection.
-            y = m_sel.top() - m_tools->height() - 8;
-        y = qBound(0, y, vh - m_tools->height());
-        m_tools->move(x, y);
+        const QRect old = m_tools->geometry();
+        const QScreen *screen = QGuiApplication::screenAt(m_sel.center() + geometry().topLeft());
+        const QRect avail = (screen ? screen : QGuiApplication::primaryScreen())
+                              ->availableGeometry().translated(-geometry().topLeft());
+        buildToolLayout(Qt::Horizontal);
+        const QSize h = m_tools->size();
+        buildToolLayout(Qt::Vertical);
+        const QSize v = m_tools->size();
+        const int selRight = m_sel.right() + 1, selBottom = m_sel.bottom() + 1;
+        const int hx = qBound(avail.left(), selRight - h.width(), avail.right() + 1 - h.width());
+        if (selBottom + 6 + h.height() <= avail.bottom() + 1) {
+            buildToolLayout(Qt::Horizontal);
+            m_tools->move(hx, selBottom + 6);         // Default: bottom-right of the selection.
+        } else if (selRight + 6 + v.width() <= avail.right() + 1) {
+            buildToolLayout(Qt::Vertical);
+            m_tools->move(selRight + 6,
+                          qBound(avail.top(), selBottom - v.height(), avail.bottom() + 1 - v.height()));
+        } else if (m_sel.top() - 6 - h.height() >= avail.top()) {
+            buildToolLayout(Qt::Horizontal);
+            m_tools->move(hx, m_sel.top() - 6 - h.height());
+        } else {                                       // Selection covers the screen: dock inside.
+            buildToolLayout(Qt::Vertical);
+            m_tools->move(avail.right() + 1 - v.width() - 8, avail.bottom() + 1 - v.height() - 8);
+        }
+        update(m_tools->geometry().united(old).adjusted(-1, -1, 1, 1));   // Repaint both frost regions.
     }
     QPixmap cropped() const
     {
@@ -2398,6 +2563,8 @@ private:
     Mode m_mode = Selecting;
     QLabel *m_sizeTip = nullptr;
     QWidget *m_tools = nullptr;
+    QVector<QWidget *> m_toolButtons;
+    int m_toolOrientation = -1;
 };
 
 // ---------- F1 global hotkey filter ----------
@@ -2504,7 +2671,8 @@ int main(int argc, char **argv)
         return CaptureOverlay::testColorPicker(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-color-picker")) + 1));
     if (app.arguments().contains(QStringLiteral("--test-window-detection")))
         return CaptureOverlay::testWindowDetection();
-    if (const int probe = app.arguments().indexOf(QStringLiteral("--probe-uia")); probe > 0 && probe + 2 < app.arguments().size()) {
+    const int probe = app.arguments().indexOf(QStringLiteral("--probe-uia"));
+    if (probe > 0 && probe + 2 < app.arguments().size()) {
         // Diagnostic: run the production element engines at one native-pixel screen point.
         const QPoint point(app.arguments().at(probe + 1).toInt(), app.arguments().at(probe + 2).toInt());
         const HRESULT com = CoInitialize(nullptr);
