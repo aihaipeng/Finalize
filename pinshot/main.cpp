@@ -12,9 +12,20 @@
 #include <QSystemTrayIcon>
 #include <QMenu>
 #include <QLabel>
+#include <QGraphicsTextItem>
+#include <QGraphicsView>
+#include <QGraphicsScene>
+#include <QTextDocument>
+#include <QTextCursor>
+#include <QInputMethod>
+#include <QInputMethodEvent>
+#include <QAbstractTextDocumentLayout>
+#include <QtMath>
 #include <QToolButton>
 #include <QPainterPath>
 #include <QHBoxLayout>
+#include <QGridLayout>
+#include <QSignalBlocker>
 #include <QClipboard>
 #include <QFileDialog>
 #include <QStandardPaths>
@@ -228,7 +239,8 @@ private:
 // Feather/Lucide line-icon style: one vocabulary for every button in the app, painted
 // in code so no resource files ship and any icon stays crisp at every scale.
 
-enum class Icon { Save, Copy, Pin, LongShot, Cancel };
+enum class Icon { Save, Copy, Pin, LongShot, Cancel, Rect, Ellipse, Arrow, Pen, Marker, Text,
+                  Number, Mosaic, Eraser, Undo, Redo, ArrowBoth, ArrowLine, ArrowHollow };
 
 static void buildIconPath(QPainterPath &path, Icon icon)
 {
@@ -257,6 +269,68 @@ static void buildIconPath(QPainterPath &path, Icon icon)
         path.moveTo(6, 6); path.lineTo(18, 18);
         path.moveTo(18, 6); path.lineTo(6, 18);
         break;
+    case Icon::Rect:                                  // Annotation shapes.
+        path.addRect(4, 4, 16, 16);
+        break;
+    case Icon::Ellipse:
+        path.addEllipse(4, 4, 16, 16);
+        break;
+    case Icon::Arrow:                                 // Diagonal with arrowhead.
+        path.moveTo(7, 17); path.lineTo(17, 7);
+        path.moveTo(8, 7); path.lineTo(17, 7); path.lineTo(17, 16);
+        break;
+    case Icon::ArrowBoth:                             // Arrowheads on both ends.
+        path.moveTo(8, 16); path.lineTo(16, 8);
+        path.moveTo(8, 16); path.lineTo(8, 11); path.moveTo(8, 16); path.lineTo(13, 16);
+        path.moveTo(16, 8); path.lineTo(11, 8); path.moveTo(16, 8); path.lineTo(16, 13);
+        break;
+    case Icon::ArrowLine:                             // Plain line, no heads.
+        path.moveTo(5, 17); path.lineTo(17, 5);
+        break;
+    case Icon::ArrowHollow:                           // Open V head, unfilled.
+        path.moveTo(7, 17); path.lineTo(17, 7);
+        path.moveTo(8, 7); path.lineTo(17, 7); path.lineTo(17, 16);
+        path.lineTo(8, 7);
+        break;
+    case Icon::Pen:                                   // Diagonal pencil with nib.
+        path.moveTo(17, 3); path.lineTo(21, 7); path.lineTo(8, 20); path.lineTo(3, 21);
+        path.lineTo(4, 16); path.closeSubpath();
+        break;
+    case Icon::Mosaic:                                // Block grid.
+        path.addRect(3, 3, 7, 7); path.addRect(14, 3, 7, 7);
+        path.addRect(14, 14, 7, 7); path.addRect(3, 14, 7, 7);
+        break;
+    case Icon::Marker:                                // Highlighter: slanted body plus tip.
+        path.moveTo(9, 11); path.lineTo(3, 17); path.lineTo(3, 20);
+        path.lineTo(12, 20); path.lineTo(15, 17);
+        path.moveTo(14, 4); path.lineTo(22, 12); path.lineTo(17, 17);
+        path.lineTo(9, 9); path.closeSubpath();
+        break;
+    case Icon::Text:                                  // Letter T.
+        path.moveTo(5, 6); path.lineTo(5, 4); path.lineTo(19, 4); path.lineTo(19, 6);
+        path.moveTo(12, 4); path.lineTo(12, 20);
+        path.moveTo(9, 20); path.lineTo(15, 20);
+        break;
+    case Icon::Number:                                // Circled digit one.
+        path.addEllipse(2, 2, 20, 20);
+        path.moveTo(13, 7); path.lineTo(10, 9);
+        path.moveTo(13, 7); path.lineTo(13, 17);
+        break;
+    case Icon::Eraser:                                // Slanted eraser block.
+        path.moveTo(7, 21); path.lineTo(2.7, 16.7); path.lineTo(2.7, 13.3);
+        path.lineTo(12.3, 3.7); path.lineTo(15.7, 3.7); path.lineTo(21.3, 9.3);
+        path.lineTo(21.3, 12.7); path.lineTo(13, 21); path.closeSubpath();
+        path.moveTo(22, 21); path.lineTo(7, 21);
+        path.moveTo(5, 11); path.lineTo(14, 20);
+        break;
+    case Icon::Undo:                                  // Hooked arrow turning back.
+        path.moveTo(9, 14); path.lineTo(4, 9); path.lineTo(9, 4);
+        path.moveTo(4, 9); path.lineTo(15, 9); path.quadTo(20, 9, 20, 14); path.lineTo(20, 20);
+        break;
+    case Icon::Redo:                                  // Hooked arrow turning forward.
+        path.moveTo(15, 14); path.lineTo(20, 9); path.lineTo(15, 4);
+        path.moveTo(20, 9); path.lineTo(9, 9); path.quadTo(4, 9, 4, 14); path.lineTo(4, 20);
+        break;
     }
 }
 
@@ -272,7 +346,7 @@ static QIcon makeIcon(Icon icon)
         QPainter p(&pm);
         p.setRenderHint(QPainter::Antialiasing);
         p.scale(16.0 / 24.0, 16.0 / 24.0);
-        QPen pen(QColor("#ececec"), 1.6);             // Fine hairline strokes at 16px.
+        QPen pen(QColor("#ececec"), 1.75 * 24.0 / 16.0);  // Renders 1.75px at the 16px size.
         pen.setCapStyle(Qt::RoundCap);
         pen.setJoinStyle(Qt::RoundJoin);
         p.setPen(pen);
@@ -1360,11 +1434,67 @@ public:
         auto *copy = iconButton(Icon::Copy, QStringLiteral("复制到剪贴板 (Ctrl+C)"));
         auto *pin = iconButton(Icon::Pin, QStringLiteral("贴在屏幕上 (Enter / 双击)"));
         auto *scroll = iconButton(Icon::LongShot, QStringLiteral("长截图：手动滚动拼接长图"));
-        m_toolButtons = {save, copy, pin, scroll};
         connect(save, &QToolButton::clicked, this, &CaptureOverlay::saveCapture);
         connect(copy, &QToolButton::clicked, this, &CaptureOverlay::copyCapture);
         connect(pin, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
         connect(scroll, &QToolButton::clicked, this, &CaptureOverlay::longCapture);
+
+        // Instant annotation tools: draw inside the committed selection; every capture
+        // action composes them in. One shape button covers rect / ellipse; per-tool
+        // options (sub-shape, arrow style, colors, text weight) live on the strip below.
+        auto *undo = iconButton(Icon::Undo, QStringLiteral("撤销 (Ctrl+Z)"));
+        connect(undo, &QToolButton::clicked, this, &CaptureOverlay::undoAnnotation);
+        m_undoButton = undo;
+        auto *redo = iconButton(Icon::Redo, QStringLiteral("重做 (Ctrl+Y)"));
+        connect(redo, &QToolButton::clicked, this, &CaptureOverlay::redoAnnotation);
+        m_redoButton = redo;
+        m_shapeButton = new QToolButton;               // One button for both shapes.
+        m_shapeButton->setIcon(makeIcon(Icon::Rect));
+        m_shapeButton->setIconSize(QSize(16, 16));
+        m_shapeButton->setToolTip(QStringLiteral("形状：矩形/椭圆 (R=矩形 / O=椭圆)"));
+        m_shapeButton->setCheckable(true);
+        m_shapeButton->setCursor(Qt::PointingHandCursor);
+        connect(m_shapeButton, &QToolButton::toggled, this, [this](bool on) {
+            if (on) selectTool(m_shapeEllipse ? ATool::Ellipse : ATool::Rect);
+            else if (m_atool == ATool::Rect || m_atool == ATool::Ellipse) setToolNone();
+            setCursor(Qt::CrossCursor);
+            update();
+        });
+        m_toolBtn.fill(nullptr, int(ATool::Eraser) + 1);
+        m_toolBtn[int(ATool::Rect)] = m_toolBtn[int(ATool::Ellipse)] = m_shapeButton;
+        struct { ATool tool; Icon icon; const char *tip; } const tools[] = {
+            {ATool::Arrow, Icon::Arrow, "箭头 (A)"},
+            {ATool::Pen, Icon::Pen, "画笔 (P)"},
+            {ATool::Marker, Icon::Marker, "荧光笔 (H)"},
+            {ATool::Text, Icon::Text, "文字 (T)"},
+            {ATool::Number, Icon::Number, "序号 (N)"},
+            {ATool::Mosaic, Icon::Mosaic, "马赛克 (M)"},
+            {ATool::Eraser, Icon::Eraser, "橡皮 (E)"},
+        };
+        for (const auto &t : tools) {
+            auto *button = iconButton(t.icon, QString::fromUtf8(t.tip));
+            button->setCheckable(true);
+            const ATool tool = t.tool;
+            connect(button, &QToolButton::toggled, this, [this, tool](bool on) {
+                if (on) selectTool(tool);
+                else if (m_atool == tool) setToolNone();
+                setCursor(Qt::CrossCursor);
+                update();
+            });
+            m_toolBtn[int(tool)] = button;
+        }
+        m_toolButtons = {undo, redo, m_shapeButton};
+        for (int t = int(ATool::Arrow); t < m_toolBtn.size(); ++t) m_toolButtons.append(m_toolBtn[t]);
+        m_toolButtons.append(save); m_toolButtons.append(copy);
+        m_toolButtons.append(pin); m_toolButtons.append(scroll);
+        for (QWidget *button : m_toolButtons) button->setFocusPolicy(Qt::NoFocus);
+
+        m_toolOptions = new QWidget(this);
+        m_toolOptions->setStyleSheet(QStringLiteral(
+            "QToolButton{background:transparent;border:none;border-radius:3px;padding:3px;}"
+            "QToolButton:hover{background:rgba(255,255,255,38);}"
+            "QLabel{color:#e8e8e8;font-size:12px;border:none;}"));
+        m_toolOptions->hide();
         buildToolLayout(Qt::Horizontal);
         m_tools->adjustSize();
         m_tools->hide();
@@ -1375,7 +1505,7 @@ public:
         HWND handle = reinterpret_cast<HWND>(winId());
         SetForegroundWindow(handle);
         SetFocus(handle);
-        ImmAssociateContext(handle, nullptr);
+        m_imeCtx = ImmAssociateContext(handle, nullptr);   // Detached; re-attached for text editing.
         setFocus();
         updateInspector();
         if (liveDetection) {
@@ -1560,7 +1690,7 @@ public:
         // by default, flipping to a vertical strip on its right side at the screen bottom.
         const QRect avail = QGuiApplication::primaryScreen()->availableGeometry()
                                .translated(-overlay.geometry().topLeft());
-        overlay.m_sel = QRect(avail.topLeft() + QPoint(60, 60), QSize(240, 120));
+        overlay.m_sel = QRect(avail.topLeft() + QPoint(60, 60), QSize(640, 120));
         overlay.m_mode = Adjusting;
         overlay.placeToolbar();
         check(overlay.m_tools->y() >= overlay.m_sel.bottom() + 1
@@ -1573,6 +1703,234 @@ public:
                   && overlay.m_tools->y() + overlay.m_tools->height() == overlay.m_sel.bottom() + 1
                   && overlay.m_tools->height() > overlay.m_tools->width(),
               "toolbar flips to a vertical strip on the selection's right side at the screen bottom");
+        // Annotation editing: shortcuts, shift constraints, selection, re-tune, delete,
+        // undo/redo, marker, the text editor, sequence numbers, blur, and the eraser.
+        auto mouse = [&overlay](QEvent::Type type, const QPoint &local,
+                                Qt::KeyboardModifiers mods = Qt::NoModifier) {
+            QMouseEvent ev(type, local, local + overlay.geometry().topLeft(), Qt::LeftButton,
+                           type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+                           mods);
+            QApplication::sendEvent(&overlay, &ev);
+        };
+        const QPoint annOrigin = screenOrigin + QPoint(20, 20);
+        overlay.m_sel = QRect(annOrigin, QSize(110, 80));
+        overlay.m_mode = Adjusting;
+        QKeyEvent keyR(QEvent::KeyPress, Qt::Key_R, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &keyR);
+        check(overlay.m_atool == ATool::Rect, "single-letter shortcuts arm annotation tools");
+        const QPoint squareA = annOrigin + QPoint(10, 10);
+        mouse(QEvent::MouseButtonPress, squareA);
+        mouse(QEvent::MouseMove, squareA + QPoint(40, 20), Qt::ShiftModifier);
+        mouse(QEvent::MouseButtonRelease, squareA + QPoint(40, 20), Qt::ShiftModifier);
+        check(overlay.m_anns.size() == 1 && overlay.m_anns[0].rect.size() == QSize(41, 41),
+              "shift constrains rectangles to squares");
+        overlay.setToolNone();
+        const QPoint edge(overlay.m_anns[0].rect.center().x(), overlay.m_anns[0].rect.top());
+        mouse(QEvent::MouseButtonPress, edge);
+        check(overlay.m_selAnn == 0 && overlay.m_itemDrag == H_Move,
+              "clicking an annotation selects it");
+        mouse(QEvent::MouseMove, edge + QPoint(12, 0));
+        mouse(QEvent::MouseButtonRelease, edge + QPoint(12, 0));
+        check(overlay.m_anns[0].rect == QRect(squareA + QPoint(12, 0), QSize(41, 41)),
+              "dragging moves the selected annotation");
+        const QPoint corner = overlay.m_anns[0].rect.bottomRight();
+        mouse(QEvent::MouseButtonPress, corner);
+        mouse(QEvent::MouseMove, corner + QPoint(25, 5));
+        mouse(QEvent::MouseButtonRelease, corner + QPoint(25, 5));
+        check(overlay.m_anns[0].rect.size() == QSize(66, 46),
+              "corner handles resize the selected annotation");
+        const QPoint wheelAt = overlay.m_sel.center();
+        QWheelEvent tune(QPointF(wheelAt), QPointF(wheelAt + overlay.geometry().topLeft()),
+                         QPoint(0, 8), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                         Qt::ScrollUpdate, false);
+        QApplication::sendEvent(&overlay, &tune);
+        check(overlay.m_anns[0].pen == 4, "the wheel retunes the selected annotation");
+        overlay.pickToolColor(ATool::Rect, QColor("#1c1c1e"));
+        check(overlay.m_anns[0].color == QColor("#1c1c1e")
+                  && overlay.m_colorShape == QColor("#1c1c1e"),
+              "the options strip recolors the selected annotation");
+        QKeyEvent del(QEvent::KeyPress, Qt::Key_Delete, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &del);
+        check(overlay.m_anns.isEmpty(), "delete removes the selected annotation");
+        overlay.undoAnnotation();
+        check(overlay.m_anns.size() == 1, "undo restores the deleted annotation");
+        overlay.redoAnnotation();
+        check(overlay.m_anns.isEmpty(), "redo replays the deletion");
+        overlay.selectTool(ATool::Marker);
+        const QPoint strokeAt = annOrigin + QPoint(12, 40);
+        mouse(QEvent::MouseButtonPress, strokeAt);
+        mouse(QEvent::MouseMove, strokeAt + QPoint(15, 5));
+        mouse(QEvent::MouseMove, strokeAt + QPoint(18, 18));
+        mouse(QEvent::MouseButtonRelease, strokeAt + QPoint(18, 18));
+        check(overlay.m_anns.size() == 1 && overlay.m_anns[0].tool == ATool::Marker
+                  && overlay.m_anns[0].stroke.size() >= 3,
+              "the marker commits a decimated translucent stroke");
+        const QImage beforeText = overlay.cropped().toImage();
+        overlay.selectTool(ATool::Text);
+        mouse(QEvent::MouseButtonPress, annOrigin + QPoint(60, 20));
+        check(overlay.editorActive(), "the text tool opens an inline editor");
+        overlay.m_editor->setPlainText(QStringLiteral("标注"));
+        overlay.commitTextEdit();
+        check(overlay.m_anns.size() == 2 && overlay.m_anns[1].tool == ATool::Text
+                  && overlay.m_anns[1].text == QStringLiteral("标注")
+                  && overlay.m_anns[1].font == overlay.m_afont,
+              "text commits into an annotation");
+        check(overlay.cropped().toImage() != beforeText, "text composes into the capture");
+        overlay.setToolNone();                       // Re-editing works in selection mode.
+        mouse(QEvent::MouseButtonDblClick, overlay.m_anns[1].rect.center());
+        check(overlay.editorActive()
+                  && overlay.m_editor->toPlainText() == QStringLiteral("标注"),
+              "double-click reopens a text annotation for editing");
+        overlay.m_editor->setPlainText(QStringLiteral("改"));
+        overlay.commitTextEdit();
+        check(overlay.m_anns.size() == 2 && overlay.m_anns[1].text == QStringLiteral("改"),
+              "re-editing replaces the annotation in place");
+        overlay.selectTool(ATool::Number);
+        const QPoint n1 = annOrigin + QPoint(15, 15), n2 = annOrigin + QPoint(70, 50);
+        mouse(QEvent::MouseButtonPress, n1);
+        mouse(QEvent::MouseButtonRelease, n1);
+        mouse(QEvent::MouseButtonPress, n2);
+        mouse(QEvent::MouseButtonRelease, n2);
+        check(overlay.m_anns.size() == 4 && overlay.m_anns[2].text == QStringLiteral("1")
+                  && overlay.m_anns[3].text == QStringLiteral("2"),
+              "number clicks place incrementing sequence digits");
+        overlay.setToolNone();
+        mouse(QEvent::MouseButtonPress, n1);
+        mouse(QEvent::MouseButtonRelease, n1);
+        QApplication::sendEvent(&overlay, &del);
+        check(overlay.m_anns.size() == 3 && overlay.m_anns[2].text == QStringLiteral("1"),
+              "numbers renumber after a deletion");
+        const QImage beforeMosaic = overlay.cropped().toImage();
+        overlay.selectTool(ATool::Mosaic);
+        mouse(QEvent::MouseButtonPress, annOrigin + QPoint(50, 10));
+        mouse(QEvent::MouseMove, annOrigin + QPoint(100, 60));
+        mouse(QEvent::MouseButtonRelease, annOrigin + QPoint(100, 60));
+        check(overlay.m_anns.size() == 4 && overlay.m_anns[3].tool == ATool::Mosaic
+                  && overlay.cropped().toImage() != beforeMosaic,
+              "mosaic pixelates the frozen frame in its rectangle");
+        overlay.selectTool(ATool::Eraser);
+        mouse(QEvent::MouseButtonPress, strokeAt + QPoint(9, 9));
+        mouse(QEvent::MouseMove, strokeAt + QPoint(10, 10));
+        mouse(QEvent::MouseButtonRelease, strokeAt + QPoint(10, 10));
+        bool markerGone = true;
+        for (const Annotation &a : overlay.m_anns)
+            if (a.tool == ATool::Marker) markerGone = false;
+        check(overlay.m_anns.size() == 3 && markerGone,
+              "the eraser removes whole annotations under it");
+        overlay.setToolNone();
+        mouse(QEvent::MouseButtonPress, n2);
+        mouse(QEvent::MouseButtonRelease, n2);
+        QKeyEvent escSel(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &escSel);
+        check(overlay.m_selAnn == -1 && overlay.isVisible(),
+              "escape deselects the annotation before closing");
+        // Behavior parity round: right click finishes input, +/- width, WASD nudge,
+        // rotation, and undo/redo button enable state.
+        const int annCount = overlay.m_anns.size();
+        overlay.selectTool(ATool::Marker);
+        const QPoint fin = annOrigin + QPoint(16, 12);
+        mouse(QEvent::MouseButtonPress, fin);
+        mouse(QEvent::MouseMove, fin + QPoint(14, 6));
+        QMouseEvent rightClick(QEvent::MouseButtonPress, fin + QPoint(14, 6),
+                               fin + QPoint(14, 6) + overlay.geometry().topLeft(),
+                               Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &rightClick);
+        check(overlay.m_anns.size() == annCount + 1
+                  && overlay.m_anns.last().tool == ATool::Marker && !overlay.m_live,
+              "right click finishes a live stroke instead of discarding it");
+        QKeyEvent plus(QEvent::KeyPress, Qt::Key_Plus, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &plus);
+        check(overlay.m_anns.last().pen == 4, "the plus key retunes the selected annotation");
+        overlay.setToolNone();
+        mouse(QEvent::MouseButtonPress, fin + QPoint(7, 3));   // Re-select the stroke.
+        mouse(QEvent::MouseButtonRelease, fin + QPoint(7, 3));
+        const QPointF beforeNudge = overlay.m_anns.last().stroke.first();
+        QKeyEvent keyA(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &keyA);
+        QKeyEvent keyW(QEvent::KeyPress, Qt::Key_W, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &keyW);
+        check(overlay.m_anns.last().stroke.first() == beforeNudge + QPointF(-1, -1),
+              "WASD keys nudge the selected annotation one pixel");
+        const QPoint knob = CaptureOverlay::rotateAnchor(overlay.m_anns.last());
+        mouse(QEvent::MouseButtonPress, knob);
+        mouse(QEvent::MouseMove, knob + QPoint(30, 0));
+        mouse(QEvent::MouseButtonRelease, knob + QPoint(30, 0));
+        check(!qFuzzyIsNull(overlay.m_anns.last().rot), "the rotate handle spins the annotation");
+        const QPoint inside = CaptureOverlay::annotationRect(overlay.m_anns.last()).center()
+                              + QPoint(2, 3);
+        mouse(QEvent::MouseButtonPress, inside);
+        check(overlay.m_selAnn == overlay.m_anns.size() - 1,
+              "rotated annotations stay selectable through the inverse transform");
+        mouse(QEvent::MouseButtonRelease, inside);
+        QKeyEvent keyDel(QEvent::KeyPress, Qt::Key_Delete, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &keyDel);
+        while (!overlay.m_undoStack.isEmpty()) overlay.undoAnnotation();
+        check(!overlay.m_undoButton->isEnabled(), "the undo button disables on an empty stack");
+        overlay.m_redoStack.clear();
+        overlay.syncUndoButtons();
+        check(!overlay.m_redoButton->isEnabled(), "the redo button disables on an empty stack");
+        overlay.selectTool(ATool::Rect);
+        QKeyEvent fillKey(QEvent::KeyPress, Qt::Key_F, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &fillKey);
+        check(overlay.m_afill, "the F key toggles fill mode for the shape tools");
+        mouse(QEvent::MouseButtonPress, annOrigin + QPoint(60, 20));
+        mouse(QEvent::MouseMove, annOrigin + QPoint(95, 55));
+        mouse(QEvent::MouseButtonRelease, annOrigin + QPoint(95, 55));
+        check(overlay.m_anns.last().fill, "fill mode carries into fresh shapes");
+        overlay.m_afill = false;
+        // Per-tool option strip round: merged shape button, arrow styles, per-tool
+        // colors, text weight, and eraser reach.
+        overlay.setToolNone();
+        overlay.selectTool(ATool::Rect);
+        check(overlay.m_shapeButton->isChecked() && !overlay.m_shapeEllipse
+                  && overlay.m_acolor == overlay.m_colorShape
+                  && overlay.m_toolOptions->isVisible(),
+              "the merged shape button arms the rectangle with its option strip");
+        overlay.selectTool(ATool::Ellipse);
+        check(overlay.m_shapeEllipse && overlay.m_shapeButton->isChecked(),
+              "arming the ellipse flips the shared button's sub-shape");
+        overlay.pickToolColor(ATool::Marker, QColor("#34c759"));
+        overlay.selectTool(ATool::Marker);
+        check(overlay.m_acolor == QColor("#34c759"), "each tool remembers its own color");
+        overlay.selectTool(ATool::Arrow);
+        overlay.pickArrowStyle(3);
+        const QPoint a1 = annOrigin + QPoint(60, 5), a2 = annOrigin + QPoint(60, 55);
+        mouse(QEvent::MouseButtonPress, a1);
+        mouse(QEvent::MouseMove, a2);
+        mouse(QEvent::MouseButtonRelease, a2);
+        check(overlay.m_anns.last().tool == ATool::Arrow
+                  && overlay.m_anns.last().arrowStyle == 3,
+              "the arrow style carries into fresh arrows");
+        overlay.setToolNone();
+        mouse(QEvent::MouseButtonPress, a1 + QPoint(0, 25));
+        mouse(QEvent::MouseButtonRelease, a1 + QPoint(0, 25));
+        check(overlay.m_selAnn == overlay.m_anns.size() - 1
+                  && overlay.m_anns[overlay.m_selAnn].tool == ATool::Arrow,
+              "the arrow stays selectable");
+        overlay.pickArrowStyle(1);
+        check(overlay.m_anns[overlay.m_selAnn].arrowStyle == 1,
+              "the options strip restyles the selected arrow");
+        overlay.setTextBold(true);
+        overlay.setTextItalic(true);
+        overlay.selectTool(ATool::Text);
+        check(overlay.m_abold && overlay.m_aitalic, "text toggles persist per tool");
+        mouse(QEvent::MouseButtonPress, annOrigin + QPoint(30, 30));
+        overlay.m_editor->setPlainText(QStringLiteral("粗"));
+        overlay.commitTextEdit();
+        check(overlay.m_anns.last().bold && overlay.m_anns.last().italic,
+              "bold and italic commit into text annotations");
+        overlay.selectTool(ATool::Eraser);
+        overlay.m_apen = 12;                        // A fat eraser reaches farther.
+        const int beforeErase = overlay.m_anns.size();
+        mouse(QEvent::MouseButtonPress, annOrigin + QPoint(60, 75));
+        mouse(QEvent::MouseButtonRelease, annOrigin + QPoint(60, 75));
+        check(overlay.m_anns.size() < beforeErase, "the eraser's reach tracks its thickness");
+        overlay.m_anns.clear();
+        overlay.m_undoStack.clear();
+        overlay.m_redoStack.clear();
+        overlay.m_atool = ATool::None;
+        overlay.m_selAnn = -1;
+        overlay.syncUndoButtons();
         overlay.m_windowRects.clear();
         overlay.m_sel = QRect(2, 2, 30, 20);
         overlay.m_mode = Adjusting;
@@ -1835,8 +2193,34 @@ public:
         QMouseEvent hoverAfter(QEvent::MouseMove, grown + QPoint(6, 0), grown + QPoint(6, 0) + overlay.geometry().topLeft(),
                                Qt::NoButton, Qt::NoButton, Qt::NoModifier);
         QApplication::sendEvent(&overlay, &hoverAfter);
-        check(overlay.m_inspector->isVisible(),
-              "the pixel inspector comes back on the next hover move after the drag");
+        check(!overlay.m_inspector->isVisible(),
+              "the color value card stays hidden inside a locked selection");
+        // Instant annotation: a rectangle stroke commits, composes, and undoes.
+        overlay.m_atool = ATool::Rect;
+        const QRect annRect = overlay.m_sel.adjusted(12, 12, -12, -12);
+        const QPoint annA = annRect.topLeft(), annB = annRect.bottomRight();
+        QMouseEvent annPress(QEvent::MouseButtonPress, annA, annA + overlay.geometry().topLeft(),
+                             Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &annPress);
+        check(overlay.m_live && !overlay.m_tools->isVisible(),
+              "an annotation drag starts inside the selection and clears the status bar");
+        QMouseEvent annMove(QEvent::MouseMove, annB, annB + overlay.geometry().topLeft(),
+                            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &annMove);
+        QMouseEvent annRelease(QEvent::MouseButtonRelease, annB, annB + overlay.geometry().topLeft(),
+                               Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &annRelease);
+        check(!overlay.m_live && overlay.m_anns.size() == 1 && overlay.m_anns.first().rect == annRect
+                  && overlay.m_tools->isVisible(),
+              "the annotation commits with the dragged geometry and the tool stays ready");
+        const QImage composed = overlay.cropped().toImage();
+        overlay.undoAnnotation();
+        check(overlay.m_anns.isEmpty() && overlay.cropped().toImage() != composed,
+              "undo removes the annotation from the composed capture");
+        QKeyEvent escTool(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &escTool);
+        check(overlay.m_atool == ATool::None && overlay.isVisible(),
+              "escape drops the annotation tool before closing the overlay");
         bool pinned = false;
         QObject::connect(&overlay, &CaptureOverlay::grabbed, &overlay, [&pinned](const QPixmap &pix) { pinned = !pix.isNull(); });
         overlay.resetSelection();
@@ -1869,6 +2253,177 @@ public:
         std::puts("PASS: window filtering, child geometry, MSAA controls, asynchronous detection, and cancellation");
         return 0;
     }
+    static int testTextAnnotation()
+    {
+        auto check = [](bool ok, const char *message) {
+            if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); }
+        };
+        const QRect screen = QGuiApplication::primaryScreen()->geometry();
+        QImage image(1350, 750, QImage::Format_RGB32);
+        image.fill(QColor(30, 40, 50));
+        CaptureOverlay overlay({ScreenFrame{QRect(screen.topLeft(), QSize(900, 500)),
+                                            QRect(0, 0, 1350, 750), image}});
+        overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+        const QPoint origin = screen.topLeft() - overlay.geometry().topLeft() + QPoint(60, 60);
+        overlay.m_mode = Adjusting;
+        overlay.m_sel = QRect(origin, QSize(800, 300));
+        overlay.placeToolbar();
+        overlay.showToolBars();
+        overlay.selectTool(ATool::Text);
+        overlay.beginTextEdit(origin + QPoint(20, 20));
+        QApplication::processEvents();
+        auto key = [&overlay](int code, Qt::KeyboardModifiers mods = Qt::NoModifier,
+                              const QString &text = QString()) {
+            QKeyEvent ev(QEvent::KeyPress, code, mods, text);
+            QApplication::sendEvent(overlay.m_textView, &ev);
+        };
+        QInputMethodEvent ime;
+        ime.setCommitString(QStringLiteral("中文标注"));
+        QApplication::sendEvent(overlay.m_textView, &ime);
+        check(overlay.m_editor->toPlainText() == QStringLiteral("中文标注"),
+              "native scene input accepts a committed Chinese composition");
+        const qreal singleHeight = overlay.m_editor->boundingRect().height();
+        key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+        key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+        check(overlay.editorActive() && overlay.m_editor->toPlainText() == QStringLiteral("中文标注\nx")
+                  && overlay.m_editor->boundingRect().height() > singleHeight,
+              "Enter inserts a new line and grows the text item without committing or pinning");
+        const QString typed = overlay.m_editor->toPlainText();
+        key(Qt::Key_Z, Qt::ControlModifier);
+        check(overlay.editorActive() && overlay.m_anns.isEmpty() && overlay.m_editor->toPlainText() != typed,
+              "Ctrl+Z first undoes typing inside the text document");
+        key(Qt::Key_Y, Qt::ControlModifier);
+        check(overlay.m_editor->toPlainText() == typed, "Ctrl+Y restores local typing without committing");
+        key(Qt::Key_C, Qt::ControlModifier);
+        check(overlay.editorActive() && overlay.isVisible(),
+              "copy with no text selection cannot copy and close the whole capture");
+        QTextCursor cur = overlay.m_editor->textCursor();
+        cur.setPosition(1);
+        cur.setPosition(3, QTextCursor::KeepAnchor);
+        overlay.m_editor->setTextCursor(cur);
+        const int anchor = cur.anchor(), position = cur.position();
+        for (QToolButton *button : overlay.m_toolOptions->findChildren<QToolButton *>()) {
+            check(button->focusPolicy() == Qt::NoFocus, "text options do not steal keyboard focus");
+            if (button->text() == QStringLiteral("B") || button->text() == QStringLiteral("I"))
+                button->click();
+            if (button->toolTip() == QStringLiteral("#007aff")) button->click();
+        }
+        overlay.editorFontStep(1);
+        check(overlay.editorActive() && overlay.m_editor->font().bold() && overlay.m_editor->font().italic()
+                  && overlay.m_editor->defaultTextColor() == QColor("#007aff")
+                  && overlay.m_editor->textCursor().anchor() == anchor
+                  && overlay.m_editor->textCursor().position() == position,
+              "live color, bold, italic, and font size preserve input and selection");
+        overlay.m_editor->setPlainText(QString(80, QLatin1Char('W')));
+        check(overlay.m_editor->boundingRect().width() > 420
+                  && overlay.m_editor->document()->blockCount() == 1,
+              "long text grows naturally without a fixed-width wrapping box");
+        overlay.m_editor->setPlainText(QStringLiteral("中文标注\nsecond line"));
+        const QPointF beforeMove = overlay.m_editor->pos();
+        const QPoint border = overlay.m_textView->mapFromScene(
+            overlay.m_editor->mapToScene(QPointF(1, overlay.m_editor->boundingRect().height() / 2)));
+        const QPoint delta(24, 12);
+        auto editorMouse = [&overlay](QEvent::Type type, const QPoint &at) {
+            QWidget *viewport = overlay.m_textView->viewport();
+            QMouseEvent ev(type, at, viewport->mapToGlobal(at),
+                          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                          type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+                          Qt::NoModifier);
+            QApplication::sendEvent(viewport, &ev);
+        };
+        editorMouse(QEvent::MouseButtonPress, border);
+        editorMouse(QEvent::MouseMove, border + delta);
+        editorMouse(QEvent::MouseButtonRelease, border + delta);
+        check(overlay.editorActive() && overlay.m_editor->pos() == beforeMove + delta,
+              "dragging the text margin moves the item and keeps text editing active");
+        const QImage liveCapture = overlay.cropped().toImage();
+        overlay.m_editor->clearFocus();
+        const qreal dpr = overlay.m_shot.devicePixelRatioF();
+        const QRect crop(qRound(overlay.m_sel.x() * dpr), qRound(overlay.m_sel.y() * dpr),
+                         qRound(overlay.m_sel.width() * dpr), qRound(overlay.m_sel.height() * dpr));
+        QPixmap nativeCapture = overlay.m_shot.copy(crop);
+        nativeCapture.setDevicePixelRatio(1);
+        {
+            QPainter painter(&nativeCapture);
+            overlay.m_textView->scene()->render(&painter, QRectF(nativeCapture.rect()), QRectF(overlay.m_sel));
+        }
+        overlay.m_editor->setFocus();
+        check(nativeCapture.toImage() == liveCapture,
+              "native scene text and capture text have identical pixels at 150 percent DPI");
+        key(Qt::Key_Escape);
+        check(!overlay.editorActive() && overlay.isVisible() && overlay.m_anns.size() == 1
+                  && overlay.m_atool == ATool::Text && overlay.m_anns[0].bold && overlay.m_anns[0].italic
+                  && overlay.m_anns[0].color == QColor("#007aff"),
+              "Escape finishes text input in one transaction and keeps the capture open");
+        check(overlay.cropped().toImage() == liveCapture,
+              "text pixels do not jump or wrap differently when editing ends at 150 percent DPI");
+        const Annotation saved = overlay.m_anns[0];
+        const int undoCount = overlay.m_undoStack.size();
+        overlay.beginTextEdit(saved.rect.center(), 0);
+        overlay.commitTextEdit();
+        check(overlay.m_undoStack.size() == undoCount && overlay.m_anns[0].rect == saved.rect,
+              "opening and closing unchanged text adds no phantom undo step or geometry change");
+        const QPoint click = saved.rect.topLeft() + QPoint(12, 12);
+        QMouseEvent press(QEvent::MouseButtonPress, click, overlay.mapToGlobal(click),
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, click, overlay.mapToGlobal(click),
+                            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &press);
+        QApplication::sendEvent(&overlay, &release);
+        check(overlay.editorActive() && overlay.m_editAnn == 0 && overlay.m_anns.size() == 1,
+              "the text tool edits an existing item instead of creating an overlapping duplicate");
+        cur = overlay.m_editor->textCursor();
+        cur.setPosition(1);
+        overlay.m_editor->setTextCursor(cur);
+        key(Qt::Key_Return, Qt::ControlModifier);
+        check(overlay.m_editor->toPlainText().startsWith(QStringLiteral("中文标注\n\n")),
+              "Ctrl+Enter starts a new line at the end of the current paragraph");
+        overlay.commitTextEdit();
+        overlay.undoAnnotation();
+        check(overlay.m_anns[0].text == saved.text, "one undo restores the entire text-edit transaction");
+        overlay.redoAnnotation();
+        check(overlay.m_anns[0].text != saved.text, "redo restores the edited multiline text");
+        const Annotation beforeResize = overlay.m_anns[0];
+        overlay.pushUndo();
+        overlay.m_selAnn = 0;
+        overlay.m_pressAnn = beforeResize;
+        overlay.m_itemDrag = H_BR;
+        overlay.applyItemDrag(beforeResize.rect.bottomRight() + QPoint(50, 20));
+        Annotation fitted = overlay.m_anns[0];
+        fitTextAnnotation(fitted);
+        check(overlay.m_anns[0].font > beforeResize.font && overlay.m_anns[0].text == beforeResize.text
+                  && overlay.m_anns[0].rect.size() == fitted.rect.size(),
+              "text corner resizing scales the letters and keeps content-sized bounds");
+        overlay.m_itemDrag = H_None;
+        overlay.undoAnnotation();
+        overlay.m_anns[0].rot = 30;
+        const QPoint rotatedOrigin = mapFromLocal(overlay.m_anns[0], overlay.m_anns[0].rect.topLeft());
+        overlay.beginTextEdit(mapFromLocal(overlay.m_anns[0], overlay.m_anns[0].rect.center()), 0);
+        overlay.m_editor->setPlainText(QStringLiteral("旋转文字"));
+        check(overlay.m_editor->rotation() == 30,
+              "re-editing rotated text retains its native scene rotation");
+        overlay.commitTextEdit();
+        check(QLineF(rotatedOrigin, mapFromLocal(overlay.m_anns[0], overlay.m_anns[0].rect.topLeft())).length() < 2,
+              "changing rotated text keeps its scene origin stable");
+        overlay.beginTextEdit(mapFromLocal(overlay.m_anns[0], overlay.m_anns[0].rect.center()), 0);
+        overlay.m_editor->setPlainText(QString());
+        overlay.commitTextEdit();
+        check(overlay.m_anns.isEmpty(), "clearing an existing text item deletes it");
+        overlay.undoAnnotation();
+        check(overlay.m_anns.size() == 1 && overlay.m_anns[0].text == QStringLiteral("旋转文字"),
+              "undo restores deleted text with its formatting and rotation");
+        overlay.selectTool(ATool::Text);
+        overlay.beginTextEdit(origin + QPoint(300, 40));
+        overlay.m_editor->setPlainText(QStringLiteral("未结束也能输出"));
+        QPixmap pinned;
+        QObject::connect(&overlay, &CaptureOverlay::grabbed, [&pinned](const QPixmap &pix) { pinned = pix; });
+        const QImage expected = overlay.cropped().toImage();
+        overlay.pinCapture();
+        check(!pinned.isNull() && pinned.toImage() == expected && overlay.m_anns.size() == 2,
+              "capture actions commit the live text and output it exactly once");
+        std::puts("PASS: native text input, multiline layout, live formatting, re-editing, rotation, undo, and output");
+        return 0;
+    }
 signals:
     void grabbed(const QPixmap &pix);
     void longRequested(const QRect &globalRegion);
@@ -1898,16 +2453,40 @@ protected:
             p.setPen(QPen(snapColor, 1));
             p.drawLine(hole.left() - 10, m_snapY, hole.right() + 10, m_snapY);
         }
+        if (m_mode == Adjusting && !m_sel.isNull())   // Annotations clip to the selection.
+            paintAnnotations(p, QPointF(0, 0), 1.0, QRectF(m_sel), false);
+        if (m_mode == Adjusting && !m_live
+            && (editorActive() || (m_selAnn >= 0 && m_selAnn < m_anns.size()))) {
+            const Annotation ann = editorActive() ? editorAnnotation() : m_anns[m_selAnn];
+            p.save();
+            if (!qFuzzyIsNull(ann.rot)) p.setTransform(annTransform(ann), true);
+            const QRect box = annotationRect(ann);
+            p.setPen(QPen(QColor(30, 144, 255), 1, Qt::DashLine));
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(box.adjusted(-3, -3, 3, 3));
+            p.setBrush(Qt::white);
+            for (const QPoint &anchor : annAnchors(ann))
+                p.drawRect(QRect(anchor - QPoint(4, 4), QSize(8, 8)));
+            {                                        // Rotate stalk below the item.
+                const QPoint base(box.center().x(), box.bottom() + 2);
+                const QPoint knob(box.center().x(), box.bottom() + 22);
+                p.drawLine(base, knob);
+                p.drawEllipse(QRect(knob - QPoint(5, 5), QSize(10, 10)));
+            }
+            p.restore();
+        }
         if (m_mode == Adjusting && !m_sel.isNull() && m_hover.isNull())  // Eight resize handles.
             for (const QRect &h : handleRects(m_sel)) {
                 p.fillRect(h, Qt::white);
                 p.drawRect(h);
             }
-        if (m_tools->isVisible()) {                 // Frosted glass: blurred frozen frame plus tint.
-            const QRect bar = m_tools->geometry();
+        for (QWidget *glass : {m_tools, m_toolOptions}) {
+            if (!glass->isVisible()) continue;       // Frosted glass: blurred frame plus tint.
+            const QRect bar = glass->geometry();
             const qreal dpr = m_shot.devicePixelRatioF();
             const QRect src(qRound(bar.x() * dpr), qRound(bar.y() * dpr),
-                            qMax(1, qRound(bar.width() * dpr)), qMax(1, qRound(bar.height() * dpr)));
+                            qMax(1, qRound(bar.width() * dpr)),
+                            qMax(1, qRound(bar.height() * dpr)));
             const QSize grain(qMax(1, bar.width() / 6), qMax(1, bar.height() / 6));
             const QPixmap blur = m_shot.copy(src)
                 .scaled(grain, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
@@ -1929,8 +2508,15 @@ protected:
     {
         m_snapX = m_snapY = -1;                     // Clear magnetic-snap indicators.
         cancelDetection();
-        if (e->button() == Qt::RightButton) {       // Clear an existing selection; otherwise exit.
-            if (m_mode == Adjusting) { resetSelection(); } else { close(); }
+        m_nudging = false;
+        const bool wasEditing = editorActive();
+        if (wasEditing) commitTextEdit();           // Canvas clicks finish input; controls keep it live.
+        if (e->button() == Qt::RightButton) {       // Right click ends input, then the ladder.
+            if (m_live) { m_live = false; commitAnnotation(); }
+            else if (wasEditing) return;
+            else if (m_atool != ATool::None) setToolNone();
+            else if (m_selAnn >= 0) { m_selAnn = -1; update(); }
+            else if (m_mode == Adjusting) { resetSelection(); } else { close(); }
             return;
         }
         if (e->button() != Qt::LeftButton)
@@ -1938,6 +2524,67 @@ protected:
         setFocus();                                   // Any click restores keyboard handling.
         m_pressPos = e->pos();
         m_dragStarted = false;
+        if (m_mode == Adjusting && m_atool == ATool::Text && !m_spaceHeld) {
+            if (m_selAnn >= 0 && m_selAnn < m_anns.size()
+                && m_anns[m_selAnn].tool == ATool::Text) {
+                const Handle h = annHandleAt(m_anns[m_selAnn], e->pos());
+                if (h != H_None) {
+                    m_itemDrag = h;
+                    m_pressAnn = m_anns[m_selAnn];
+                    return;
+                }
+            }
+            const int hit = annotationAt(e->pos());
+            if (hit >= 0 && m_anns[hit].tool == ATool::Text) {
+                beginTextEdit(e->pos(), hit);
+                return;
+            }
+        }
+        if (m_mode == Adjusting && m_atool != ATool::None
+            && !m_spaceHeld && hitHandle(e->pos()) == H_Move) { // A tool acts inside the selection.
+            if (m_atool == ATool::Text) { beginTextEdit(e->pos()); return; }
+            if (m_atool == ATool::Eraser) {          // Drag deletes whole annotations touched.
+                m_erasing = true;
+                m_eraseSnapshotted = false;
+                eraseAt(e->pos());
+                return;
+            }
+            if (m_atool == ATool::Number) {          // Click drops the next sequence number.
+                pushUndo();
+                Annotation ann;
+                ann.tool = ATool::Number;
+                ann.color = m_acolor;
+                ann.font = qBound(14, m_afont, 48);
+                const int s = ann.font * 2;
+                ann.rect = QRect(e->pos() - QPoint(s / 2, s / 2), QSize(s, s));
+                m_anns.append(ann);
+                normalizeNumbers();
+                m_selAnn = m_anns.size() - 1;        // Auto-select fresh annotations.
+                update(ann.rect.adjusted(-8, -8, 8, 8));
+                return;
+            }
+            beginAnnotation(e->pos());
+            return;
+        }
+        if (m_mode == Adjusting && (m_atool == ATool::None || m_spaceHeld)) {   // Editing mode.
+            if (m_selAnn >= 0 && m_selAnn < m_anns.size()) {
+                const Handle h = annHandleAt(m_anns[m_selAnn], e->pos());
+                if (h != H_None) {                   // Corner/endpoint handles resize in place.
+                    m_itemDrag = h;
+                    m_pressAnn = m_anns[m_selAnn];
+                    return;
+                }
+            }
+            const int hit = annotationAt(e->pos());
+            if (hit >= 0) {                          // Click selects and drags the annotation.
+                m_selAnn = hit;
+                m_itemDrag = H_Move;
+                m_pressAnn = m_anns[hit];
+                update();
+                return;
+            }
+            m_selAnn = -1;
+        }
         if (m_mode == Adjusting) {
             m_drag = hitHandle(e->pos());
             m_pressSel = m_sel;
@@ -1957,9 +2604,44 @@ protected:
         updateInspector();
         const QPoint pos = e->pos();
         if (m_waitingClick) return;
+        if (m_live) {                               // Live annotation follows the cursor.
+            const QRect dirty = annotationRect(m_ann);
+            updateAnnotation(pos, e->modifiers());
+            update(dirty.united(annotationRect(m_ann)).adjusted(-24, -24, 24, 24));
+            if (m_ann.rect.isValid() && m_ann.tool != ATool::Pen
+                && m_ann.tool != ATool::Marker && m_ann.tool != ATool::Arrow) {
+                m_sizeTip->setText(QString("%1 × %2").arg(m_ann.rect.width()).arg(m_ann.rect.height()));
+                m_sizeTip->adjustSize();
+                m_sizeTip->move(m_ann.rect.topLeft() - QPoint(0, m_sizeTip->height() + 4));
+                m_sizeTip->show();
+            } else {
+                m_sizeTip->hide();
+            }
+            return;
+        }
+        if (m_erasing) {                             // The eraser removes whole annotations.
+            eraseAt(pos);
+            return;
+        }
+        if (m_itemDrag != H_None) {                  // Move or resize the selected annotation.
+            if (!m_dragStarted) {
+                if ((pos - m_pressPos).manhattanLength() < QApplication::startDragDistance())
+                    return;
+                m_dragStarted = true;
+                pushUndo();                          // Snapshot before the first modification.
+                hideToolBars();
+                m_inspector->hide();
+            }
+            const QRect dirty = rotatedBounds(m_anns[m_selAnn]).adjusted(-24, -24, 24, 24);
+            applyItemDrag(pos, e->modifiers());
+            update(dirty.united(rotatedBounds(m_anns[m_selAnn])).adjusted(-24, -24, 24, 24));
+            return;
+        }
         if (m_drag == H_None) {                     // Hover: cursor shape, size hint, window detection.
             if (m_mode == Adjusting) {
-                setCursor(cursorForHandle(hitHandle(pos)));
+                const Handle h = hitHandle(pos);
+                setCursor(m_atool != ATool::None && h == H_Move ? Qt::CrossCursor
+                                                                : cursorForHandle(h));
                 if (hitHandle(pos) != H_None) {
                     cancelDetection();
                     clearHover();                   // Repaint only the retired hover rectangle.
@@ -1974,10 +2656,7 @@ protected:
             && (pos - m_pressPos).manhattanLength() < QApplication::startDragDistance()) return;
         m_dragStarted = true;
         cancelDetection();
-        if (m_tools->isVisible()) {                 // The status bar steps aside during drags.
-            update(m_tools->geometry());
-            m_tools->hide();
-        }
+        hideToolBars();                              // The status bar steps aside during drags.
         m_inspector->hide();                        // So does the pixel inspector (this event
                                                     // ran updateInspector before the drag started).
         if (!m_hover.isNull())
@@ -1996,6 +2675,23 @@ protected:
     void mouseReleaseEvent(QMouseEvent *e) override
     {
         Q_UNUSED(e)
+        if (m_live) {                               // Commit the annotation; the tool stays active.
+            m_live = false;
+            commitAnnotation();
+            return;
+        }
+        if (m_erasing) { m_erasing = false; return; }
+        if (m_itemDrag != H_None) {                 // A click only selects; a drag edits.
+            const bool moved = m_dragStarted;
+            m_itemDrag = H_None;
+            m_dragStarted = false;
+            if (moved) {
+                placeToolbar();
+                showToolBars();
+            }
+            update();
+            return;
+        }
         if (m_drag == H_None)
             return;
         if (m_drag == H_New && !m_dragStarted) {
@@ -2017,13 +2713,21 @@ protected:
         m_hover = {};
         setCursor(Qt::SizeAllCursor);
         placeToolbar();
-        m_tools->show();
+        showToolBars();
         updateTip();
         update();
         if (m_pinAfterDetection) { m_pinAfterDetection = false; pinCapture(); }
     }
     void wheelEvent(QWheelEvent *e) override
     {
+        if (editorActive()) {                        // Wheel retunes the live text editor.
+            editorFontStep(e->angleDelta().y() > 0 ? 1 : -1);
+            return;
+        }
+        if (m_mode == Adjusting && m_drag == H_None && m_itemDrag == H_None) {
+            tuneWidth(e->angleDelta().y() > 0 ? 1 : -1, e->position().toPoint());
+            if (m_selAnn >= 0 || m_atool != ATool::None) return;
+        }
         if (m_drag != H_None || m_mode != Selecting || !m_detectionOptions.elements) return;
         const QPoint point = e->position().toPoint();
         if (e->angleDelta().y() > 0) {
@@ -2047,41 +2751,1081 @@ protected:
     }
     void mouseDoubleClickEvent(QMouseEvent *e) override
     {
+        if (editorActive()) return;                  // A text double-click never pins the capture.
+        if (m_mode == Adjusting && (m_atool == ATool::None || m_atool == ATool::Text)) {
+            const int hit = annotationAt(e->pos());  // Double-click re-opens a text annotation.
+            if (hit >= 0 && m_anns[hit].tool == ATool::Text) {
+                m_selAnn = hit;
+                m_itemDrag = H_None;
+                beginTextEdit(e->pos(), hit);
+                return;
+            }
+        }
         if (m_queryPending && (m_waitingClick || m_drag == H_New))
             m_pinAfterDetection = true;
-        else if (m_mode == Adjusting && m_sel.contains(e->pos()))
+        else if (m_mode == Adjusting && m_atool == ATool::None && m_sel.contains(e->pos()))
             pinCapture();
     }
     void keyPressEvent(QKeyEvent *e) override
     {
+        if (editorActive()) {                        // Unhandled editing keys must not trigger capture actions.
+            if (e->key() == Qt::Key_Escape) commitTextEdit();
+            else if (e->modifiers() & Qt::ControlModifier) {
+                if (e->key() == Qt::Key_S) saveCapture();
+                else if (e->key() == Qt::Key_T) pinCapture();
+                else if (e->key() == Qt::Key_Z) {
+                    if (e->modifiers() & Qt::ShiftModifier) redoAnnotation();
+                    else undoAnnotation();
+                } else if (e->key() == Qt::Key_Y) redoAnnotation();
+            }
+            return;
+        }
+        if ((e->modifiers() & Qt::ControlModifier)
+            && !(e->modifiers() & (Qt::ShiftModifier | Qt::AltModifier | Qt::MetaModifier))) {
+            if (e->key() == Qt::Key_T && m_mode == Adjusting && !m_live && !editorActive()) {
+                pinCapture();                        // Pin to screen (Ctrl+T).
+                return;
+            }
+        }
         switch (e->key()) {
         case Qt::Key_Escape:
-            close();
+            if (m_live) { m_live = false; endAnnotationDrag(); }
+            else if (editorActive()) commitTextEdit();
+            else if (m_atool != ATool::None) setToolNone();
+            else if (m_selAnn >= 0) { m_selAnn = -1; update(); }
+            else close();
+            break;
+        case Qt::Key_Space:
+            if (!e->isAutoRepeat()) m_spaceHeld = true;   // Space turns drags into moves.
+            break;
+        case Qt::Key_Plus:
+        case Qt::Key_Equal:
+            if (!m_live && !editorActive() && m_mode == Adjusting)
+                tuneWidth(1, mapFromGlobal(QCursor::pos()));
+            break;
+        case Qt::Key_Minus:
+            if (!m_live && !editorActive() && m_mode == Adjusting)
+                tuneWidth(-1, mapFromGlobal(QCursor::pos()));
+            break;
+        case Qt::Key_F:                              // Fill mode for shapes and the selection.
+            if (e->modifiers() == Qt::NoModifier && !e->isAutoRepeat()
+                && !m_live && !editorActive() && m_mode == Adjusting) {
+                if (m_selAnn >= 0 && m_selAnn < m_anns.size()
+                    && (m_anns[m_selAnn].tool == ATool::Rect
+                        || m_anns[m_selAnn].tool == ATool::Ellipse)) {
+                    pushUndo();
+                    m_anns[m_selAnn].fill = !m_anns[m_selAnn].fill;
+                    update();
+                } else if (m_atool == ATool::Rect || m_atool == ATool::Ellipse) {
+                    m_afill = !m_afill;
+                    m_sizeTip->setText(m_afill ? QStringLiteral("填充") : QStringLiteral("描边"));
+                    tipPosition(mapFromGlobal(QCursor::pos()));
+                    m_sizeTip->show();
+                }
+            }
+            break;
+        case Qt::Key_Delete:
+            if (m_selAnn >= 0) deleteSelected();
             break;
         case Qt::Key_Return:
         case Qt::Key_Enter:
-            if (m_mode == Adjusting) pinCapture();
+            if (m_mode == Adjusting && !m_live) pinCapture();
             break;
         case Qt::Key_C:
             if (e->modifiers() & Qt::ControlModifier) {
-                if (m_mode == Adjusting) copyCapture();
+                if (m_mode == Adjusting && !m_live) copyCapture();
             } else if (!(e->modifiers() & (Qt::AltModifier | Qt::MetaModifier))
                        && m_inspector->isVisible() && !m_inspector->colorText().isEmpty()) {
                 QGuiApplication::clipboard()->setText(m_inspector->colorText());
             }
             break;
+        case Qt::Key_Z:
+            if (e->modifiers() & Qt::ControlModifier) {
+                if (e->modifiers() & Qt::ShiftModifier) redoAnnotation();
+                else undoAnnotation();
+            }
+            break;
+        case Qt::Key_Y:
+            if (e->modifiers() & Qt::ControlModifier) redoAnnotation();
+            break;
         case Qt::Key_Shift:
             if (!e->isAutoRepeat()) m_inspector->toggleFormat();
             break;
         case Qt::Key_S:
-            if (e->modifiers() & Qt::ControlModifier) saveCapture();
+            if (e->modifiers() & Qt::ControlModifier && !m_live) saveCapture();
+            else if (e->modifiers() == Qt::NoModifier && !e->isAutoRepeat())
+                nudgeSelected(Qt::Key_S);            // WASD nudges the selection.
             break;
         default:
+            if (e->modifiers() == Qt::NoModifier && !e->isAutoRepeat()
+                && !m_live && !editorActive()) {
+                if (m_selAnn >= 0 && m_selAnn < m_anns.size()) {
+                    nudgeSelected(e->key());        // Arrows / WASD move the selected item.
+                    return;
+                }
+                const int key = e->key();           // Single letters arm annotation tools.
+                const ATool tool = key == Qt::Key_R ? ATool::Rect
+                    : key == Qt::Key_O ? ATool::Ellipse
+                    : key == Qt::Key_A ? ATool::Arrow
+                    : key == Qt::Key_P ? ATool::Pen
+                    : key == Qt::Key_H ? ATool::Marker
+                    : key == Qt::Key_T ? ATool::Text
+                    : key == Qt::Key_N ? ATool::Number
+                    : key == Qt::Key_M ? ATool::Mosaic
+                    : key == Qt::Key_E ? ATool::Eraser : ATool::None;
+                if (tool != ATool::None)
+                    selectTool(tool == m_atool ? ATool::None : tool);   // Same key toggles off.
+            }
             break;
         }
     }
+    void keyReleaseEvent(QKeyEvent *e) override
+    {
+        if (e->key() == Qt::Key_Space) m_spaceHeld = false;
+    }
 private:
-    enum Handle { H_None = 0, H_New, H_Move, H_TL, H_TR, H_BL, H_BR, H_L, H_R, H_T, H_B };
+    enum Handle { H_None = 0, H_New, H_Move, H_TL, H_TR, H_BL, H_BR, H_L, H_R, H_T, H_B, H_Rotate };
+
+    // ---------- instant annotation ----------
+    enum class ATool { None, Rect, Ellipse, Arrow, Pen, Marker, Text, Number, Mosaic, Eraser };
+    struct Annotation {
+        ATool tool = ATool::None;
+        QColor color;
+        int pen = 3;                                 // Stroke width / mosaic block / blur grain.
+        QRect rect;                                  // Rect / Ellipse / Mosaic / Blur / Text / Number box.
+        QPoint a, b;                                 // Arrow endpoints.
+        QPolygonF stroke;                            // Pen / Marker polyline.
+        QString text;                                // Text / Number content.
+        int font = 0;                                // Text / Number pixel font size.
+        int arrowStyle = 0;                          // 0 single, 1 double, 2 none, 3 hollow.
+        bool bold = false;                           // Text weight / slant.
+        bool italic = false;
+        qreal rot = 0;                               // Rotation around the box center (degrees).
+        bool fill = false;                           // Rect / Ellipse translucent fill mode.
+    };
+    static QRect annotationRect(const Annotation &ann)
+    {
+        switch (ann.tool) {
+        case ATool::Arrow:  return QRect(ann.a, ann.b).normalized();
+        case ATool::Pen:    return ann.stroke.boundingRect().toRect();
+        case ATool::Marker: {                          // Fat translucent stroke: include its width.
+            const int w = ann.pen * 5 / 2 + 2;
+            return ann.stroke.boundingRect().toRect().adjusted(-w, -w, w, w);
+        }
+        default:            return ann.rect;
+        }
+    }
+    // Rotation helpers: item geometry stays in local space, the angle only transforms paint and hit tests.
+    static QTransform annTransform(const Annotation &ann)
+    {
+        QTransform t;
+        if (qFuzzyIsNull(ann.rot)) return t;
+        const QPointF c = QPointF(annotationRect(ann).center());
+        t.translate(c.x(), c.y());
+        t.rotate(ann.rot);
+        t.translate(-c.x(), -c.y());
+        return t;
+    }
+    static QRect rotatedBounds(const Annotation &ann)
+    {
+        const QRect r = annotationRect(ann);
+        return qFuzzyIsNull(ann.rot) ? r : annTransform(ann).mapToPolygon(r).boundingRect();
+    }
+    static QPoint mapToLocal(const Annotation &ann, const QPoint &pos)
+    {
+        return qFuzzyIsNull(ann.rot) ? pos : annTransform(ann).inverted().map(QPointF(pos)).toPoint();
+    }
+    static QPoint mapFromLocal(const Annotation &ann, const QPoint &pos)
+    {
+        return qFuzzyIsNull(ann.rot) ? pos : annTransform(ann).map(QPointF(pos)).toPoint();
+    }
+    // ---- object editing: hit tests, selection anchors, move/resize, undo/redo ----
+    static qreal distToSegment(const QPointF &p, const QPointF &a, const QPointF &b)
+    {
+        const qreal len = QLineF(a, b).length();
+        if (len < 0.001) return QLineF(a, p).length();
+        const qreal t = qBound(0.0, ((p.x() - a.x()) * (b.x() - a.x())
+                                   + (p.y() - a.y()) * (b.y() - a.y())) / (len * len), 1.0);
+        return QLineF(p, a + (b - a) * t).length();
+    }
+    static bool annotationHit(const Annotation &ann, const QPoint &pos, int tolBoost = 0)
+    {
+        const int tol = qMax(5, ann.pen / 2 + 4);    // Areas keep the base reach; the boost
+        const int lineTol = tol + tolBoost;          // only widens outline / stroke hits.
+        switch (ann.tool) {
+        case ATool::Rect:                            // Outlines select on their border only.
+            return ann.rect.adjusted(-lineTol, -lineTol, lineTol, lineTol).contains(pos)
+                && !ann.rect.adjusted(tol, tol, -tol, -tol).contains(pos);
+        case ATool::Ellipse: {
+            const QPointF d = pos - ann.rect.center();
+            const qreal rx = ann.rect.width() / 2.0, ry = ann.rect.height() / 2.0;
+            if (rx < 1 || ry < 1) return ann.rect.contains(pos);
+            const qreal outer = qPow(d.x() / (rx + lineTol), 2) + qPow(d.y() / (ry + lineTol), 2);
+            const qreal inner = qPow(d.x() / qMax(1.0, rx - tol), 2)
+                              + qPow(d.y() / qMax(1.0, ry - tol), 2);
+            return outer <= 1.0 && inner >= 1.0;
+        }
+        case ATool::Arrow:
+            return distToSegment(QPointF(pos), ann.a, ann.b) <= lineTol + ann.pen / 2;
+        case ATool::Pen:
+        case ATool::Marker:
+            if (ann.stroke.isEmpty()) return false;
+            for (int i = 1; i < ann.stroke.size(); ++i)
+                if (distToSegment(QPointF(pos), ann.stroke[i - 1], ann.stroke[i])
+                    <= lineTol + ann.pen / 2)
+                    return true;
+            return distToSegment(QPointF(pos), ann.stroke.first(), ann.stroke.first())
+                <= lineTol + ann.pen / 2;
+        default:                                     // Area objects select anywhere inside.
+            return ann.rect.adjusted(-tol, -tol, tol, tol).contains(pos);
+        }
+    }
+    int annotationAt(const QPoint &pos) const        // Topmost annotation first.
+    {
+        for (int i = m_anns.size() - 1; i >= 0; --i)
+            if (annotationHit(m_anns[i], mapToLocal(m_anns[i], pos))) return i;
+        return -1;
+    }
+    // Corner anchors for area shapes, endpoint anchors for arrows; strokes and text move only.
+    QVector<QPoint> annAnchors(const Annotation &ann) const
+    {
+        if (ann.tool == ATool::Arrow) return {ann.a, ann.b};
+        switch (ann.tool) {
+        case ATool::Rect: case ATool::Ellipse: case ATool::Mosaic:
+        case ATool::Text: case ATool::Number: {
+            const QRect r = ann.rect.normalized();
+            return {r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight()};
+        }
+        default:
+            return {};
+        }
+    }
+    Handle annHandleAt(const Annotation &ann, const QPoint &pos) const
+    {
+        if (QRect(rotateAnchor(ann) - QPoint(6, 6), QSize(12, 12)).contains(pos)) return H_Rotate;
+        const QVector<QPoint> anchors = annAnchors(ann);
+        static const Handle ids[] = {H_TL, H_TR, H_BL, H_BR, H_TL, H_BR};
+        for (int i = 0; i < anchors.size(); ++i)
+            if (QRect(mapFromLocal(ann, anchors[i]) - QPoint(5, 5), QSize(10, 10)).contains(pos))
+                return ids[i];
+        return H_None;
+    }
+    static QPoint rotateAnchor(const Annotation &ann)  // Rotate stalk sits below the item.
+    {
+        const QRect r = annotationRect(ann);
+        return mapFromLocal(ann, QPoint(r.center().x(), r.bottom() + 22));
+    }
+    static void translateAnnotation(Annotation &ann, const QPoint &d)
+    {
+        ann.rect.translate(d);
+        ann.a += d;
+        ann.b += d;
+        ann.stroke.translate(d);
+    }
+    void applyItemDrag(const QPoint &pos, Qt::KeyboardModifiers mods = Qt::NoModifier)
+    {
+        Annotation ann = m_pressAnn;                 // Always computed from the press snapshot.
+        if (m_itemDrag == H_Move) translateAnnotation(ann, pos - m_pressPos);
+        else if (m_itemDrag == H_Rotate) {           // Drag the stalk to rotate around the center.
+            const QPointF c = QPointF(annotationRect(ann).center());
+            qreal delta = QLineF(c, QPointF(m_pressPos)).angle()
+                        - QLineF(c, QPointF(pos)).angle();
+            qreal rot = ann.rot + delta;
+            if (mods & Qt::ShiftModifier) rot = qRound(rot / 15.0) * 15.0;   // Snap to 15 degrees.
+            ann.rot = rot;
+        } else {
+            const QPoint local = mapToLocal(ann, pos);   // Handle math runs in item space.
+            if (ann.tool == ATool::Arrow) {
+                if (m_itemDrag == H_TL) ann.a = local; else ann.b = local;
+            } else {
+                const QRect r = m_pressAnn.rect.normalized();
+                const QPoint fixed = m_itemDrag == H_TL ? r.bottomRight()
+                    : m_itemDrag == H_TR ? r.bottomLeft()
+                    : m_itemDrag == H_BL ? r.topRight() : r.topLeft();
+                ann.rect = QRect(fixed, local).normalized();
+                if (ann.tool == ATool::Text) {       // Resize letters, not an invisible wrapping box.
+                    const qreal scale = qMax(qreal(ann.rect.width()) / qMax(1, r.width()),
+                                             qreal(ann.rect.height()) / qMax(1, r.height()));
+                    ann.font = qBound(12, qRound(m_pressAnn.font * scale), 72);
+                    fitTextAnnotation(ann);
+                    if (m_itemDrag == H_TL) ann.rect.moveBottomRight(fixed);
+                    else if (m_itemDrag == H_TR) ann.rect.moveBottomLeft(fixed);
+                    else if (m_itemDrag == H_BL) ann.rect.moveTopRight(fixed);
+                    else ann.rect.moveTopLeft(fixed);
+                } else if (ann.tool == ATool::Number) { // Circles stay square while resizing.
+                    const int s = qMax(ann.rect.width(), ann.rect.height());
+                    ann.rect = QRect(ann.rect.topLeft(), QSize(s, s));
+                }
+            }
+        }
+        m_anns[m_selAnn] = ann;
+    }
+    void pushUndo()                                  // Snapshot stacks: one list per step.
+    {
+        m_undoStack.append(m_anns);
+        if (m_undoStack.size() > 100) m_undoStack.removeFirst();
+        m_redoStack.clear();
+        syncUndoButtons();
+    }
+    void syncUndoButtons()                           // Buttons follow the stacks, like the bar.
+    {
+        if (m_undoButton) m_undoButton->setEnabled(!m_undoStack.isEmpty());
+        if (m_redoButton) m_redoButton->setEnabled(!m_redoStack.isEmpty());
+    }
+    void normalizeNumbers()                          // Sequence numbers follow list order.
+    {
+        int n = 0;
+        for (Annotation &ann : m_anns)
+            if (ann.tool == ATool::Number) ann.text = QString::number(++n);
+    }
+    void eraseAt(const QPoint &pos)
+    {
+        const int tolBoost = m_apen * 2;              // Eraser thickness widens the hit zone.
+        for (int i = m_anns.size() - 1; i >= 0; --i)
+            if (annotationHit(m_anns[i], mapToLocal(m_anns[i], pos), tolBoost)) {
+                if (!m_eraseSnapshotted) {           // One snapshot covers the whole drag.
+                    pushUndo();
+                    m_eraseSnapshotted = true;
+                }
+                const QRect dirty = rotatedBounds(m_anns[i]).adjusted(-24, -24, 24, 24);
+                m_anns.removeAt(i);
+                if (m_selAnn == i) m_selAnn = -1;
+                else if (m_selAnn > i) --m_selAnn;
+                normalizeNumbers();
+                update(dirty);
+            }
+    }
+    void deleteSelected()
+    {
+        if (m_selAnn < 0 || m_selAnn >= m_anns.size()) { m_selAnn = -1; return; }
+        pushUndo();
+        m_anns.removeAt(m_selAnn);
+        m_selAnn = -1;
+        normalizeNumbers();
+        update();
+    }
+    static QFont textFont(const Annotation &ann)
+    {
+        QFont font(QStringLiteral("Microsoft YaHei UI"));
+        font.setPixelSize(ann.font);
+        font.setBold(ann.bold);
+        font.setItalic(ann.italic);
+        return font;
+    }
+    static void setupTextDocument(QTextDocument &doc, const Annotation &ann)
+    {
+        doc.setDefaultFont(textFont(ann));
+        doc.setDocumentMargin(6);
+        QTextOption option;
+        option.setWrapMode(QTextOption::NoWrap);
+        doc.setDefaultTextOption(option);
+        doc.setPlainText(ann.text);
+        doc.setTextWidth(-1);
+    }
+    static void fitTextAnnotation(Annotation &ann)
+    {
+        const QPoint origin = mapFromLocal(ann, ann.rect.topLeft());
+        QTextDocument doc;
+        setupTextDocument(doc, ann);
+        const QSizeF size = doc.size();
+        ann.rect.setSize(QSize(qCeil(size.width()), qCeil(size.height())));
+        ann.rect.translate(origin - mapFromLocal(ann, ann.rect.topLeft()));
+    }
+    // ---- native scene text editing: one layout for input, selection, and capture ----
+    bool editorActive() const { return m_textView && m_textView->isVisible(); }
+    Annotation editorAnnotation() const
+    {
+        Annotation ann;
+        ann.tool = ATool::Text;
+        ann.text = m_editor->toPlainText();
+        ann.font = m_editFont;
+        ann.color = m_editColor;
+        ann.bold = m_editBold;
+        ann.italic = m_editItalic;
+        ann.rot = m_editor->rotation();
+        const QSizeF size = m_editor->boundingRect().size();
+        // shortcut: Text geometry rounds to logical pixels; use fractional bounds for exact subpixel rotation.
+        ann.rect = QRect(m_editor->pos().toPoint(), QSize(qCeil(size.width()), qCeil(size.height())));
+        return ann;
+    }
+    void syncTextEditorGeometry()
+    {
+        if (!editorActive()) return;
+        const QPointF origin = m_editor->mapToScene(QPointF());
+        m_editor->setTransformOriginPoint(m_editor->boundingRect().center());
+        m_editor->setPos(m_editor->pos() + origin - m_editor->mapToScene(QPointF()));
+        const QPolygon mask = m_textView->mapFromScene(
+            m_editor->mapToScene(m_editor->boundingRect()));
+        m_textView->setMask(QRegion(mask).intersected(QRegion(m_sel)));
+        update();
+    }
+    bool eventFilter(QObject *obj, QEvent *ev) override
+    {
+        if (editorActive() && (obj == m_textView || obj == m_textView->viewport())) {
+            if (ev->type() == QEvent::InputMethod) {
+                m_textPreedit = !static_cast<QInputMethodEvent *>(ev)->preeditString().isEmpty();
+            } else if (ev->type() == QEvent::KeyPress) {
+                auto *ke = static_cast<QKeyEvent *>(ev);
+                if (ke->key() == Qt::Key_Escape) {
+                    if (m_textPreedit) QGuiApplication::inputMethod()->reset();
+                    else commitTextEdit();
+                    m_textPreedit = false;
+                    return true;
+                }
+                if ((ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter)
+                    && ke->modifiers() == Qt::ControlModifier && !m_textPreedit) {
+                    QTextCursor cur = m_editor->textCursor();
+                    cur.movePosition(QTextCursor::EndOfBlock);
+                    cur.insertText(QStringLiteral("\n"));
+                    m_editor->setTextCursor(cur);
+                    return true;
+                }
+                if (ke->key() == Qt::Key_V && ke->modifiers() == Qt::ControlModifier) {
+                    QTextCursor cur = m_editor->textCursor();
+                    cur.insertText(QGuiApplication::clipboard()->text());
+                    m_editor->setTextCursor(cur);
+                    return true;
+                }
+            } else if (ev->type() == QEvent::Wheel) {
+                const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
+                if (delta) editorFontStep(delta > 0 ? 1 : -1);
+                return true;
+            } else if (ev->type() == QEvent::ContextMenu) {
+                return true;
+            } else if (obj == m_textView->viewport() && ev->type() == QEvent::MouseButtonPress) {
+                auto *me = static_cast<QMouseEvent *>(ev);
+                if (me->button() == Qt::RightButton) { commitTextEdit(); return true; }
+                if (me->button() == Qt::MiddleButton) {
+                    QTextCursor cur = m_editor->textCursor();
+                    cur.insertText(QGuiApplication::clipboard()->text());
+                    m_editor->setTextCursor(cur);
+                    return true;
+                }
+                const QPointF local = m_editor->mapFromScene(m_textView->mapToScene(me->pos()));
+                if (me->button() == Qt::LeftButton
+                    && !m_editor->boundingRect().adjusted(6, 6, -6, -6).contains(local)) {
+                    m_textMoving = true;
+                    m_textMovePress = me->globalPos();
+                    m_textMoveOrigin = m_editor->pos();
+                    m_textView->viewport()->grabMouse();
+                    return true;
+                }
+            } else if (m_textMoving && ev->type() == QEvent::MouseMove) {
+                auto *me = static_cast<QMouseEvent *>(ev);
+                const QPoint delta = me->globalPos() - m_textMovePress;
+                if (m_editor->pos() == m_textMoveOrigin
+                    && delta.manhattanLength() < QApplication::startDragDistance()) return true;
+                m_editor->setPos(m_textMoveOrigin + delta);
+                syncTextEditorGeometry();
+                return true;
+            } else if (m_textMoving && ev->type() == QEvent::MouseButtonRelease) {
+                m_textMoving = false;
+                m_textView->viewport()->releaseMouse();
+                return true;
+            }
+        }
+        return QWidget::eventFilter(obj, ev);
+    }
+    void beginTextEdit(const QPoint &pos, int existing = -1)
+    {
+        commitTextEdit();
+        m_editAnn = existing;
+        m_editFont = existing >= 0 ? m_anns[existing].font : m_afont;
+        m_editColor = existing >= 0 ? m_anns[existing].color : m_acolor;
+        m_editBold = existing >= 0 ? m_anns[existing].bold : m_abold;
+        m_editItalic = existing >= 0 ? m_anns[existing].italic : m_aitalic;
+        m_atool = ATool::Text;
+        m_selAnn = existing;
+        m_acolor = m_colorText = m_editColor;
+        m_afont = m_editFont;
+        m_abold = m_editBold;
+        m_aitalic = m_editItalic;
+        syncToolButtons();
+        updateToolOptions();
+        if (!m_editor) {
+            m_textView = new QGraphicsView(this);
+            auto *scene = new QGraphicsScene(m_textView);
+            m_textView->setScene(scene);
+            m_textView->setFrameShape(QFrame::NoFrame);
+            m_textView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+            m_textView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+            m_textView->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+            m_textView->setStyleSheet(QStringLiteral("background:transparent;border:none;"));
+            m_textView->setRenderHint(QPainter::Antialiasing);
+            m_textView->setGeometry(rect());
+            m_textView->setSceneRect(QRectF(rect()));
+            m_textView->hide();
+            m_editor = new QGraphicsTextItem;
+            scene->addItem(m_editor);
+            m_editor->setTextInteractionFlags(Qt::TextEditorInteraction);
+            m_editor->setTextWidth(-1);
+            m_editor->document()->setDocumentMargin(6);
+            QTextOption option;
+            option.setWrapMode(QTextOption::NoWrap);
+            m_editor->document()->setDefaultTextOption(option);
+            m_textView->installEventFilter(this);
+            m_textView->viewport()->installEventFilter(this);
+            connect(m_editor->document()->documentLayout(),
+                    &QAbstractTextDocumentLayout::documentSizeChanged,
+                    this, [this] { syncTextEditorGeometry(); });
+        }
+        applyEditorFont();
+        m_editor->setRotation(0);
+        m_editor->setPlainText(existing >= 0 ? m_anns[existing].text : QString());
+        m_editor->setTransformOriginPoint(m_editor->boundingRect().center());
+        m_editor->setPos(existing >= 0 ? m_anns[existing].rect.topLeft() : pos - QPoint(6, 6));
+        if (existing >= 0) m_editor->setRotation(m_anns[existing].rot);
+        QTextCursor cur = m_editor->textCursor();
+        const int hit = m_editor->document()->documentLayout()->hitTest(
+            m_editor->mapFromScene(QPointF(pos)), Qt::FuzzyHit);
+        cur.setPosition(qMax(0, hit));
+        m_editor->setTextCursor(cur);
+        ImmAssociateContext(reinterpret_cast<HWND>(winId()), m_imeCtx);
+        m_textView->show();
+        m_textView->raise();
+        m_tools->raise();
+        m_toolOptions->raise();
+        m_sizeTip->hide();
+        m_inspector->hide();
+        m_textView->setFocus();
+        m_editor->setFocus(Qt::MouseFocusReason);
+        syncTextEditorGeometry();
+        update();
+    }
+    void commitTextEdit()
+    {
+        if (m_committingText || !editorActive()) return;
+        m_committingText = true;
+        QGuiApplication::inputMethod()->commit();
+        const Annotation edited = editorAnnotation();
+        const QString text = edited.text;
+        m_textView->hide();
+        m_textMoving = m_textPreedit = false;
+        ImmAssociateContext(reinterpret_cast<HWND>(winId()), nullptr); // Back to hotkey mode.
+        const bool replace = m_editAnn >= 0 && m_editAnn < m_anns.size();
+        bool changed = !text.trimmed().isEmpty();
+        if (replace) {
+            const Annotation &old = m_anns[m_editAnn];
+            changed = old.text != text || old.rect != edited.rect || old.font != edited.font
+                || old.color != edited.color || old.bold != edited.bold || old.italic != edited.italic
+                || old.rot != edited.rot;
+        }
+        if (changed) {
+            pushUndo();
+            if (text.trimmed().isEmpty()) {         // Clearing the text deletes the annotation.
+                m_anns.removeAt(m_editAnn);
+                if (m_selAnn == m_editAnn) m_selAnn = -1;
+                else if (m_selAnn > m_editAnn) --m_selAnn;
+            } else if (replace) {
+                m_anns[m_editAnn] = edited;
+                m_selAnn = m_editAnn;
+            } else {
+                m_anns.append(edited);
+                m_selAnn = m_anns.size() - 1;        // Auto-select fresh annotations.
+            }
+        }
+        m_editAnn = -1;
+        m_committingText = false;
+        setFocus();
+        update();
+    }
+    void applyEditorFont()                          // Size, weight, and slant in one place.
+    {
+        if (!m_editor) return;
+        Annotation ann;
+        ann.font = m_editFont;
+        ann.bold = m_editBold;
+        ann.italic = m_editItalic;
+        m_editor->setFont(textFont(ann));
+        m_editor->setDefaultTextColor(m_editColor);
+        syncTextEditorGeometry();
+    }
+    void editorFontStep(int dir)
+    {
+        m_editFont = qBound(12, m_editFont + dir * 2, 72);
+        m_afont = m_editFont;
+        applyEditorFont();
+    }
+    void tipPosition(const QPoint &at)
+    {
+        m_sizeTip->adjustSize();
+        m_sizeTip->move(qBound(0, at.x() - m_sizeTip->width() / 2, width() - m_sizeTip->width()),
+                        qMax(0, at.y() - m_sizeTip->height() - 16));
+    }
+    void nudgeSelected(int key)                       // Arrows / WASD move the selection 1px.
+    {
+        if (m_selAnn < 0 || m_selAnn >= m_anns.size() || m_live || editorActive())
+            return;
+        const QPoint d = key == Qt::Key_Left || key == Qt::Key_A ? QPoint(-1, 0)
+            : key == Qt::Key_Right || key == Qt::Key_D ? QPoint(1, 0)
+            : key == Qt::Key_Up || key == Qt::Key_W ? QPoint(0, -1)
+            : key == Qt::Key_Down || key == Qt::Key_S ? QPoint(0, 1) : QPoint();
+        if (d.isNull()) return;
+        if (!m_nudging) {
+            pushUndo();                               // Coalesce a key burst into one step.
+            m_nudging = true;
+        }
+        translateAnnotation(m_anns[m_selAnn], d);
+        update();
+    }
+    void tuneWidth(int dir, const QPoint &at)         // Wheel and +/- share this path.
+    {
+        if (m_selAnn >= 0 && m_selAnn < m_anns.size()) {
+            Annotation &ann = m_anns[m_selAnn];       // Retune the selected annotation.
+            const bool texty = ann.tool == ATool::Text || ann.tool == ATool::Number;
+            int &value = texty ? ann.font : ann.pen;
+            const int next = qBound(texty ? 12 : 1, value + (texty ? dir * 2 : dir),
+                                    texty ? 72 : 12);
+            if (next == value) return;
+            pushUndo();
+            value = next;
+            if (ann.tool == ATool::Text) fitTextAnnotation(ann);
+            if (ann.tool == ATool::Number) {          // Circles stay square and wrap the digits.
+                const int s = ann.font * 2;
+                ann.rect = QRect(ann.rect.center() - QPoint(s / 2, s / 2), QSize(s, s));
+            }
+            m_sizeTip->setText(texty ? QStringLiteral("字号 %1").arg(ann.font)
+                                     : QStringLiteral("粗细 %1").arg(ann.pen));
+            tipPosition(at);
+            m_sizeTip->show();
+            update();
+            return;
+        }
+        if (m_atool == ATool::Text) {                 // Otherwise tune the tool defaults.
+            m_afont = qBound(12, m_afont + dir * 2, 72);
+            m_sizeTip->setText(QStringLiteral("字号 %1").arg(m_afont));
+        } else if (m_atool != ATool::None) {
+            m_apen = qBound(1, m_apen + dir, 12);
+            m_sizeTip->setText(QStringLiteral("粗细 %1").arg(m_apen));
+        } else {
+            return;
+        }
+        tipPosition(at);
+        m_sizeTip->show();
+    }
+    void beginAnnotation(const QPoint &pos)
+    {
+        m_live = true;
+        m_ann = Annotation();
+        m_ann.tool = m_atool;
+        m_ann.color = m_acolor;
+        m_ann.pen = m_apen;
+        if (m_atool == ATool::Rect || m_atool == ATool::Ellipse) m_ann.fill = m_afill;
+        if (m_atool == ATool::Arrow) m_ann.arrowStyle = m_arrowStyle;
+        if (m_atool == ATool::Pen || m_atool == ATool::Marker) m_ann.stroke << pos;
+        else if (m_atool == ATool::Arrow) m_ann.a = m_ann.b = pos;
+        else m_ann.rect = QRect(pos, pos);
+        if (m_tools->isVisible()) {                  // The status bar steps aside while drawing.
+            update(m_tools->geometry());
+            m_tools->hide();
+            if (m_toolOptions->isVisible()) {
+                update(m_toolOptions->geometry());
+                m_toolOptions->hide();
+            }
+        }
+        m_inspector->hide();
+        m_sizeTip->hide();
+    }
+    void updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers mods = Qt::NoModifier)
+    {
+        switch (m_atool) {
+        case ATool::Pen:
+        case ATool::Marker:
+            if ((pos - m_ann.stroke.last().toPoint()).manhattanLength() >= 2)
+                m_ann.stroke << pos;                 // Decimate near-duplicate samples.
+            break;
+        case ATool::Arrow: {
+            QPointF b = pos;
+            if (mods & Qt::ShiftModifier) {          // Snap the direction to 45-degree steps.
+                const QLineF line(QPointF(m_ann.a), QPointF(pos));
+                if (line.length() > 1) {
+                    const qreal angle = qRound(qAtan2(-(pos.y() - m_ann.a.y()),
+                                                        pos.x() - m_ann.a.x())
+                                               / (M_PI / 4)) * (M_PI / 4);
+                    b = QPointF(m_ann.a.x() + qCos(angle) * line.length(),
+                                m_ann.a.y() - qSin(angle) * line.length());
+                }
+            }
+            m_ann.b = b.toPoint();
+            break;
+        }
+        default: {
+            QPoint end = pos;
+            if (mods & Qt::ShiftModifier) {          // Shift keeps squares and circles true.
+                const int dx = pos.x() - m_pressPos.x(), dy = pos.y() - m_pressPos.y();
+                const int s = qMax(qAbs(dx), qAbs(dy));
+                end = QPoint(m_pressPos.x() + (dx < 0 ? -s : s),
+                             m_pressPos.y() + (dy < 0 ? -s : s));
+            }
+            m_ann.rect = QRect(m_pressPos, end).normalized();
+            break;
+        }
+        }
+    }
+    void commitAnnotation()
+    {
+        const bool meaningful = m_ann.tool == ATool::Pen || m_ann.tool == ATool::Marker
+            ? m_ann.stroke.size() >= 2
+            : m_ann.tool == ATool::Arrow
+                  ? (m_ann.a - m_ann.b).manhattanLength() >= 6
+                  : m_ann.rect.width() >= 3 && m_ann.rect.height() >= 3;
+        if (meaningful) {                            // Discard accidental tiny strokes.
+            pushUndo();
+            m_anns.append(m_ann);
+            normalizeNumbers();
+            m_selAnn = m_anns.size() - 1;            // Auto-select fresh annotations for editing.
+        }
+        endAnnotationDrag();
+    }
+    void endAnnotationDrag()                         // Restore what stepped aside.
+    {
+        m_sizeTip->hide();
+        placeToolbar();
+        showToolBars();
+        update();
+    }
+    void setToolNone()
+    {
+        commitTextEdit();
+        m_atool = ATool::None;
+        syncToolButtons();
+        updateToolOptions();
+        update();
+    }
+    void selectTool(ATool tool)                      // Shared by toolbar toggles and keyboard.
+    {
+        commitTextEdit();
+        m_atool = tool;
+        if (tool == ATool::Rect) m_shapeEllipse = false;        // R/O/popup pick the sub-shape.
+        else if (tool == ATool::Ellipse) m_shapeEllipse = true;
+        m_selAnn = -1;                               // Tools and item selection exclude each other.
+        m_acolor = toolColor(tool);
+        syncToolButtons();
+        updateToolOptions();
+        setCursor(Qt::CrossCursor);
+        update();
+    }
+    void syncToolButtons()                           // Rect and Ellipse share one button.
+    {
+        const QToolButton *active = m_atool == ATool::None ? nullptr : m_toolBtn[int(m_atool)];
+        for (int t = 1; t < m_toolBtn.size(); ++t) {
+            QSignalBlocker lock(m_toolBtn[t]);
+            m_toolBtn[t]->setChecked(m_toolBtn[t] == active);
+        }
+        const QSignalBlocker lock(m_shapeButton);
+        m_shapeButton->setIcon(makeIcon(m_shapeEllipse ? Icon::Ellipse : Icon::Rect));
+    }
+    QColor toolColor(ATool tool) const               // Each tool remembers its own color.
+    {
+        switch (tool) {
+        case ATool::Rect: case ATool::Ellipse: return m_colorShape;
+        case ATool::Arrow: return m_colorArrow;
+        case ATool::Pen: return m_colorPen;
+        case ATool::Marker: return m_colorMarker;
+        case ATool::Text: return m_colorText;
+        case ATool::Number: return m_colorNumber;
+        default: return m_acolor;
+        }
+    }
+    void pickToolColor(ATool family, const QColor &color)
+    {
+        switch (family) {
+        case ATool::Rect: case ATool::Ellipse: m_colorShape = color; break;
+        case ATool::Arrow: m_colorArrow = color; break;
+        case ATool::Pen: m_colorPen = color; break;
+        case ATool::Marker: m_colorMarker = color; break;
+        case ATool::Text: m_colorText = color; break;
+        case ATool::Number: m_colorNumber = color; break;
+        default: return;
+        }
+        const bool sameFamily = [](ATool a, ATool b) {
+            const bool shapes = (a == ATool::Rect || a == ATool::Ellipse)
+                             && (b == ATool::Rect || b == ATool::Ellipse);
+            return a == b || shapes;
+        }(m_atool, family);
+        if (sameFamily) m_acolor = color;
+        if (editorActive() && family == ATool::Text) {
+            m_editColor = color;
+            applyEditorFont();
+        } else if (m_selAnn >= 0 && m_selAnn < m_anns.size()
+            && [](ATool a, ATool b) {
+                   const bool shapes = (a == ATool::Rect || a == ATool::Ellipse)
+                                    && (b == ATool::Rect || b == ATool::Ellipse);
+                   return a == b || shapes;
+               }(m_anns[m_selAnn].tool, family)) {   // Recolor the matching selection in place.
+            pushUndo();
+            m_anns[m_selAnn].color = color;
+            update();
+        }
+    }
+    void pickArrowStyle(int style)
+    {
+        m_arrowStyle = style;
+        if (m_selAnn >= 0 && m_selAnn < m_anns.size()
+            && m_anns[m_selAnn].tool == ATool::Arrow) {
+            pushUndo();
+            m_anns[m_selAnn].arrowStyle = style;
+            update();
+        }
+    }
+    void setTextBold(bool on)
+    {
+        m_abold = on;
+        if (editorActive()) { m_editBold = on; applyEditorFont(); }
+        else if (m_selAnn >= 0 && m_selAnn < m_anns.size()
+                 && m_anns[m_selAnn].tool == ATool::Text) {
+            pushUndo();
+            m_anns[m_selAnn].bold = on;
+            fitTextAnnotation(m_anns[m_selAnn]);
+            update();
+        }
+    }
+    void setTextItalic(bool on)
+    {
+        m_aitalic = on;
+        if (editorActive()) { m_editItalic = on; applyEditorFont(); }
+        else if (m_selAnn >= 0 && m_selAnn < m_anns.size()
+                 && m_anns[m_selAnn].tool == ATool::Text) {
+            pushUndo();
+            m_anns[m_selAnn].italic = on;
+            fitTextAnnotation(m_anns[m_selAnn]);
+            update();
+        }
+    }
+    // Options strip under the toolbar: contents follow the armed tool.
+    void updateToolOptions()
+    {
+        if (m_atool == ATool::None || m_live) { m_toolOptions->hide(); return; }
+        delete m_toolOptions->layout();              // Drops the previous row.
+        const QList<QWidget *> stale = m_toolOptions->findChildren<QWidget *>();
+        for (QWidget *w : stale) delete w;
+        auto *lay = new QHBoxLayout(m_toolOptions);
+        lay->setContentsMargins(4, 4, 4, 4);
+        lay->setSpacing(2);
+        auto addOption = [this](QHBoxLayout *l, Icon icon, const QString &tip, bool on,
+                                const std::function<void()> &apply) {
+            auto *b = iconButton(icon, tip);
+            b->setFocusPolicy(Qt::NoFocus);
+            b->setCheckable(true);
+            b->setChecked(on);
+            connect(b, &QToolButton::clicked, this, [this, apply, on] { apply(); Q_UNUSED(on); });
+            l->addWidget(b);
+        };
+        auto addSeparator = [](QHBoxLayout *l) {
+            auto *line = new QFrame;
+            line->setFrameShape(QFrame::VLine);
+            line->setFixedHeight(20);
+            l->addWidget(line);
+        };
+        auto addSwatches = [this](QHBoxLayout *l, ATool family) {
+            static const QColor swatches[] = {"#ff3b30", "#ff9500", "#ffcc00", "#34c759",
+                                              "#007aff", "#af52de", "#ffffff", "#1c1c1e"};
+            for (const QColor &color : swatches) {
+                auto *swatch = new QToolButton;
+                swatch->setFixedSize(18, 18);
+                swatch->setFocusPolicy(Qt::NoFocus);
+                swatch->setCursor(Qt::PointingHandCursor);
+                swatch->setToolTip(color.name());
+                swatch->setStyleSheet(QString("QToolButton{background:%1;border-radius:3px;"
+                                              "border:none;}")
+                                          .arg(color.name()));
+                connect(swatch, &QToolButton::clicked, this,
+                        [this, family, color] { pickToolColor(family, color); });
+                l->addWidget(swatch);
+            }
+        };
+        switch (m_atool) {
+        case ATool::Rect:
+        case ATool::Ellipse:
+            addOption(lay, Icon::Rect, QStringLiteral("矩形"), !m_shapeEllipse,
+                      [this] { selectTool(ATool::Rect); });
+            addOption(lay, Icon::Ellipse, QStringLiteral("椭圆"), m_shapeEllipse,
+                      [this] { selectTool(ATool::Ellipse); });
+            addSeparator(lay);
+            addSwatches(lay, ATool::Rect);
+            break;
+        case ATool::Arrow: {
+            struct { Icon icon; const char *tip; } const styles[] = {
+                {Icon::Arrow, "单向"}, {Icon::ArrowBoth, "双向"},
+                {Icon::ArrowLine, "无箭头"}, {Icon::ArrowHollow, "镂空"},
+            };
+            for (int k = 0; k < 4; ++k)
+                addOption(lay, styles[k].icon, QString::fromUtf8(styles[k].tip),
+                          m_arrowStyle == k, [this, k] { pickArrowStyle(k); });
+            addSeparator(lay);
+            addSwatches(lay, ATool::Arrow);
+            break;
+        }
+        case ATool::Text: {
+            auto *bold = new QToolButton;
+            bold->setText(QStringLiteral("B"));
+            QFont bf = bold->font(); bf.setBold(true); bold->setFont(bf);
+            auto *italic = new QToolButton;
+            italic->setText(QStringLiteral("I"));
+            QFont inf = italic->font(); inf.setItalic(true); italic->setFont(inf);
+            for (auto *b : {bold, italic}) {
+                b->setFocusPolicy(Qt::NoFocus);
+                b->setCheckable(true);
+                b->setCursor(Qt::PointingHandCursor);
+                b->setStyleSheet(QStringLiteral("QToolButton{font-size:13px;}"));
+            }
+            bold->setChecked(editorActive() ? m_editBold : m_abold);
+            italic->setChecked(editorActive() ? m_editItalic : m_aitalic);
+            bold->setToolTip(QStringLiteral("粗体"));
+            italic->setToolTip(QStringLiteral("斜体"));
+            connect(bold, &QToolButton::toggled, this, &CaptureOverlay::setTextBold);
+            connect(italic, &QToolButton::toggled, this, &CaptureOverlay::setTextItalic);
+            lay->addWidget(bold);
+            lay->addWidget(italic);
+            addSeparator(lay);
+            addSwatches(lay, ATool::Text);
+            break;
+        }
+        case ATool::Mosaic:
+        case ATool::Eraser: {
+            auto *hint = new QLabel(m_atool == ATool::Mosaic ? QStringLiteral("滚轮调节块大小")
+                                                             : QStringLiteral("滚轮调节粗细"));
+            lay->addWidget(hint);
+            break;
+        }
+        default:
+            addSwatches(lay, m_atool);              // Pen, Marker, Number.
+            break;
+        }
+        m_toolOptions->adjustSize();
+        positionToolOptions();
+        m_toolOptions->show();
+        m_toolOptions->raise();
+        update(m_toolOptions->geometry().adjusted(-1, -1, 1, 1));
+    }
+    // Shared by the overlay (logical coords, origin 0, scale 1) and cropped() (native crop
+    // coords): annotations are stored overlay-local and mapped through this transform.
+    void paintAnnotations(QPainter &p, const QPointF &origin, qreal scale, const QRectF &clip,
+                          bool includeEditor = true) const
+    {
+        if (m_anns.isEmpty() && !m_live && !editorActive()) return;
+        p.save();
+        p.translate(origin);
+        p.scale(scale, scale);
+        p.setClipRect(clip, Qt::IntersectClip);
+        for (int i = 0; i < m_anns.size(); ++i)
+            if (!editorActive() || i != m_editAnn) drawAnnotation(p, m_anns[i]);
+        if (includeEditor && editorActive()) drawAnnotation(p, editorAnnotation());
+        if (m_live) drawAnnotation(p, m_ann);
+        p.restore();
+    }
+    void drawAnnotation(QPainter &p, const Annotation &ann) const
+    {
+        QPen pen(ann.color, ann.pen);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        p.setBrush(Qt::NoBrush);
+        p.save();
+        if (!qFuzzyIsNull(ann.rot)) {                // Rotate around the item's box center.
+            const QTransform t = annTransform(ann);
+            p.setTransform(t, true);
+        }
+        switch (ann.tool) {
+        case ATool::Rect:
+        case ATool::Ellipse:
+            if (ann.fill) {                          // Fill mode: translucent wash plus outline.
+                QColor wash = ann.color;
+                wash.setAlpha(70);
+                p.setBrush(wash);
+            }
+            p.setPen(pen);
+            if (ann.tool == ATool::Rect) p.drawRect(ann.rect);
+            else p.drawEllipse(ann.rect);
+            break;
+        case ATool::Pen:
+            p.setPen(pen);
+            p.drawPolyline(ann.stroke);
+            break;
+        case ATool::Marker: {                        // Translucent fat stroke, marker style.
+            QColor wash = ann.color;
+            wash.setAlpha(110);
+            QPen washPen(wash, ann.pen * 5);
+            washPen.setCapStyle(Qt::RoundCap);
+            washPen.setJoinStyle(Qt::RoundJoin);
+            p.setPen(washPen);
+            p.drawPolyline(ann.stroke);
+            break;
+        }
+        case ATool::Text: {
+            if (ann.text.isEmpty()) break;
+            QTextDocument doc;
+            setupTextDocument(doc, ann);
+            QAbstractTextDocumentLayout::PaintContext context;
+            context.palette.setColor(QPalette::Text, ann.color);
+            p.translate(ann.rect.topLeft());
+            doc.documentLayout()->draw(&p, context);
+            break;
+        }
+        case ATool::Number: {                        // Filled circle with a sequence digit.
+            if (ann.text.isEmpty()) break;
+            QFont font(QStringLiteral("Microsoft YaHei UI"));
+            font.setPixelSize(ann.font);
+            font.setBold(true);
+            p.setPen(Qt::NoPen);
+            p.setBrush(ann.color);
+            p.drawEllipse(ann.rect);
+            p.setPen(ann.color.lightness() > 165 ? Qt::black : Qt::white);
+            p.setFont(font);
+            p.drawText(ann.rect, Qt::AlignCenter, ann.text);
+            break;
+        }
+        case ATool::Arrow: {
+            p.setPen(pen);
+            const QLineF shaft(ann.a, ann.b);
+            if (shaft.length() < 1) break;
+            if (ann.arrowStyle == 2) {               // Plain line, no heads.
+                p.drawLine(shaft);
+                break;
+            }
+            const qreal head = qMax(qreal(ann.pen * 2 + 8), qreal(11));
+            const QPointF dir = (shaft.p2() - shaft.p1()) / shaft.length();
+            const QPointF norm(-dir.y(), dir.x());
+            QLineF line = shaft;
+            line.setLength(qMax(qreal(1), shaft.length() - head * 0.55));
+            if (ann.arrowStyle == 1) {               // Double: pull the shaft back twice.
+                QLineF mid(line.p1() + dir * head * 0.55, line.p2() - dir * head * 0.55);
+                if (mid.length() < 1) break;
+                p.drawLine(mid);
+            } else {
+                p.drawLine(line);
+            }
+            if (ann.arrowStyle != 3) p.setBrush(ann.color);   // Hollow keeps the outline only.
+            QPolygonF tip;
+            tip << shaft.p2() << shaft.p2() - dir * head + norm * head * 0.45
+                << shaft.p2() - dir * head - norm * head * 0.45;
+            p.drawPolygon(tip);
+            if (ann.arrowStyle == 1) {               // Second head at the start.
+                QPolygonF tail;
+                tail << shaft.p1() << shaft.p1() + dir * head + norm * head * 0.45
+                     << shaft.p1() + dir * head - norm * head * 0.45;
+                p.drawPolygon(tail);
+            }
+            break;
+        }
+        case ATool::Mosaic: {                        // Block-average the frozen frame in place.
+            const qreal dpr = m_shot.devicePixelRatioF();
+            const QRect src(qRound(ann.rect.x() * dpr), qRound(ann.rect.y() * dpr),
+                            qMax(1, qRound(ann.rect.width() * dpr)),
+                            qMax(1, qRound(ann.rect.height() * dpr)));
+            const int block = qMax(4, qRound(ann.pen * 2 * dpr));  // Granularity tracks pen width.
+            QPixmap tiles = m_shot.copy(src)
+                .scaled(QSize(qMax(1, src.width() / block), qMax(1, src.height() / block)),
+                        Qt::IgnoreAspectRatio, Qt::FastTransformation)
+                .scaled(src.size(), Qt::IgnoreAspectRatio, Qt::FastTransformation);
+            tiles.setDevicePixelRatio(1);
+            p.drawPixmap(QRect(ann.rect.topLeft(), ann.rect.size()), tiles);
+            break;
+        }
+        default:
+            break;
+        }
+        p.restore();
+    }
 
     void startDetector()
     {
@@ -2235,7 +3979,7 @@ private:
                 m_sel = detected;
                 if (m_sel.width() >= 4 && m_sel.height() >= 4) {
                     m_mode = Adjusting;
-                    m_tools->show();
+                    showToolBars();
                     placeToolbar();
                     if (m_pinAfterDetection) { m_pinAfterDetection = false; pinCapture(); return; }
                 } else resetSelection();
@@ -2257,6 +4001,10 @@ private:
     void updateInspector()
     {
         if (m_drag != H_None && m_dragStarted) {      // The pixel inspector steps aside during drags.
+            m_inspector->hide();
+            return;
+        }
+        if (m_mode == Adjusting) {                    // A locked selection edits, not samples.
             m_inspector->hide();
             return;
         }
@@ -2292,6 +4040,7 @@ private:
         m_sel = QRect();
         m_drag = H_None;
         m_tools->hide();
+        m_toolOptions->hide();
         m_sizeTip->hide();
         setCursor(Qt::CrossCursor);
         update();
@@ -2495,7 +4244,39 @@ private:
             buildToolLayout(Qt::Vertical);
             m_tools->move(avail.right() + 1 - v.width() - 8, avail.bottom() + 1 - v.height() - 8);
         }
-        update(m_tools->geometry().united(old).adjusted(-1, -1, 1, 1));   // Repaint both frost regions.
+        positionToolOptions();
+        const QRect glass = m_toolOptions->isVisible()
+            ? m_tools->geometry().united(m_toolOptions->geometry()) : m_tools->geometry();
+        update(glass.united(old).adjusted(-1, -1, 1, 1));   // Repaint both frost regions.
+    }
+    void positionToolOptions()                      // Option strip hugs the toolbar's bottom edge.
+    {
+        if (!m_toolOptions->isVisible() && m_atool == ATool::None) return;
+        m_toolOptions->adjustSize();
+        const QRect bar = m_tools->geometry();
+        const int y = bar.bottom() + 1 + 4;
+        m_toolOptions->move(qBound(0, bar.left(), width() - m_toolOptions->width()),
+                            y + m_toolOptions->height() + 8 <= height() ? y
+                                                                        : qMax(0, bar.top() - 4 - m_toolOptions->height()));
+    }
+    void hideToolBars()                             // Both bars step aside during drags.
+    {
+        if (m_toolOptions->isVisible()) {
+            update(m_toolOptions->geometry());
+            m_toolOptions->hide();
+        }
+        if (m_tools->isVisible()) {
+            update(m_tools->geometry());
+            m_tools->hide();
+        }
+    }
+    void showToolBars()
+    {
+        m_tools->show();
+        if (m_atool != ATool::None && !m_live) {
+            positionToolOptions();
+            m_toolOptions->show();
+        }
     }
     QPixmap cropped() const
     {
@@ -2504,11 +4285,38 @@ private:
         QPixmap pix = m_shot.copy(QRect(qRound(r.x() * scale), qRound(r.y() * scale),
                                        qRound(r.width() * scale), qRound(r.height() * scale)));
         pix.setDevicePixelRatio(1);
+        if (!m_anns.isEmpty() || editorActive()) {   // Unfinished text is also included in previews.
+            QPainter p(&pix);
+            paintAnnotations(p, -QPointF(r.topLeft()) * scale, scale, QRectF(r));
+        }
         return pix;
     }
 private slots:
+    void undoAnnotation()
+    {
+        commitTextEdit();
+        if (m_undoStack.isEmpty()) return;
+        m_redoStack.append(m_anns);
+        m_anns = m_undoStack.takeLast();
+        m_selAnn = -1;
+        normalizeNumbers();
+        syncUndoButtons();
+        update();
+    }
+    void redoAnnotation()
+    {
+        commitTextEdit();
+        if (m_redoStack.isEmpty()) return;
+        m_undoStack.append(m_anns);
+        m_anns = m_redoStack.takeLast();
+        m_selAnn = -1;
+        normalizeNumbers();
+        syncUndoButtons();
+        update();
+    }
     void saveCapture()
     {
+        commitTextEdit();
         const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
         const QString path = QFileDialog::getSaveFileName(
             this, QStringLiteral("保存截图"),
@@ -2524,17 +4332,32 @@ private slots:
     }
     void copyCapture()
     {
-        QGuiApplication::clipboard()->setPixmap(cropped());
+        commitTextEdit();
+        const QPixmap pix = cropped();
+        QClipboard *clip = QGuiApplication::clipboard();
+        clip->setPixmap(pix);
+        // IME/clipboard helpers may hold the clipboard open for a moment after an IME
+        // context switch; retry briefly instead of silently losing the copy.
+        QElapsedTimer retry;
+        retry.start();
+        while (retry.elapsed() < 300 && clip->image() != pix.toImage()) {
+            QEventLoop loop;
+            QTimer::singleShot(15, &loop, &QEventLoop::quit);
+            loop.exec();
+            clip->setPixmap(pix);
+        }
         close();
     }
     void pinCapture()
     {
+        commitTextEdit();
         const QPixmap pix = cropped();
         close();
         emit grabbed(pix);
     }
     void longCapture()
     {
+        commitTextEdit();
         const QRect global = m_sel.translated(geometry().topLeft());  // Selection uses local coordinates.
         close();
         emit longRequested(global);
@@ -2565,6 +4388,43 @@ private:
     QWidget *m_tools = nullptr;
     QVector<QWidget *> m_toolButtons;
     int m_toolOrientation = -1;
+    ATool m_atool = ATool::None;
+    QColor m_acolor = QColor("#ff3b30");             // Red first: the loudest marking color.
+    int m_apen = 3;
+    int m_afont = 20;                                // Base text/number font size (px).
+    bool m_afill = false;                            // Default fill mode for rect / ellipse.
+    bool m_spaceHeld = false;                        // Space turns the next drag into a move.
+    bool m_nudging = false;                          // Coalesces WASD bursts into one undo step.
+    QVector<Annotation> m_anns;
+    Annotation m_ann;                                // Annotation under construction.
+    bool m_live = false;
+    int m_selAnn = -1;                               // Annotation selected for editing.
+    Annotation m_pressAnn;                           // Snapshot for move/resize drags.
+    Handle m_itemDrag = H_None;
+    bool m_erasing = false;
+    bool m_eraseSnapshotted = false;
+    QVector<QVector<Annotation>> m_undoStack, m_redoStack;
+    QToolButton *m_undoButton = nullptr;             // Enabled state follows the stacks.
+    QToolButton *m_redoButton = nullptr;
+    QGraphicsTextItem *m_editor = nullptr;           // Native editable text with content-sized bounds.
+    QGraphicsView *m_textView = nullptr;             // Masked to the text item; canvas stays clickable.
+    bool m_textPreedit = false, m_textMoving = false;
+    QPoint m_textMovePress;
+    QPointF m_textMoveOrigin;
+    int m_editAnn = -1;                              // Annotation being re-edited.
+    QColor m_editColor = QColor("#ff3b30");
+    int m_editFont = 20;
+    bool m_committingText = false;
+    HIMC m_imeCtx = nullptr;                         // Detached IME context for text editing.
+    QToolButton *m_shapeButton = nullptr;            // Merged rect / ellipse tool button.
+    QVector<QToolButton *> m_toolBtn;                // Tool button per ATool id (shape shared).
+    QWidget *m_toolOptions = nullptr;                // Per-tool option strip under the toolbar.
+    bool m_shapeEllipse = false;                     // Current sub-shape of the shape button.
+    int m_arrowStyle = 0;                            // 0 single, 1 double, 2 none, 3 hollow.
+    bool m_abold = false, m_aitalic = false;         // Text tool defaults.
+    bool m_editBold = false, m_editItalic = false;   // Live editor weight / slant.
+    QColor m_colorShape = "#ff3b30", m_colorArrow = "#ff3b30", m_colorPen = "#ff3b30",
+           m_colorMarker = "#ffcc00", m_colorText = "#ff3b30", m_colorNumber = "#ff3b30";
 };
 
 // ---------- F1 global hotkey filter ----------
@@ -2671,6 +4531,8 @@ int main(int argc, char **argv)
         return CaptureOverlay::testColorPicker(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-color-picker")) + 1));
     if (app.arguments().contains(QStringLiteral("--test-window-detection")))
         return CaptureOverlay::testWindowDetection();
+    if (app.arguments().contains(QStringLiteral("--test-text-annotation")))
+        return CaptureOverlay::testTextAnnotation();
     const int probe = app.arguments().indexOf(QStringLiteral("--probe-uia"));
     if (probe > 0 && probe + 2 < app.arguments().size()) {
         // Diagnostic: run the production element engines at one native-pixel screen point.
