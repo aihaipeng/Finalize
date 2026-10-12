@@ -1,0 +1,12 @@
+pinshot/Makefile
+pinshot/Makefile.Debug
+pinshot/Makefile.Release
+pinshot/.qmake.stash
+pinshot/debug/
+pinshot/release/
+*.o
+*.moc
+moc_*.cpp
+moc_predefs.h
+AGENTS.md
+pinshot/README.md
