@@ -71,8 +71,6 @@
 #include <cstdlib>
 #include <functional>
 
-// MinGW 8.1 lacks this Windows 10 2004+ declaration; 0x11 = WDA_EXCLUDEFROMCAPTURE.
-extern "C" __declspec(dllimport) int __stdcall SetWindowDisplayAffinity(void *hwnd, unsigned long dwAffinity);
 // Qt's default Windows target hides this Vista+ declaration in the MinGW headers.
 extern "C" __declspec(dllimport) BOOL WINAPI QueryFullProcessImageNameW(HANDLE process, DWORD flags, LPWSTR path, PDWORD size);
 #define PINSHOT_WDA_EXCLUDEFROMCAPTURE 0x00000011
@@ -115,6 +113,43 @@ static QImage grabNative(const QRect &native)
     return img;
 }
 
+// Qt 6 names screens by monitor model instead of the GDI device name, so display
+// queries must enumerate real devices; attached desktop entries carry \\.\DISPLAYn.
+struct GdiDisplay { QString device; QRect native; };
+
+static QVector<GdiDisplay> gdiDisplays()
+{
+    QVector<GdiDisplay> out;
+    for (DWORD i = 0; ; ++i) {
+        DISPLAY_DEVICEW dd{};
+        dd.cb = sizeof(dd);
+        if (!EnumDisplayDevicesW(nullptr, i, &dd, 0))
+            break;
+        if (!(dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP))
+            continue;
+        DEVMODEW mode{};
+        mode.dmSize = sizeof(mode);
+        if (!EnumDisplaySettingsW(dd.DeviceName, ENUM_CURRENT_SETTINGS, &mode))
+            continue;
+        out.append({QString::fromWCharArray(dd.DeviceName),
+                    QRect(mode.dmPosition.x, mode.dmPosition.y, mode.dmPelsWidth, mode.dmPelsHeight)});
+    }
+    return out;
+}
+
+// Match a QScreen to its GDI native rect via the scaled center; exact for
+// uniform DPI, approximate across mixed-DPI boundaries (known limitation).
+static QRect nativeRectForScreen(const QScreen *s, const QVector<GdiDisplay> &displays)
+{
+    const QRect lg = s->geometry();
+    const qreal dpr = s->devicePixelRatio();
+    const QPoint center(qRound(lg.center().x() * dpr), qRound(lg.center().y() * dpr));
+    for (const GdiDisplay &d : displays)
+        if (d.native.contains(center))
+            return d.native;
+    return {};
+}
+
 // Map a logical rect onto native pixels via the screen at its center; exact for
 // uniform DPI, approximate across mixed-DPI boundaries (known limitation).
 static QRect nativeFromLogical(const QRect &logical)
@@ -122,16 +157,13 @@ static QRect nativeFromLogical(const QRect &logical)
     const QScreen *s = QGuiApplication::screenAt(logical.center());
     if (!s)
         s = QGuiApplication::primaryScreen();
-    DEVMODEW mode{};
-    mode.dmSize = sizeof(mode);
-    if (!EnumDisplaySettingsW(reinterpret_cast<const wchar_t *>(s->name().utf16()),
-                              ENUM_CURRENT_SETTINGS, &mode))
+    const QRect native = nativeRectForScreen(s, gdiDisplays());
+    if (native.isEmpty())
         return {};
     const QRect lg(s->geometry());
-    const QRect px(mode.dmPosition.x, mode.dmPosition.y, mode.dmPelsWidth, mode.dmPelsHeight);
-    const double sx = double(px.width()) / lg.width(), sy = double(px.height()) / lg.height();
-    return QRect(qRound(px.left() + (logical.left() - lg.left()) * sx),
-                 qRound(px.top() + (logical.top() - lg.top()) * sy),
+    const double sx = double(native.width()) / lg.width(), sy = double(native.height()) / lg.height();
+    return QRect(qRound(native.left() + (logical.left() - lg.left()) * sx),
+                 qRound(native.top() + (logical.top() - lg.top()) * sy),
                  qRound(logical.width() * sx), qRound(logical.height() * sy));
 }
 
@@ -1460,14 +1492,13 @@ struct ScreenFrame
 static QVector<ScreenFrame> freezeScreens()
 {
     QVector<ScreenFrame> frames;
+    const QVector<GdiDisplay> displays = gdiDisplays();
+    if (displays.isEmpty())
+        return {};                                  // Display-query failure: never guess native coordinates.
     for (QScreen *screen : QGuiApplication::screens()) {
-        DEVMODEW mode{};
-        mode.dmSize = sizeof(mode);
-        const QString name = screen->name();
-        if (!EnumDisplaySettingsW(reinterpret_cast<const wchar_t *>(name.utf16()),
-                                  ENUM_CURRENT_SETTINGS, &mode))
-            return {};                              // Do not guess native coordinates after a display-query failure.
-        const QRect native(mode.dmPosition.x, mode.dmPosition.y, mode.dmPelsWidth, mode.dmPelsHeight);
+        const QRect native = nativeRectForScreen(screen, displays);
+        if (native.isEmpty())
+            return {};                              // Unmatched screen: never guess native coordinates.
         QImage image = grabNative(native);          // Single BitBlt incl. layered windows.
         if (image.isNull())
             image = screen->grabWindow(0).toImage(); // GDI failed (locked/station): plain per-screen shot.
@@ -6116,7 +6147,7 @@ class HotkeyFilter : public QAbstractNativeEventFilter
 {
 public:
     std::function<void()> onHotkey;
-    bool nativeEventFilter(const QByteArray &, void *message, long *) override
+    bool nativeEventFilter(const QByteArray &, void *message, qintptr *) override
     {
         MSG *msg = static_cast<MSG *>(message);
         if (msg->message == WM_HOTKEY && msg->wParam == 1 && onHotkey)
@@ -6207,8 +6238,6 @@ private:
 
 int main(int argc, char **argv)
 {
-    QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
-    QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
     QApplication app(argc, argv);
     if (app.arguments().contains(QStringLiteral("--test-mosaic")))
         return CaptureOverlay::testMosaic(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-mosaic")) + 1));
@@ -6248,7 +6277,7 @@ int main(int argc, char **argv)
         t.start();
         const WindowTargets targets = detectWindowRects();
         const qint64 enumMs = t.elapsed();
-        std::printf("detectWindowRects %lldms (%d windows)\n", enumMs, targets.size());
+        std::printf("detectWindowRects %lldms (%lld windows)\n", enumMs, (long long)targets.size());
         for (const DetectedWindow &win : targets) {
             if (!win.native.contains(point)) continue;
             QStringList slow;
