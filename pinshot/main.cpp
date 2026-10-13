@@ -1,4 +1,4 @@
-// pinshot — screenshot capture, pinned images, and manual scrolling capture (Qt 5.15 / MinGW).
+// pinshot — screenshot capture, pinned images, scrolling capture, and offline OCR (Qt 6 / MinGW).
 // shortcut: Screen captures run serially; use concurrent streamers if synchronized frames are required.
 
 #include <QApplication>
@@ -64,6 +64,15 @@
 #include <QCloseEvent>
 #include <QFileInfo>
 #include <QSaveFile>
+#include <QSplitter>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QFutureWatcher>
+#include <QtConcurrent>
+#include <QThreadPool>
+#include <QDir>
+#include <QPolygonF>
+#include "onnxruntime_c_api.h"
 #include <qt_windows.h>
 #include <dwmapi.h>
 #include <imm.h>
@@ -73,6 +82,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <atomic>
+#include <memory>
+#include <stdexcept>
+#include <limits>
+#include <cmath>
 
 // Qt's default Windows target hides this Vista+ declaration in the MinGW headers.
 extern "C" __declspec(dllimport) BOOL WINAPI QueryFullProcessImageNameW(HANDLE process, DWORD flags, LPWSTR path, PDWORD size);
@@ -285,6 +299,9 @@ private:
 };
 
 // ---------- Pinned image window ----------
+class OcrDialog;
+static OcrDialog *showOcr(const QImage &image, QWidget *source, const QRect &captureRect);
+
 class PinWindow : public QWidget
 {
 public:
@@ -415,6 +432,8 @@ protected:
         QMenu m(this);
         QAction *copy = m.addAction(QStringLiteral("复制"));
         QAction *save = m.addAction(QStringLiteral("保存"));
+        QAction *ocr = m.addAction(QStringLiteral("文字识别 (OCR)…"));
+        ocr->setEnabled(!m_pix.isNull());
         QAction *border = m.addAction(m_borderOn ? QStringLiteral("去边框高亮")
                                                  : QStringLiteral("加边框高亮"));
         QAction *chosen = m.exec(QCursor::pos());
@@ -428,6 +447,8 @@ protected:
                 QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
             if (!path.isEmpty() && !saveImageAtomic(m_pix.toImage(), path))
                 QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("保存失败，请检查路径或磁盘空间后重试"));
+        } else if (chosen == ocr) {
+            showOcr(m_pix.toImage(), this, geometry());
         } else if (chosen == border) {
             m_borderOn = !m_borderOn;
             update();
@@ -472,8 +493,9 @@ private:
 // Feather/Lucide line-icon style: one vocabulary for every button in the app, painted
 // in code so no resource files ship and any icon stays crisp at every scale.
 
-enum class Icon { Save, Copy, Pin, LongShot, Cancel, Rect, Ellipse, Arrow, Pen, Marker, Text,
-                  Number, Mosaic, Eraser, Undo, Redo, ArrowBoth, ArrowLine, ArrowHollow, Palette, Bold, Italic };
+enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, Pen, Marker, Text,
+                  Number, Mosaic, Eraser, Undo, Redo, ArrowBoth, ArrowLine, ArrowHollow, Palette, Bold, Italic,
+                  Minimize, Maximize, Restore, Refresh };
 
 static void buildIconPath(QPainterPath &path, Icon icon)
 {
@@ -548,6 +570,29 @@ static void buildIconPath(QPainterPath &path, Icon icon)
         path.moveTo(7, 4); path.lineTo(7, 20); path.lineTo(14, 20);
         path.cubicTo(21, 20, 21, 12, 14, 12); path.lineTo(7, 12);
         path.moveTo(7, 4); path.lineTo(13, 4); path.cubicTo(20, 4, 20, 12, 13, 12);
+        break;
+    case Icon::Minimize:
+        path.moveTo(5, 12); path.lineTo(19, 12);
+        break;
+    case Icon::Maximize:
+        path.addRect(5, 5, 14, 14);
+        break;
+    case Icon::Restore:
+        path.addRect(5, 8, 11, 11);
+        path.moveTo(8, 5); path.lineTo(19, 5); path.lineTo(19, 16);
+        break;
+    case Icon::Refresh:
+        path.moveTo(19, 9); path.cubicTo(18, 5, 14, 3, 10, 4);
+        path.cubicTo(5, 5, 3, 9, 4, 14); path.cubicTo(5, 19, 11, 22, 16, 19);
+        path.lineTo(19, 16); path.moveTo(19, 4); path.lineTo(19, 9); path.lineTo(14, 9);
+        break;
+    case Icon::Ocr:
+        path.moveTo(8, 4); path.lineTo(4, 4); path.lineTo(4, 8);
+        path.moveTo(16, 4); path.lineTo(20, 4); path.lineTo(20, 8);
+        path.moveTo(4, 16); path.lineTo(4, 20); path.lineTo(8, 20);
+        path.moveTo(20, 16); path.lineTo(20, 20); path.lineTo(16, 20);
+        path.moveTo(8, 8); path.lineTo(16, 8);
+        path.moveTo(12, 8); path.lineTo(12, 17);
         break;
     case Icon::Italic:
         path.moveTo(10, 4); path.lineTo(18, 4);
@@ -2131,15 +2176,23 @@ public:
     explicit PixelInspector(QWidget *parent) : QWidget(parent)
     {
         setAttribute(Qt::WA_TransparentForMouseEvents);
-        QFont f(QStringLiteral("Microsoft YaHei"));
-        f.setPixelSize(13);
+        QFont f(QStringLiteral("Consolas"));
+        f.setPointSize(11);
+        f.setStyleStrategy(QFont::StyleStrategy(QFont::PreferAntialias | QFont::NoSubpixelAntialias));
         setFont(f);
-        const QFontMetrics fm(f);
-        setFixedSize(qMax(192, fm.horizontalAdvance(QStringLiteral("按 Shift 切换 RGB/HEX")) + 16),
-                     138 + 4 * fm.height());
+        m_tips.setDefaultFont(QFont(QStringLiteral("Microsoft YaHei")));
+        QFont tipsFont = m_tips.defaultFont();
+        tipsFont.setPixelSize(13);
+        tipsFont.setStyleStrategy(QFont::StyleStrategy(QFont::PreferAntialias | QFont::NoSubpixelAntialias));
+        m_tips.setDefaultFont(tipsFont);
+        m_tips.setDocumentMargin(0);
+        m_tips.setHtml(QStringLiteral("<div align='center' style='color:white'>按 <b>C</b> 复制颜色值<br>按 <b>Shift</b> 切换 RGB/HEX</div>"));
+        setFixedSize(qMax(179, qCeil(m_tips.idealWidth()) + 4), 217);
+        m_tips.setTextWidth(width());
         hide();
     }
-    bool setSample(const ScreenFrame &frame, const QPoint &globalPixel)
+    bool setSample(const ScreenFrame &frame, const QPoint &globalPixel,
+                   const QRectF &selectionPixels = {})
     {
         if (frame.image.isNull() || !frame.pixelRect.contains(globalPixel)
             || frame.image.size() != frame.pixelRect.size())
@@ -2147,7 +2200,19 @@ public:
         const QPoint pixel = globalPixel - frame.pixelRect.topLeft();
         m_color = frame.image.pixelColor(pixel);
         m_position = globalPixel;
-        m_patch = frame.image.copy(QRect(pixel - QPoint(11, 7), QSize(23, 15)));
+        const QPoint origin = pixel - QPoint(12, 8);
+        m_patch = frame.image.copy(QRect(origin, QSize(25, 17)));
+        m_patch.setDevicePixelRatio(1);
+        if (!selectionPixels.isEmpty()) {
+            QPainter p(&m_patch);
+            p.translate(-origin);
+            QPainterPath mask;
+            mask.addRect(QRectF(origin, m_patch.size()));
+            mask.addRect(selectionPixels);
+            p.fillPath(mask, QColor(0, 0, 0, 120));
+            p.setPen(QPen(QColor("#1e90ff"), 1));
+            p.drawRect(selectionPixels.adjusted(0, 0, -1, -1));
+        }
         update();
         return true;
     }
@@ -2155,7 +2220,7 @@ public:
     {
         if (!m_color.isValid())
             return QString();
-        return m_hex ? m_color.name(QColor::HexRgb).toUpper()
+        return m_hex ? m_color.name(QColor::HexRgb)
                      : QStringLiteral("%1, %2, %3").arg(m_color.red()).arg(m_color.green()).arg(m_color.blue());
     }
     void toggleFormat() { m_hex = !m_hex; update(); }
@@ -2163,15 +2228,15 @@ protected:
     void paintEvent(QPaintEvent *) override
     {
         QPainter p(this);
-        p.fillRect(rect(), Qt::black);
-        const QRect view((width() - 176) / 2, 8, 176, 120);
+        p.fillRect(rect(), QColor(0, 0, 0, 188));
+        const QRect view((width() - 177) / 2, 1, 177, 121);
         p.setRenderHint(QPainter::SmoothPixmapTransform, false);
         p.save();
         p.setClipRect(view);
-        p.drawImage(QRect(view.left() - 4, view.top(), 184, 120), m_patch);
-        const QRect pixel(view.left() + 84, view.top() + 56, 8, 8);
-        p.fillRect(QRect(pixel.left(), view.top(), 8, 120), QColor(30, 144, 255, 75));
-        p.fillRect(QRect(view.left(), pixel.top(), 176, 8), QColor(30, 144, 255, 75));
+        p.drawImage(view.adjusted(1, 1, -1, -1), m_patch);
+        const QRect pixel(view.left() + 85, view.top() + 57, 7, 7);
+        p.fillRect(QRect(pixel.left(), view.top() + 1, 7, 119), QColor(32, 128, 240, 88));
+        p.fillRect(QRect(view.left() + 1, pixel.top(), 175, 7), QColor(32, 128, 240, 88));
         p.fillRect(pixel, m_color);
         p.setPen(Qt::black);
         p.drawRect(pixel.adjusted(-1, -1, 0, 0));
@@ -2180,24 +2245,922 @@ protected:
         p.restore();
         p.setPen(Qt::white);
         p.drawRect(view.adjusted(0, 0, -1, -1));
-        const int line = fontMetrics().height(), y = view.bottom() + 5;
-        p.drawText(QRect(0, y, width(), line), Qt::AlignCenter,
-                   QStringLiteral("(%1, %2)").arg(m_position.x()).arg(m_position.y()));
-        const QString text = colorText();
-        const int left = (width() - fontMetrics().horizontalAdvance(text) - 24) / 2;
-        const QRect swatch(left, y + line + (line - 12) / 2, 12, 12);
+        const int line = fontMetrics().height(), y = 127;
+        const QString x = QStringLiteral("(%1").arg(m_position.x());
+        const QString coordinateY = QStringLiteral("%1)").arg(m_position.y());
+        const int xWidth = fontMetrics().horizontalAdvance(x);
+        const int commaWidth = fontMetrics().horizontalAdvance(QLatin1Char(','));
+        const int yWidth = fontMetrics().horizontalAdvance(coordinateY);
+        const int coordinateLeft = (width() - xWidth - commaWidth - yWidth - 12) / 2;
+        p.drawText(QRect(coordinateLeft, y, xWidth, line), Qt::AlignVCenter, x);
+        p.drawText(QRect(coordinateLeft + xWidth + 6, y, commaWidth, line), Qt::AlignVCenter, QStringLiteral(","));
+        p.drawText(QRect(coordinateLeft + xWidth + commaWidth + 12, y, yWidth, line), Qt::AlignVCenter, coordinateY);
+        const QString text = m_hex ? colorText()
+            : QStringLiteral("%1, %2, %3").arg(m_color.red(), 3).arg(m_color.green(), 3).arg(m_color.blue(), 3);
+        const int left = (width() - fontMetrics().horizontalAdvance(text) - 20) / 2;
+        const QRect swatch(left, 153 + (line - 14) / 2, 14, 14);
         p.fillRect(swatch, m_color);
         p.drawRect(swatch.adjusted(0, 0, -1, -1));
-        p.drawText(QRect(left + 24, y + line, width() - left - 24, line), Qt::AlignVCenter, text);
-        p.drawText(QRect(0, y + 2 * line, width(), line), Qt::AlignCenter, QStringLiteral("按 C 复制颜色值"));
-        p.drawText(QRect(0, y + 3 * line, width(), line), Qt::AlignCenter, QStringLiteral("按 Shift 切换 RGB/HEX"));
+        p.drawText(QRect(left + 20, 153, width() - left - 20, line), Qt::AlignVCenter, text);
+        p.translate(0, 179);
+        m_tips.drawContents(&p);
     }
 private:
     QImage m_patch;
     QColor m_color;
     QPoint m_position;
     bool m_hex = false;
+    QTextDocument m_tips;
 };
+
+// ---------- Offline text recognition and image/text comparison. ----------
+struct OcrLine {
+    QString text;
+    QPolygonF box;
+    float score = 0;
+};
+struct OcrResult {
+    QVector<OcrLine> lines;
+    QString error;
+    bool cancelled = false;
+    qint64 elapsed = 0;
+    QString text() const {
+        QStringList rows;
+        for (const OcrLine &line : lines) rows.append(line.text);
+        return rows.join(QLatin1Char('\n'));
+    }
+};
+using OcrCancel = std::shared_ptr<std::atomic_bool>;
+struct OcrModel { const char *title; const char *det; const char *rec; };
+static const std::array<OcrModel,10> ocrModels{{
+    {"简体中文 / 中英混排", "det.onnx", "rec.onnx"},
+    {"繁體中文", "det.onnx", "rec-cht.onnx"},
+    {"英文", "det.onnx", "rec-en.onnx"},
+    {"日文", "det.onnx", "rec-japan-v5.onnx"},
+    {"韩文", "det.onnx", "rec-korean-v5.onnx"},
+    {"西班牙语", "det.onnx", "rec-latin-v5.onnx"},
+    {"葡萄牙语", "det.onnx", "rec-latin-v5.onnx"},
+    {"德语", "det.onnx", "rec-latin-v5.onnx"},
+    {"法语", "det.onnx", "rec-latin-v5.onnx"},
+    {"俄文", "det.onnx", "rec-cyrillic-v5.onnx"}
+}};
+
+class OcrEngine
+{
+public:
+    static OcrEngine &instance() { static OcrEngine engine; return engine; }
+    ~OcrEngine() { reset(); }
+    std::atomic_bool busy{false};
+    static QString assetError(const QString &root, int language = 0) {
+        if (language < 0 || language >= int(ocrModels.size())) return QStringLiteral("不支持的 OCR 语言");
+        const auto &model = ocrModels[language];
+        for (const QString &file : {QStringLiteral("onnxruntime.dll"), QStringLiteral("models/")+QLatin1String(model.det),
+                                   QStringLiteral("models/")+QLatin1String(model.rec)})
+            if (!QFileInfo(root + QLatin1Char('/') + file).isFile())
+                return QStringLiteral("缺少 OCR 文件：%1\n请将运行时与模型放回程序目录后重试。").arg(file);
+        return {};
+    }
+    QString load(const QString &root, int language = 0) {
+        if (m_det && m_rec && language >= 0 && language < int(ocrModels.size())
+            && std::strcmp(ocrModels[language].rec,ocrModels[m_language].rec)==0) { m_language=language; return {}; }
+        const QString missing = assetError(root,language);
+        if (!missing.isEmpty()) return missing;
+        reset();
+        try {
+            const QString dll = QDir::toNativeSeparators(root + QStringLiteral("/onnxruntime.dll"));
+            m_dll = LoadLibraryExW(reinterpret_cast<LPCWSTR>(dll.utf16()), nullptr,
+                                  LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+            if (!m_dll) throw std::runtime_error("Cannot load the OCR runtime or its dependencies");
+            const auto entry = reinterpret_cast<const OrtApiBase *(ORT_API_CALL *)()>(GetProcAddress(m_dll, "OrtGetApiBase"));
+            if (!entry || !(m_api = entry()->GetApi(ORT_API_VERSION)))
+                throw std::runtime_error("Incompatible OCR runtime API");
+            m_version = QString::fromLatin1(entry()->GetVersionString());
+            checked(m_api->CreateEnv(ORT_LOGGING_LEVEL_ERROR, "pinshot-ocr", &m_env));
+            OrtSessionOptions *raw = nullptr;
+            checked(m_api->CreateSessionOptions(&raw));
+            std::unique_ptr<OrtSessionOptions, decltype(m_api->ReleaseSessionOptions)> options(raw, m_api->ReleaseSessionOptions);
+            checked(m_api->SetIntraOpNumThreads(raw, qBound(1, QThread::idealThreadCount(), 4)));
+            checked(m_api->SetInterOpNumThreads(raw, 1));
+            checked(m_api->SetSessionGraphOptimizationLevel(raw, ORT_ENABLE_ALL));
+            checked(m_api->DisableCpuMemArena(raw));
+            checked(m_api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &m_memory));
+            checked(m_api->GetAllocatorWithDefaultOptions(&m_allocator));
+            const QString det = QDir::toNativeSeparators(root + QStringLiteral("/models/")+QLatin1String(ocrModels[language].det));
+            const QString rec = QDir::toNativeSeparators(root + QStringLiteral("/models/")+QLatin1String(ocrModels[language].rec));
+            checked(m_api->CreateSession(m_env, reinterpret_cast<const wchar_t *>(det.utf16()), raw, &m_det));
+            checked(m_api->CreateSession(m_env, reinterpret_cast<const wchar_t *>(rec.utf16()), raw, &m_rec));
+            names(m_det, m_detInput, m_detOutput);
+            names(m_rec, m_recInput, m_recOutput);
+            OrtTypeInfo *type = nullptr;
+            checked(m_api->SessionGetInputTypeInfo(m_rec,0,&type));
+            std::unique_ptr<OrtTypeInfo,decltype(m_api->ReleaseTypeInfo)> inputType(type,m_api->ReleaseTypeInfo);
+            const OrtTensorTypeAndShapeInfo *tensor = nullptr;
+            checked(m_api->CastTypeInfoToTensorInfo(type,&tensor));
+            if (!tensor) throw std::runtime_error("Recognition input must be a tensor");
+            size_t rank = 0;
+            checked(m_api->GetDimensionsCount(tensor,&rank));
+            std::array<int64_t,4> dimensions{};
+            if (rank != 4) throw std::runtime_error("Recognition input must be NCHW");
+            checked(m_api->GetDimensions(tensor,dimensions.data(),4));
+            if ((dimensions[1] != -1 && dimensions[1] != 3)
+                || (dimensions[2] != -1 && dimensions[2] != 32 && dimensions[2] != 48))
+                throw std::runtime_error("Unsupported recognition input dimensions");
+            // Dynamic-height exports use the deployed model family's 48-pixel training input.
+            m_recHeight = dimensions[2] == -1 ? 48 : int(dimensions[2]);
+            OrtModelMetadata *metadata = nullptr;
+            checked(m_api->SessionGetModelMetadata(m_rec, &metadata));
+            std::unique_ptr<OrtModelMetadata, decltype(m_api->ReleaseModelMetadata)> info(metadata, m_api->ReleaseModelMetadata);
+            char *dictionary = nullptr;
+            checked(m_api->ModelMetadataLookupCustomMetadataMap(metadata, m_allocator, "character", &dictionary));
+            if (!dictionary) throw std::runtime_error("The recognition model has no character dictionary");
+            m_characters = QString::fromUtf8(dictionary).split(QLatin1Char('\n'));
+            m_allocator->Free(m_allocator, dictionary);
+            if (!m_characters.isEmpty() && m_characters.last().isEmpty()) m_characters.removeLast();
+            for (QString &character : m_characters) if (character.endsWith(QLatin1Char('\r'))) character.chop(1);
+            if (m_characters.isEmpty() || m_characters.contains(QString()))
+                throw std::runtime_error("Invalid recognition dictionary");
+            m_characters.prepend(QString());
+            m_characters.append(QStringLiteral(" "));
+            m_language = language;
+            return {};
+        } catch (const std::exception &error) {
+            reset();
+            return QStringLiteral("OCR 加载失败：%1").arg(QString::fromUtf8(error.what()));
+        }
+    }
+    QString version() const { return m_version; }
+    int dictionarySize() const { return int(m_characters.size()); }
+    int recognitionHeight() const { return m_recHeight; }
+    static void testAlgorithms() {
+        auto check = [](bool ok, const char *message) {
+            if (!ok) { std::fprintf(stderr,"FAIL: %s\n",message); std::exit(1); }
+        };
+        const auto cancel = std::make_shared<std::atomic_bool>(false);
+        const QSize size(240,160);
+        QVector<float> probability(size.width()*size.height(),0);
+        for (int row = 0; row < 3; ++row)
+            for (int y = 15+row*45; y < 25+row*45; ++y)
+                for (int x = 40; x < 100; ++x) probability[y*size.width()+x] = 0.95f;
+        const auto boxes = textBoxes(probability,size,size,cancel);
+        check(boxes.size() == 3,"DB synthetic map returns three text rows");
+        for (int row = 0; row < 3; ++row) {
+            const double expansion = 59.0*9*1.6/(2*(59+9));
+            const QRectF expected(40-expansion,15+row*45-expansion,59+2*expansion,9+2*expansion);
+            const QRectF actual = boxes[row].boundingRect();
+            check(QLineF(actual.topLeft(),expected.topLeft()).length() < 2
+                      && QLineF(actual.bottomRight(),expected.bottomRight()).length() < 2,
+                  "DB unclip geometry and row ordering retain sub-two-pixel accuracy");
+        }
+        probability.fill(0.4f);
+        check(textBoxes(probability,size,size,cancel).isEmpty(),"DB rejects low-scoring regions");
+        cancel->store(true);
+        check(textBoxes(probability,size,size,cancel).isEmpty(),"DB stops on cancellation");
+        const QStringList dictionary{QString(),QStringLiteral("A"),QStringLiteral("B"),QStringLiteral(" ")};
+        const int tokens[] = {1,1,0,1,2,0,3};
+        QVector<float> logits(7*4,0);
+        for (int i = 0; i < 7; ++i) logits[i*4+tokens[i]]=0.95f;
+        const OcrLine line = decode(logits,7,dictionary);
+        check(line.text == QStringLiteral("AAB ") && std::abs(line.score-0.95f)<0.00001f,
+              "CTC removes repeated tokens and blanks but retains blank-separated repeats and spaces");
+        QImage red(1,1,QImage::Format_RGB32); red.fill(Qt::red);
+        const auto input = normalized(red,2,false);
+        check(input == QVector<float>({-1,0,-1,0,1,0}),"recognition input uses BGR, minus-one-to-one normalization and zero padding");
+        const QSize reduced = detectionSize(QSize(2000,1000));
+        check(reduced == QSize(1440,736),"large detection input shrinks and aligns to multiples of 32");
+        bool invalid = false;
+        try { decode(QVector<float>{1},1,dictionary); } catch (const std::exception &) { invalid=true; }
+        check(invalid,"CTC rejects malformed tensor dimensions");
+        const QPolygonF first{QPointF(10,10),QPointF(60,10),QPointF(60,30),QPointF(10,30)};
+        const QPolygonF second{QPointF(75,11),QPointF(125,11),QPointF(125,31),QPointF(75,31)};
+        const QPolygonF below{QPointF(10,55),QPointF(60,55),QPointF(60,75),QPointF(10,75)};
+        const auto merged = mergeLineBoxes({below,second,first});
+        check(merged.size()==2 && merged[0].boundingRect()==QRectF(10,10,115,21)
+                  && merged[1].boundingRect()==QRectF(10,55,50,20),
+              "same-row word boxes merge in reading order without merging another row");
+        std::puts("PASS: OCR probability boxes, normalization, CTC, resize and cancellation checks");
+    }
+    static int testLanguages(const QString &previewPath) {
+        auto &engine = instance();
+        const QString missing = assetError(QCoreApplication::applicationDirPath());
+        if (!missing.isEmpty()) { std::printf("UNAVAILABLE: %s\n",qPrintable(missing)); return 0; }
+        const auto cancel = std::make_shared<std::atomic_bool>(false);
+        struct Sample { const char *name; QString text; int language; };
+        const QVector<Sample> samples{
+            {"Simplified-Chinese",QStringLiteral("截图文字识别"),0},
+            {"Traditional-Chinese",QStringLiteral("繁體中文測試"),1},
+            {"English",QStringLiteral("Hello World 123"),2},
+            {"Japanese",QStringLiteral("こんにちは世界"),3},
+            {"Korean",QStringLiteral("안녕하세요 세계"),4},
+            {"Spanish",QStringLiteral("Hola señor 123"),5},
+            {"Portuguese",QStringLiteral("Olá mundo 123"),6},
+            {"German",QStringLiteral("Grüße Welt 123"),7},
+            {"French",QStringLiteral("Bonjour été 123"),8},
+            {"Russian",QStringLiteral("Привет мир 123"),9},
+            {"Arabic",QStringLiteral("مرحبا بالعالم"),-1},
+            {"Greek",QStringLiteral("Καλημέρα κόσμε"),-1}
+        };
+        int failures = 0, matchesSupported = 0;
+        for (qreal dpr : {1.0,1.5,2.0}) for (const auto &sample : samples) {
+            QImage image(qRound(800*dpr),qRound(180*dpr),QImage::Format_RGB32);
+            image.fill(Qt::white);
+            QPainter painter(&image);
+            painter.setRenderHint(QPainter::TextAntialiasing);
+            painter.scale(dpr,dpr);
+            QFont font(QStringLiteral("Microsoft YaHei")); font.setPixelSize(40); painter.setFont(font);
+            painter.setPen(Qt::black);
+            painter.drawText(QRectF(32,20,736,140),Qt::AlignVCenter|Qt::AlignLeft,sample.text);
+            painter.end();
+            image.setDevicePixelRatio(dpr);
+            const OcrResult result = engine.recognize(image,cancel,qMax(0,sample.language));
+            const bool matches = result.error.isEmpty() && !result.cancelled && result.text()==sample.text;
+            if (sample.language >= 0) { if (!matches) ++failures; else ++matchesSupported; }
+            std::printf("%s language=%s dpr=%.1f elapsed=%lldms expected=[%s] actual=[%s] error=[%s]\n",
+                        sample.language < 0 ? "UNSUPPORTED" : matches ? "PASS" : "FAIL",sample.name,dpr,result.elapsed,
+                        qPrintable(sample.text),qPrintable(result.text()),qPrintable(result.error));
+            if (!previewPath.isEmpty() && !image.save(previewPath+QStringLiteral("-%1-%2.png").arg(QLatin1String(sample.name)).arg(dpr))) return 1;
+        }
+        std::printf("LANGUAGE SUMMARY: %d/30 supported exact matches; %d supported mismatches; 6 unsupported probes (not passes)\n",matchesSupported,failures);
+        return failures ? 1 : 0;
+    }
+    static QSize detectionSize(const QSize &source) {
+        const double ratio = qMin(1.0, 1440.0 / qMax(source.width(), source.height()));
+        return QSize(qMax(32, qRound(source.width() * ratio / 32) * 32),
+                     qMax(32, qRound(source.height() * ratio / 32) * 32));
+    }
+    OcrResult recognize(QImage image, const OcrCancel &cancel, int language = 0) {
+        OcrResult result;
+        QElapsedTimer timer;
+        timer.start();
+        try {
+            if (cancel->load()) { result.cancelled = true; return result; }
+            if (image.isNull()) throw std::runtime_error("Empty screenshot");
+            result.error = load(QCoreApplication::applicationDirPath(),language);
+            if (!result.error.isEmpty()) return result;
+            if (cancel->load()) { result.cancelled=true; return result; }
+            image.setDevicePixelRatio(1);
+            const QSize size = detectionSize(image.size());
+            const QImage reduced = image.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            QVector<int64_t> shape;
+            const QVector<float> probability = run(m_det, m_detInput, m_detOutput, normalized(reduced, size.width(), true),
+                                                    {1, 3, size.height(), size.width()}, shape);
+            if (shape.size() != 4 || shape[0] != 1 || shape[1] != 1
+                || shape[2] <= 0 || shape[3] <= 0 || shape[2] > 1440 || shape[3] > 1440)
+                throw std::runtime_error("Unexpected detection output shape");
+            const QSize mapSize{int(shape[3]), int(shape[2])};
+            QVector<QPolygonF> boxes = textBoxes(probability, mapSize, image.size(), cancel);
+            for (const QPolygonF &box : boxes) {
+                if (cancel->load()) { result.cancelled = true; result.lines.clear(); return result; }
+                const QImage crop = lineImage(image, box);
+                if (crop.isNull()) throw std::runtime_error("Cannot crop a detected text line");
+                const int contentWidth = qMax(1, int(std::ceil(double(m_recHeight) * crop.width() / crop.height())));
+                const int width = qMax(320, (contentWidth + 31) / 32 * 32);
+                if (width > 8192) throw std::runtime_error("Text line is too wide; select a smaller region");
+                const QImage resized = crop.scaled(contentWidth, m_recHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+                const QVector<float> logits = run(m_rec, m_recInput, m_recOutput, normalized(resized, width, false),
+                                                  {1, 3, m_recHeight, width}, shape);
+                if (shape.size() != 3 || shape[0] != 1 || shape[2] != m_characters.size())
+                    throw std::runtime_error("Recognition output does not match its dictionary");
+                OcrLine line = decode(logits, int(shape[1]), m_characters);
+                line.box = box;
+                if (!line.text.trimmed().isEmpty() && line.score >= 0.5f) result.lines.append(line);
+            }
+            result.cancelled = cancel->load();
+            if (result.cancelled) result.lines.clear();
+        } catch (const std::exception &error) {
+            result.lines.clear();
+            result.error = QStringLiteral("识别失败：%1").arg(QString::fromUtf8(error.what()));
+        }
+        result.elapsed = timer.elapsed();
+        return result;
+    }
+    static OcrLine decode(const QVector<float> &data, int steps, const QStringList &characters) {
+        OcrLine line;
+        if (steps <= 0 || characters.isEmpty() || qint64(steps) * characters.size() != data.size())
+            throw std::runtime_error("Invalid CTC tensor");
+        int previous = -1, count = 0;
+        for (int step = 0; step < steps; ++step) {
+            const float *row = data.constData() + step * characters.size();
+            const int best = int(std::max_element(row, row + characters.size()) - row);
+            if (best != 0 && best != previous) {
+                line.text += characters[best];
+                line.score += row[best];
+                ++count;
+            }
+            previous = best;
+        }
+        if (count) line.score /= count;
+        return line;
+    }
+    static QVector<QPolygonF> textBoxes(const QVector<float> &prob, const QSize &size, const QSize &original,
+                                       const OcrCancel &cancel) {
+        if (size.isEmpty() || qint64(size.width()) * size.height() != prob.size() || original.isEmpty())
+            throw std::runtime_error("Invalid detection probability map");
+        QVector<quint8> visited(prob.size(), 0);
+        QVector<QPolygonF> boxes;
+        int candidates = 0;
+        for (int seed = 0; seed < prob.size(); ++seed) {
+            if ((seed & 4095) == 0 && cancel->load()) return {};
+            if (visited[seed] || prob[seed] <= 0.3f) continue;
+            QVector<int> pending{seed};
+            QVector<QPointF> boundary;
+            visited[seed] = 1;
+            while (!pending.isEmpty()) {
+                if ((pending.size() & 4095) == 0 && cancel->load()) return {};
+                const int at = pending.takeLast(), x = at % size.width(), y = at / size.width();
+                bool edge = false;
+                for (int dy = -1; dy <= 1; ++dy) for (int dx = -1; dx <= 1; ++dx) {
+                    if (!dx && !dy) continue;
+                    const int nx = x + dx, ny = y + dy;
+                    if (nx < 0 || ny < 0 || nx >= size.width() || ny >= size.height()) { edge = true; continue; }
+                    const int next = ny * size.width() + nx;
+                    if (prob[next] <= 0.3f) { edge = true; continue; }
+                    if (!visited[next]) { visited[next] = 1; pending.append(next); }
+                }
+                if (edge) boundary.append(QPointF(x, y));
+            }
+            if (++candidates > 1000) break;
+            if (boundary.size() < 3) continue;
+            QPolygonF box = minimumBox(boundary);
+            double width = QLineF(box[0], box[1]).length(), height = QLineF(box[0], box[3]).length();
+            if (qMin(width, height) < 3) continue;
+            QPainterPath mask;
+            mask.addPolygon(box);
+            const QRect bounds = box.boundingRect().toAlignedRect().intersected(QRect(QPoint(), size));
+            double score = 0;
+            int pixels = 0;
+            for (int y = bounds.top(); y <= bounds.bottom(); ++y) for (int x = bounds.left(); x <= bounds.right(); ++x)
+                if (mask.contains(QPointF(x, y))) { score += prob[y * size.width() + x]; ++pixels; }
+            if (!pixels || score / pixels < 0.6) continue;
+            const double distance = width * height * 1.6 / (2 * (width + height));
+            const QPointF u = (box[1] - box[0]) / width, v = (box[3] - box[0]) / height;
+            box[0] -= (u + v) * distance;
+            box[1] += (u - v) * distance;
+            box[2] += (u + v) * distance;
+            box[3] += (v - u) * distance;
+            for (QPointF &point : box) {
+                point.setX(qBound(0.0, point.x() / size.width() * original.width(), double(original.width() - 1)));
+                point.setY(qBound(0.0, point.y() / size.height() * original.height(), double(original.height() - 1)));
+            }
+            if (qMin(QLineF(box[0], box[1]).length(), QLineF(box[0], box[3]).length()) > 3) boxes.append(box);
+        }
+        std::stable_sort(boxes.begin(), boxes.end(), [](const QPolygonF &a, const QPolygonF &b) { return a[0].y() < b[0].y(); });
+        return mergeLineBoxes(boxes);
+    }
+private:
+    static QVector<QPolygonF> mergeLineBoxes(QVector<QPolygonF> boxes) {
+        std::stable_sort(boxes.begin(),boxes.end(),[](const QPolygonF &a,const QPolygonF &b) { return a[0].x()<b[0].x(); });
+        QVector<QPolygonF> lines;
+        for (int i=0; i<boxes.size(); ++i) {
+            if (boxes[i].isEmpty()) continue;
+            QPolygonF line = boxes[i];
+            const QPointF u = (line[1]-line[0])/QLineF(line[0],line[1]).length();
+            const QPointF v(-u.y(),u.x());
+            const auto project = [&](const QPointF &p) { return QPointF(p.x()*u.x()+p.y()*u.y(),p.x()*v.x()+p.y()*v.y()); };
+            const auto bounds = [&](const QPolygonF &box) {
+                QPolygonF projected;
+                for (const QPointF &point:box) projected.append(project(point));
+                return projected.boundingRect();
+            };
+            QRectF row = bounds(line);
+            for (int j=i+1; j<boxes.size(); ++j) {
+                if (boxes[j].isEmpty()) continue;
+                const QRectF next = bounds(boxes[j]);
+                const double height = row.height(), other = next.height();
+                if (next.left()<row.right()-height || next.left()-row.right()>height*1.5
+                    || next.top()<row.top()-height*0.5 || next.bottom()>row.bottom()+height*0.5
+                    || std::abs(height-other)>qMin(height,other)*0.5) continue;
+                row = row.united(next);
+                boxes[j].clear();
+            }
+            line.clear();
+            for (const QPointF &p:{row.topLeft(),row.topRight(),row.bottomRight(),row.bottomLeft()})
+                line.append(u*p.x()+v*p.y());
+            lines.append(line);
+        }
+        std::stable_sort(lines.begin(),lines.end(),[](const QPolygonF &a,const QPolygonF &b) { return a[0].y()<b[0].y(); });
+        return lines;
+    }
+    OcrEngine() = default;
+    OcrEngine(const OcrEngine &) = delete;
+    void checked(OrtStatus *status) {
+        if (!status) return;
+        const std::string message = m_api->GetErrorMessage(status);
+        m_api->ReleaseStatus(status);
+        throw std::runtime_error(message);
+    }
+    void reset() {
+        if (m_api) {
+            if (m_det) m_api->ReleaseSession(m_det);
+            if (m_rec) m_api->ReleaseSession(m_rec);
+            if (m_memory) m_api->ReleaseMemoryInfo(m_memory);
+            if (m_env) m_api->ReleaseEnv(m_env);
+        }
+        m_det = m_rec = nullptr; m_memory = nullptr; m_env = nullptr; m_api = nullptr; m_allocator = nullptr;
+        if (m_dll) FreeLibrary(m_dll);
+        m_dll = nullptr;
+        m_characters.clear();
+        m_language = -1;
+    }
+    void names(OrtSession *session, QByteArray &input, QByteArray &output) {
+        size_t in = 0, out = 0;
+        checked(m_api->SessionGetInputCount(session, &in));
+        checked(m_api->SessionGetOutputCount(session, &out));
+        if (in != 1 || out != 1) throw std::runtime_error("OCR models require one input and one output");
+        char *name = nullptr;
+        checked(m_api->SessionGetInputName(session, 0, m_allocator, &name));
+        input = name; m_allocator->Free(m_allocator, name);
+        checked(m_api->SessionGetOutputName(session, 0, m_allocator, &name));
+        output = name; m_allocator->Free(m_allocator, name);
+    }
+    QVector<float> run(OrtSession *session, const QByteArray &inputName, const QByteArray &outputName,
+                       QVector<float> data, const std::array<int64_t, 4> &dimensions, QVector<int64_t> &shape) {
+        OrtValue *raw = nullptr;
+        checked(m_api->CreateTensorWithDataAsOrtValue(m_memory, data.data(), size_t(data.size()) * sizeof(float),
+                                                     dimensions.data(), dimensions.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &raw));
+        std::unique_ptr<OrtValue, decltype(m_api->ReleaseValue)> input(raw, m_api->ReleaseValue);
+        const OrtValue *inputs[] = {raw};
+        const char *in[] = {inputName.constData()}, *out[] = {outputName.constData()};
+        OrtValue *outputRaw = nullptr;
+        OrtStatus *status = m_api->Run(session, nullptr, in, inputs, 1, out, 1, &outputRaw);
+        std::unique_ptr<OrtValue, decltype(m_api->ReleaseValue)> output(outputRaw, m_api->ReleaseValue);
+        checked(status);
+        OrtTensorTypeAndShapeInfo *infoRaw = nullptr;
+        checked(m_api->GetTensorTypeAndShape(outputRaw, &infoRaw));
+        std::unique_ptr<OrtTensorTypeAndShapeInfo, decltype(m_api->ReleaseTensorTypeAndShapeInfo)> info(infoRaw, m_api->ReleaseTensorTypeAndShapeInfo);
+        ONNXTensorElementDataType type;
+        checked(m_api->GetTensorElementType(infoRaw, &type));
+        size_t count = 0, rank = 0;
+        checked(m_api->GetTensorShapeElementCount(infoRaw, &count));
+        checked(m_api->GetDimensionsCount(infoRaw, &rank));
+        if (type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || !count || count > 64 * 1024 * 1024 || rank > 4)
+            throw std::runtime_error("Invalid OCR tensor type or size");
+        shape.resize(int(rank));
+        checked(m_api->GetDimensions(infoRaw, shape.data(), rank));
+        float *values = nullptr;
+        checked(m_api->GetTensorMutableData(outputRaw, reinterpret_cast<void **>(&values)));
+        QVector<float> result(values, values + count);
+        for (float value : result) if (!std::isfinite(value)) throw std::runtime_error("Non-finite OCR output");
+        return result;
+    }
+    static QVector<float> normalized(const QImage &input, int width, bool detection) {
+        const QImage image = input.convertToFormat(QImage::Format_RGB32);
+        if (image.isNull() || width < image.width()) throw std::runtime_error("Invalid OCR input");
+        const int plane = width * image.height();
+        QVector<float> data(plane * 3, 0);
+        const float mean[] = {0.485f, 0.456f, 0.406f}, deviation[] = {0.229f, 0.224f, 0.225f};
+        for (int y = 0; y < image.height(); ++y) {
+            const QRgb *row = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+            for (int x = 0; x < image.width(); ++x) {
+                const int bgr[] = {qBlue(row[x]), qGreen(row[x]), qRed(row[x])};
+                for (int channel = 0; channel < 3; ++channel)
+                    data[channel * plane + y * width + x] = detection
+                        ? (bgr[channel] / 255.0f - mean[channel]) / deviation[channel]
+                        : bgr[channel] / 127.5f - 1.0f;
+            }
+        }
+        return data;
+    }
+    static QPolygonF minimumBox(QVector<QPointF> points) {
+        const auto cross = [](const QPointF &a, const QPointF &b, const QPointF &c) {
+            return (b.x()-a.x())*(c.y()-a.y()) - (b.y()-a.y())*(c.x()-a.x());
+        };
+        std::sort(points.begin(), points.end(), [](const QPointF &a, const QPointF &b) {
+            return a.x() == b.x() ? a.y() < b.y() : a.x() < b.x();
+        });
+        QVector<QPointF> hull;
+        for (const QPointF &p : points) {
+            while (hull.size() > 1 && cross(hull[hull.size()-2], hull.last(), p) <= 0) hull.removeLast();
+            hull.append(p);
+        }
+        const int lower = int(hull.size());
+        for (int i = int(points.size()) - 2; i >= 0; --i) {
+            while (hull.size() > lower && cross(hull[hull.size()-2], hull.last(), points[i]) <= 0) hull.removeLast();
+            hull.append(points[i]);
+        }
+        hull.removeLast();
+        double best = std::numeric_limits<double>::max(), angle = 0;
+        for (int i = 0; i < hull.size(); ++i) {
+            const QPointF edge = hull[(i+1) % hull.size()] - hull[i];
+            const double a = std::atan2(edge.y(), edge.x()), c = std::cos(a), s = std::sin(a);
+            double left = 1e30, top = 1e30, right = -1e30, bottom = -1e30;
+            for (const QPointF &p : hull) {
+                const double x = p.x()*c + p.y()*s, y = -p.x()*s + p.y()*c;
+                left = qMin(left,x); right = qMax(right,x); top = qMin(top,y); bottom = qMax(bottom,y);
+            }
+            if ((right-left)*(bottom-top) < best) { best = (right-left)*(bottom-top); angle = a; }
+        }
+        while (angle > M_PI/4) angle -= M_PI/2;
+        while (angle <= -M_PI/4) angle += M_PI/2;
+        if (std::abs(angle) <= qDegreesToRadians(3.0)) angle = 0;
+        const double c = std::cos(angle), s = std::sin(angle);
+        double left = 1e30, top = 1e30, right = -1e30, bottom = -1e30;
+        for (const QPointF &p : hull) {
+            const double x = p.x()*c + p.y()*s, y = -p.x()*s + p.y()*c;
+            left = qMin(left,x); right = qMax(right,x); top = qMin(top,y); bottom = qMax(bottom,y);
+        }
+        QPolygonF result;
+        for (const QPointF &p : {QPointF(left,top), QPointF(right,top), QPointF(right,bottom), QPointF(left,bottom)})
+            result.append(QPointF(p.x()*c-p.y()*s, p.x()*s+p.y()*c));
+        return result;
+    }
+    static QImage lineImage(const QImage &image, const QPolygonF &box) {
+        const int width = qMax(1, qRound(QLineF(box[0], box[1]).length()));
+        const int height = qMax(1, qRound(QLineF(box[0], box[3]).length()));
+        QPolygonF target{QPointF(0,0), QPointF(width,0), QPointF(width,height), QPointF(0,height)};
+        QTransform transform;
+        if (!QTransform::quadToQuad(box, target, transform)) return {};
+        QImage crop(width, height, QImage::Format_RGB32);
+        if (crop.isNull()) return {};
+        crop.fill(Qt::white);
+        QPainter painter(&crop);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.setTransform(transform);
+        painter.drawImage(QPoint(), image);
+        painter.end();
+        if (height >= width * 1.5) crop = crop.transformed(QTransform().rotate(-90));
+        return crop;
+    }
+    HMODULE m_dll = nullptr;
+    const OrtApi *m_api = nullptr;
+    OrtEnv *m_env = nullptr;
+    OrtSession *m_det = nullptr, *m_rec = nullptr;
+    OrtMemoryInfo *m_memory = nullptr;
+    OrtAllocator *m_allocator = nullptr;
+    QByteArray m_detInput, m_detOutput, m_recInput, m_recOutput;
+    QStringList m_characters;
+    QString m_version;
+    int m_language = -1, m_recHeight = 48;
+};
+
+class OcrImageView : public QGraphicsView
+{
+public:
+    explicit OcrImageView(const QImage &image, QWidget *parent = nullptr) : QGraphicsView(parent) {
+        auto *scene = new QGraphicsScene(this);
+        setScene(scene);
+        QImage native = image;
+        native.setDevicePixelRatio(1);
+        scene->addPixmap(QPixmap::fromImage(native));
+        scene->setSceneRect(QRectF(QPointF(), native.size()));
+        setDragMode(QGraphicsView::ScrollHandDrag);
+        setRenderHint(QPainter::SmoothPixmapTransform);
+        setBackgroundBrush(QColor(23,25,29));
+        setAccessibleName(QStringLiteral("截图对照：滚轮缩放，拖动查看"));
+    }
+protected:
+    void resizeEvent(QResizeEvent *event) override {
+        QGraphicsView::resizeEvent(event);
+        if (!m_zoomed) fitInView(sceneRect(), Qt::KeepAspectRatio);
+    }
+    void wheelEvent(QWheelEvent *event) override {
+        if (!event->angleDelta().y()) return;
+        setTransformationAnchor(AnchorUnderMouse);
+        const qreal factor = event->angleDelta().y() > 0 ? 1.2 : 1/1.2;
+        const qreal next = transform().m11() * factor;
+        if (next >= 0.02 && next <= 16) { scale(factor, factor); m_zoomed = true; }
+        event->accept();
+    }
+    void mouseDoubleClickEvent(QMouseEvent *event) override {
+        m_zoomed = false;
+        fitInView(sceneRect(), Qt::KeepAspectRatio);
+        event->accept();
+    }
+private:
+    bool m_zoomed = false;
+};
+
+class OcrDialog : public QDialog
+{
+    Q_OBJECT
+public:
+    explicit OcrDialog(const QImage &image, const QRect &captureRect = {})
+        : QDialog(nullptr, Qt::Window | Qt::FramelessWindowHint | Qt::WindowMinMaxButtonsHint),
+          m_image(image) {
+        setObjectName(QStringLiteral("ocrComparison"));
+        setWindowTitle(QStringLiteral("Finalize OCR"));
+        setWindowModality(Qt::NonModal);
+        setMinimumSize(640,360);
+        setMouseTracking(true);
+        QFont interfaceFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+        interfaceFont.setPointSizeF(qMax(10.5,interfaceFont.pointSizeF()));
+        setFont(interfaceFont);
+        const QString surface = QStringLiteral("#1d1f23"), panel = QStringLiteral("#25282e"),
+                      canvas = QStringLiteral("#17191d"), foreground = QStringLiteral("#edf0f5"),
+                      muted = QStringLiteral("#aeb7c4"), outline = QStringLiteral("#687384"),
+                      accent = QStringLiteral("#8db9ff"), selected = QStringLiteral("#304d75"),
+                      error = QStringLiteral("#b53646");
+        setStyleSheet(QStringLiteral(
+            "QDialog{background:%1;color:%4;border:1px solid %2;}"
+            "QLabel{color:%5;background:transparent;} QLabel#ocrTitle{color:%4;}"
+            "QWidget#ocrImagePanel,QWidget#ocrTextPanel{background:%2;border:none;border-radius:8px;}"
+            "QPlainTextEdit{background:%3;color:%4;border:1px solid transparent;border-radius:6px;padding:16px;selection-background-color:%8;}"
+            "QPlainTextEdit:focus{border-color:%6;}"
+            "QGraphicsView{background:%3;border:1px solid transparent;} QGraphicsView:focus{border-color:%6;}"
+            "QToolButton{background:transparent;color:%4;border:1px solid transparent;border-radius:6px;padding:4px;}"
+            "QToolButton:hover{background:%8;} QToolButton:pressed{background:%6;}"
+            "QToolButton:focus{border-color:%7;} QToolButton#ocrPin:checked{background:%8;border-color:%7;}"
+            "QToolButton#ocrCopy{background:%8;} QToolButton#ocrCopy:hover{border-color:%7;}"
+            "QToolButton:disabled{background:transparent;} QToolButton#ocrClose:hover{background:%9;}"
+            "QComboBox{background:%3;color:%4;border:1px solid %6;border-radius:6px;padding:6px 10px;}"
+            "QComboBox:hover,QComboBox:focus{border-color:%7;} QComboBox:disabled{color:%5;border-color:%2;}"
+            "QComboBox QAbstractItemView{background:%2;color:%4;border:1px solid %6;padding:4px;selection-background-color:%8;selection-color:%4;}"
+            "QSplitter::handle{background:transparent;} QSplitter::handle:hover{background:%6;}"
+            "QScrollBar:vertical{background:%3;width:12px;margin:0;} QScrollBar:horizontal{background:%3;height:12px;margin:0;}"
+            "QScrollBar::handle{background:%6;border-radius:4px;min-width:24px;min-height:24px;}"
+            "QScrollBar::add-line,QScrollBar::sub-line{width:0;height:0;}"
+            "QScrollBar::add-page,QScrollBar::sub-page{background:transparent;}"
+            "QToolTip{background:%2;color:%4;border:1px solid %6;padding:6px;}"
+        ).arg(surface,panel,canvas,foreground,muted,outline,accent,selected,error));
+        auto *layout = new QVBoxLayout(this);
+        layout->setContentsMargins(12,8,12,12);
+        layout->setSpacing(12);
+        const auto iconButton = [this](Icon icon,const QString &name,const QString &tip) {
+            auto *button = new QToolButton(this);
+            button->setObjectName(name);
+            button->setIcon(makeIcon(icon));
+            button->setIconSize(QSize(20,20));
+            button->setFixedSize(40,40);
+            button->setFocusPolicy(Qt::StrongFocus);
+            button->setCursor(Qt::PointingHandCursor);
+            button->setToolTip(tip);
+            button->setAccessibleName(tip);
+            return button;
+        };
+        auto *header = new QWidget;
+        header->setObjectName(QStringLiteral("ocrHeader"));
+        header->installEventFilter(this);
+        auto *headerLayout = new QHBoxLayout(header);
+        headerLayout->setContentsMargins(12,0,0,0);
+        headerLayout->setSpacing(4);
+        auto *title = new QLabel(windowTitle());
+        title->setObjectName(QStringLiteral("ocrTitle"));
+        QFont titleFont = interfaceFont;
+        titleFont.setPointSizeF(qMax(12.0,interfaceFont.pointSizeF()));
+        titleFont.setWeight(QFont::Medium);
+        title->setFont(titleFont);
+        title->installEventFilter(this);
+        headerLayout->addWidget(title);
+        headerLayout->addStretch();
+        auto *pin = iconButton(Icon::Pin,QStringLiteral("ocrPin"),QStringLiteral("置顶 OCR 卡片"));
+        pin->setCheckable(true);
+        connect(pin,&QToolButton::toggled,this,[this,pin](bool checked) {
+            // Change only native Z-order so geometry, focus and editing state remain intact.
+            if (!SetWindowPos(reinterpret_cast<HWND>(winId()),checked ? HWND_TOPMOST : HWND_NOTOPMOST,
+                              0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)) {
+                const QSignalBlocker blocker(pin);
+                pin->setChecked(!checked);
+                m_status->setText(QStringLiteral("切换置顶失败，请重试"));
+                return;
+            }
+            const QString tip = checked ? QStringLiteral("取消置顶 OCR 卡片") : QStringLiteral("置顶 OCR 卡片");
+            pin->setToolTip(tip); pin->setAccessibleName(tip);
+        });
+        headerLayout->addWidget(pin);
+        auto *minimize = iconButton(Icon::Minimize,QStringLiteral("ocrMinimize"),QStringLiteral("最小化"));
+        connect(minimize,&QToolButton::clicked,this,&QWidget::showMinimized);
+        headerLayout->addWidget(minimize);
+        m_maximize = iconButton(Icon::Maximize,QStringLiteral("ocrMaximize"),QStringLiteral("最大化"));
+        connect(m_maximize,&QToolButton::clicked,this,[this] { isMaximized() ? showNormal() : showMaximized(); });
+        headerLayout->addWidget(m_maximize);
+        auto *close = iconButton(Icon::Cancel,QStringLiteral("ocrClose"),QStringLiteral("关闭 (Esc)"));
+        connect(close,&QToolButton::clicked,this,&QDialog::reject);
+        headerLayout->addWidget(close);
+        layout->addWidget(header);
+        auto *split = new QSplitter(Qt::Horizontal);
+        split->setObjectName(QStringLiteral("ocrSplit"));
+        split->setChildrenCollapsible(false);
+        split->setHandleWidth(8);
+        auto *imagePanel = new QWidget;
+        imagePanel->setObjectName(QStringLiteral("ocrImagePanel"));
+        auto *imageLayout = new QVBoxLayout(imagePanel);
+        imageLayout->setContentsMargins(12,12,12,12);
+        imageLayout->setSpacing(12);
+        auto *imageActions = new QHBoxLayout;
+        auto *back = iconButton(Icon::Undo,QStringLiteral("ocrBack"),QStringLiteral("返回截图"));
+        back->setText(QStringLiteral("返回截图"));
+        back->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        back->setMinimumWidth(back->sizeHint().width());
+        back->setMaximumWidth(QWIDGETSIZE_MAX);
+        connect(back,&QToolButton::clicked,this,&QDialog::accept);
+        imageActions->addWidget(back);
+        imageActions->addStretch();
+        imageLayout->addLayout(imageActions);
+        auto *imageView = new OcrImageView(image);
+        imageView->setFocusPolicy(Qt::StrongFocus);
+        imagePanel->setMinimumWidth(180);
+        imageView->setToolTip(QStringLiteral("滚轮缩放 · 拖动查看 · 双击适应"));
+        imageLayout->addWidget(imageView,1);
+        split->addWidget(imagePanel);
+        auto *textPanel = new QWidget;
+        textPanel->setObjectName(QStringLiteral("ocrTextPanel"));
+        auto *textLayout = new QVBoxLayout(textPanel);
+        textLayout->setSizeConstraint(QLayout::SetMinimumSize);
+        textLayout->setContentsMargins(12,12,12,12);
+        textLayout->setSpacing(12);
+        auto *actions = new QHBoxLayout;
+        actions->setSpacing(8);
+        auto *languageLabel = new QLabel(QStringLiteral("识别语言"));
+        actions->addWidget(languageLabel);
+        m_languageChoice = new QComboBox;
+        m_languageChoice->setObjectName(QStringLiteral("ocrLanguage"));
+        m_languageChoice->setAccessibleName(QStringLiteral("OCR 识别语言"));
+        languageLabel->setBuddy(m_languageChoice);
+        m_languageChoice->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        m_languageChoice->setMinimumContentsLength(6);
+        m_languageChoice->setMinimumWidth(140);
+        m_languageChoice->setMinimumHeight(40);
+        for (const auto &model : ocrModels) m_languageChoice->addItem(QString::fromUtf8(model.title).section(QStringLiteral(" / "),0,0));
+        m_languageChoice->view()->setMinimumWidth(m_languageChoice->fontMetrics().horizontalAdvance(m_languageChoice->itemText(0))+40);
+        m_languageChoice->setToolTip(QStringLiteral("按截图文字选择语言，然后点击重新识别；不自动猜测语言"));
+        connect(m_languageChoice,&QComboBox::currentIndexChanged,this,[this] {
+            m_status->setText(QStringLiteral("语言已更改，点击重新识别"));
+        });
+        actions->addWidget(m_languageChoice,1);
+        m_retry = iconButton(Icon::Refresh,QStringLiteral("ocrRetry"),QStringLiteral("重新识别"));
+        connect(m_retry,&QToolButton::clicked,this,&OcrDialog::start);
+        actions->addWidget(m_retry);
+        m_copy = iconButton(Icon::Copy,QStringLiteral("ocrCopy"),QStringLiteral("复制全部"));
+        m_copy->setEnabled(false);
+        actions->addWidget(m_copy);
+        textLayout->addLayout(actions);
+        m_text = new QPlainTextEdit;
+        m_text->setObjectName(QStringLiteral("ocrText"));
+        m_text->setAccessibleName(QStringLiteral("OCR 识别文本"));
+        m_text->setPlaceholderText(QStringLiteral("正在识别，请稍候…"));
+        m_text->setReadOnly(true);
+        QFont font = interfaceFont;
+        font.setPointSizeF(qMax(12.0,interfaceFont.pointSizeF()));
+        m_text->setFont(font);
+        textLayout->addWidget(m_text,1);
+        split->addWidget(textPanel);
+        split->setStretchFactor(0,1); split->setStretchFactor(1,1);
+        layout->addWidget(split,1);
+        m_status = new QLabel(QStringLiteral("正在识别…"));
+        m_status->setObjectName(QStringLiteral("ocrStatus"));
+        m_status->setWordWrap(true);
+        m_status->setTextFormat(Qt::PlainText);
+        m_status->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        m_status->setFocusPolicy(Qt::ClickFocus);
+        QFont captionFont = interfaceFont;
+        captionFont.setPointSizeF(qMax(9.0,interfaceFont.pointSizeF()/1.125/1.125));
+        m_status->setFont(captionFont);
+        m_status->setAlignment(Qt::AlignRight|Qt::AlignVCenter);
+        m_status->setContentsMargins(4,2,4,2);
+        textLayout->addWidget(m_status);
+        imageLayout->addSpacing(m_status->sizeHint().height()+12);
+        setTabOrder(pin,minimize); setTabOrder(minimize,m_maximize); setTabOrder(m_maximize,close);
+        setTabOrder(close,back); setTabOrder(back,imageView); setTabOrder(imageView,m_languageChoice);
+        setTabOrder(m_languageChoice,m_retry); setTabOrder(m_retry,m_copy); setTabOrder(m_copy,m_text);
+        connect(m_copy, &QToolButton::clicked, this, [this] {
+            if (!copyTextToClipboard(m_text->toPlainText()))
+                m_status->setText(QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+            else m_status->setText(QStringLiteral("已复制全部文本"));
+        });
+        connect(m_text, &QPlainTextEdit::textChanged, this, [this] { m_copy->setEnabled(!m_text->toPlainText().isEmpty()); });
+        const QRect anchor = captureRect.isEmpty() ? QRect(QCursor::pos(),QSize(1,1)) : captureRect;
+        const QScreen *screen = QGuiApplication::screenAt(anchor.center());
+        const QRect available = (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry();
+        setGeometry(placement(anchor,available));
+        split->setSizes({width()/2,width()/2});
+        m_timer.setInterval(300);
+        connect(&m_timer, &QTimer::timeout, this, [this] {
+            m_status->setText(QStringLiteral("正在本地识别%1").arg(QString((++m_ticks % 3)+1, QLatin1Char('.'))));
+        });
+        connect(&m_watcher, &QFutureWatcher<OcrResult>::finished, this, [this] {
+            m_timer.stop();
+            const OcrResult result = m_watcher.result();
+            m_retry->setEnabled(true);
+            m_languageChoice->setEnabled(true);
+            if (m_cancel->load()) return;
+            if (!result.error.isEmpty()) {
+                m_status->setText(result.error);
+                m_text->setReadOnly(m_text->toPlainText().isEmpty());
+                m_text->setPlaceholderText(QStringLiteral("识别未完成，可重试或返回截图"));
+                return;
+            }
+            m_text->setReadOnly(false);
+            m_text->setPlainText(result.text());
+            m_text->setPlaceholderText(QStringLiteral("未识别到文字。可返回截图调整选区，或在此输入文本。"));
+            double confidence=0;
+            for (const OcrLine &line:result.lines) confidence+=line.score;
+            m_status->setText(result.lines.isEmpty() ? QStringLiteral("未识别到文字，可返回截图调整选区")
+                : QStringLiteral("%1秒 · 平均置信度%2%").arg(result.elapsed/1000.0,0,'f',2)
+                    .arg(confidence*100/result.lines.size(),0,'f',0));
+            m_text->setToolTip(QStringLiteral("识别语言：%1；置信度不等于准确率，请对照原图校对")
+                                   .arg(QString::fromUtf8(ocrModels[m_jobLanguage].title)));
+            m_text->setFocus();
+        });
+        connect(this, &QDialog::finished, this, [this] { m_closed=true; if (m_cancel) m_cancel->store(true); });
+        QTimer::singleShot(0, this, &OcrDialog::start);
+    }
+    ~OcrDialog() override { if (m_cancel) m_cancel->store(true); }
+    static QRect placement(const QRect &capture, const QRect &available) {
+        const QSize size(qMin(1000,available.width()),qMin(650,available.height()));
+        return QRect(QPoint(qBound(available.left(),capture.left(),available.right()-size.width()+1),
+                            qBound(available.top(),capture.top(),available.bottom()-size.height()+1)),size);
+    }
+    void start() {
+        if (m_closed || m_watcher.isRunning()) return;
+        if (m_text->document()->isModified()
+            && QMessageBox::question(this,QStringLiteral("重新识别"),QStringLiteral("重新识别会替换已修改的文本，是否继续？"),
+                                     QMessageBox::Yes|QMessageBox::No,QMessageBox::No) != QMessageBox::Yes) return;
+        auto &engine = OcrEngine::instance();
+        bool expected = false;
+        if (!engine.busy.compare_exchange_strong(expected,true)) {
+            m_status->setText(QStringLiteral("上一项识别正在结束，请稍候再点击重新识别"));
+            return;
+        }
+        m_cancel = std::make_shared<std::atomic_bool>(false);
+        const auto cancel = m_cancel;
+        const QImage image = m_image;
+        const int language = m_languageChoice->currentIndex();
+        m_jobLanguage = language;
+        m_retry->setEnabled(false);
+        m_languageChoice->setEnabled(false);
+        m_text->setReadOnly(true);
+        m_status->setText(QStringLiteral("正在本地识别…"));
+        m_timer.start();
+        m_watcher.setFuture(QtConcurrent::run([&engine,image,cancel,language] {
+            const OcrResult result = engine.recognize(image,cancel,language);
+            engine.busy.store(false);
+            return result;
+        }));
+    }
+protected:
+    bool eventFilter(QObject *object,QEvent *event) override {
+        if (event->type()==QEvent::MouseButtonDblClick) {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            if (mouse->button()==Qt::LeftButton) { m_maximize->click(); return true; }
+        } else if (event->type()==QEvent::MouseButtonPress) {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            if (mouse->button()==Qt::LeftButton && windowHandle()) {
+                windowHandle()->startSystemMove(); return true;
+            }
+        }
+        return QDialog::eventFilter(object,event);
+    }
+    void changeEvent(QEvent *event) override {
+        QDialog::changeEvent(event);
+        if (event->type()==QEvent::WindowStateChange && m_maximize) {
+            m_maximize->setIcon(makeIcon(isMaximized() ? Icon::Restore : Icon::Maximize));
+            const QString tip = isMaximized() ? QStringLiteral("还原") : QStringLiteral("最大化");
+            m_maximize->setToolTip(tip); m_maximize->setAccessibleName(tip);
+        }
+    }
+    void mousePressEvent(QMouseEvent *event) override {
+        const Qt::Edges edges = resizeEdges(event->position().toPoint());
+        if (event->button()==Qt::LeftButton && edges && windowHandle() && windowHandle()->startSystemResize(edges)) {
+            event->accept(); return;
+        }
+        QDialog::mousePressEvent(event);
+    }
+    void mouseMoveEvent(QMouseEvent *event) override {
+        const Qt::Edges edges = resizeEdges(event->position().toPoint());
+        const bool horizontal = edges.testFlag(Qt::LeftEdge)||edges.testFlag(Qt::RightEdge);
+        const bool vertical = edges.testFlag(Qt::TopEdge)||edges.testFlag(Qt::BottomEdge);
+        if (horizontal && vertical)
+            setCursor((edges.testFlag(Qt::LeftEdge)==edges.testFlag(Qt::TopEdge)) ? Qt::SizeFDiagCursor : Qt::SizeBDiagCursor);
+        else if (horizontal) setCursor(Qt::SizeHorCursor);
+        else if (vertical) setCursor(Qt::SizeVerCursor);
+        else unsetCursor();
+        QDialog::mouseMoveEvent(event);
+    }
+    void leaveEvent(QEvent *event) override { unsetCursor(); QDialog::leaveEvent(event); }
+private:
+    Qt::Edges resizeEdges(const QPoint &point) const {
+        Qt::Edges edges;
+        if (isMaximized()) return edges;
+        if (point.x()<6) edges|=Qt::LeftEdge;
+        else if (point.x()>=width()-6) edges|=Qt::RightEdge;
+        if (point.y()<6) edges|=Qt::TopEdge;
+        else if (point.y()>=height()-6) edges|=Qt::BottomEdge;
+        return edges;
+    }
+    QImage m_image;
+    QPlainTextEdit *m_text = nullptr;
+    QLabel *m_status = nullptr;
+    QToolButton *m_retry = nullptr, *m_copy = nullptr, *m_maximize = nullptr;
+    QComboBox *m_languageChoice = nullptr;
+    OcrCancel m_cancel;
+    QFutureWatcher<OcrResult> m_watcher;
+    QTimer m_timer;
+    int m_ticks = 0, m_jobLanguage = 0;
+    bool m_closed = false;
+};
+
+static OcrDialog *showOcr(const QImage &image, QWidget *source, const QRect &captureRect)
+{
+    if (image.isNull()) return nullptr;
+    auto *dialog = new OcrDialog(image,captureRect);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    if (source) QObject::connect(dialog,&QDialog::accepted,source,[source] {
+        if (source->isVisible()) { source->raise(); source->activateWindow(); source->setFocus(); }
+    });
+    if (source) QObject::connect(source,&QObject::destroyed,dialog,&QObject::deleteLater);
+    dialog->show();
+    dialog->raise(); dialog->activateWindow();
+    return dialog;
+}
 
 // ---------- Fullscreen selection: frozen frame, adjustable region, and action toolbar. ----------
 class CaptureOverlay : public QWidget
@@ -2252,6 +3215,7 @@ public:
 
         // The overlay paints matching solid backgrounds for both toolbar containers.
         m_tools = new QWidget(this);
+        m_tools->installEventFilter(this);
         m_tools->setCursor(Qt::ArrowCursor);
         m_tools->setStyleSheet(
             "QToolButton{color:#fff;background:transparent;border:none;border-radius:3px;padding:4px;}"
@@ -2260,10 +3224,16 @@ public:
         auto *copy = iconButton(Icon::Copy, QStringLiteral("复制到剪贴板 (Ctrl+C)"));
         auto *pin = iconButton(Icon::Pin, QStringLiteral("贴在屏幕上 (Enter / 双击)"));
         auto *scroll = iconButton(Icon::LongShot, QStringLiteral("长截图：手动滚动拼接长图"));
+        auto *ocr = iconButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)：截图与文本对照"));
+        ocr->setObjectName(QStringLiteral("ocrButton"));
+        ocr->setAccessibleName(QStringLiteral("文字识别 OCR"));
+        const QString ocrMissing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
+        if (!ocrMissing.isEmpty()) { ocr->setEnabled(false); ocr->setToolTip(ocrMissing); }
         connect(save, &QToolButton::clicked, this, &CaptureOverlay::saveCapture);
         connect(copy, &QToolButton::clicked, this, &CaptureOverlay::copyCapture);
         connect(pin, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
         connect(scroll, &QToolButton::clicked, this, &CaptureOverlay::longCapture);
+        connect(ocr, &QToolButton::clicked, this, &CaptureOverlay::ocrCapture);
 
         // Instant annotation tools: draw inside the committed selection; every capture
         // action composes them in. One shape button covers rect / ellipse; per-tool
@@ -2288,7 +3258,7 @@ public:
         m_toolBtn.fill(nullptr, int(ATool::Eraser) + 1);
         m_toolBtn[int(ATool::Rect)] = m_toolBtn[int(ATool::Ellipse)] = m_shapeButton;
         struct { ATool tool; Icon icon; const char *tip; } const tools[] = {
-            {ATool::Arrow, Icon::Arrow, "箭头 (A)"},
+            {ATool::Arrow, Icon::Arrow, "箭头"},
             {ATool::Pen, Icon::Pen, "画笔 (P)"},
             {ATool::Marker, Icon::Marker, "荧光笔 (H)"},
             {ATool::Text, Icon::Text, "文字 (T)"},
@@ -2310,9 +3280,11 @@ public:
         for (int t = int(ATool::Arrow); t < m_toolBtn.size(); ++t) m_toolButtons.append(m_toolBtn[t]);
         m_toolButtons.append(save); m_toolButtons.append(copy);
         m_toolButtons.append(pin); m_toolButtons.append(scroll);
+        m_toolButtons.append(ocr);
         for (QWidget *button : m_toolButtons) button->setFocusPolicy(Qt::NoFocus);
 
         m_toolOptions = new QWidget(this);
+        m_toolOptions->installEventFilter(this);
         m_toolOptions->setCursor(Qt::ArrowCursor);
         m_toolOptions->setStyleSheet(QStringLiteral(
             "QToolButton{color:#fff;background:transparent;border:none;border-radius:3px;padding:3px;}"
@@ -2345,6 +3317,505 @@ public:
         }
     }
     ~CaptureOverlay() override { if (m_detector) m_detector->stop(); }
+    static int testOcr(const QString &previewPath)
+    {
+        std::setvbuf(stdout, nullptr, _IONBF, 0);
+        std::puts("OCR phase: start");
+        auto check = [](bool ok, const char *message) {
+            if (!ok) { std::fprintf(stderr,"FAIL: %s\n",message); std::exit(1); }
+        };
+        OcrEngine::testAlgorithms();
+        const QRect primary(0,0,1920,1040);
+        const QRect target(240,160,640,190);
+        check(OcrDialog::placement(target,primary).topLeft()==target.topLeft(),
+              "OCR card starts at the capture origin instead of the virtual-desktop center");
+        for (const QPoint offset : {QPoint(-1920,0),QPoint(1920,-1080)}) {
+            const QRect available = primary.translated(offset);
+            check(OcrDialog::placement(target.translated(offset),available)==OcrDialog::placement(target,primary).translated(offset)
+                      && available.contains(OcrDialog::placement(QRect(available.bottomRight(),QSize(2,2)),available)),
+                  "OCR placement retains the selected secondary screen and clamps edge captures inside its work area");
+        }
+        const QString missing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
+        if (!missing.isEmpty()) {
+            QImage image(640,180,QImage::Format_RGB32); image.fill(Qt::white);
+            const QRect screen=QGuiApplication::primaryScreen()->geometry();
+            CaptureOverlay overlay({ScreenFrame{QRect(screen.topLeft(),image.size()),QRect(QPoint(),image.size()),image}});
+            overlay.setAttribute(Qt::WA_DeleteOnClose,false);
+            auto *button=overlay.m_tools->findChild<QToolButton *>(QStringLiteral("ocrButton"));
+            check(button && !button->isEnabled() && button->toolTip()==missing,
+                  "missing OCR assets disable the toolbar button with an actionable explanation");
+            overlay.close();
+            std::printf("UNAVAILABLE: %s\n",qPrintable(missing));
+            return 0;
+        }
+        auto &engine = OcrEngine::instance();
+        const auto cancel = std::make_shared<std::atomic_bool>(false);
+        auto fixture = [](qreal dpr, const QStringList &rows, const QVector<int> &sizes, int angle = 0) {
+            QImage image(qRound(800*dpr),qRound(280*dpr),QImage::Format_RGB32);
+            image.fill(Qt::white);
+            QPainter painter(&image);
+            painter.setRenderHint(QPainter::TextAntialiasing);
+            painter.scale(dpr,dpr);
+            if (angle) { painter.translate(400,140); painter.rotate(angle); painter.translate(-400,-140); }
+            painter.setPen(Qt::black);
+            for (int i=0; i<rows.size(); ++i) {
+                QFont font(QStringLiteral("Microsoft YaHei")); font.setPixelSize(sizes[i]); painter.setFont(font);
+                painter.drawText(QPointF(36,rows.size()==1 ? 140 : 58+i*85),rows[i]);
+            }
+            painter.end();
+            image.setDevicePixelRatio(dpr);
+            return image;
+        };
+        const QStringList chinese{QStringLiteral("截图文字识别"),QStringLiteral("中文测试"),QStringLiteral("对照结果")};
+        for (qreal dpr : {1.0,1.5,2.0}) {
+            for (int scenario=0; scenario<4; ++scenario) {
+                const QStringList rows = scenario==0 ? chinese : QStringList{QStringLiteral("Hello世界123")};
+                const QImage image = fixture(dpr,rows,scenario==0 ? QVector<int>{16,24,40} : QVector<int>{36},
+                                             scenario==2 ? 10 : scenario==3 ? -10 : 0);
+                const OcrResult result = engine.recognize(image,cancel);
+                std::printf("OCR dpr=%.1f case=%d rows=%lld elapsed=%lldms text=%s error=%s\n",dpr,scenario,
+                            (long long)result.lines.size(),result.elapsed,qPrintable(result.text()),qPrintable(result.error));
+                if (!previewPath.isEmpty()) image.save(previewPath+QStringLiteral("-%1-%2.png").arg(dpr).arg(scenario));
+                check(result.error.isEmpty() && !result.cancelled,"real OCR pipeline finishes without an inference error");
+                check(result.text() == rows.join(QLatin1Char('\n')),"real OCR output matches Chinese, mixed and rotated fixtures exactly");
+            }
+            QImage blank(qRound(800*dpr),qRound(280*dpr),QImage::Format_RGB32); blank.fill(Qt::white);
+            const OcrResult empty = engine.recognize(blank,cancel);
+            check(empty.error.isEmpty() && empty.lines.isEmpty(),"blank screenshots produce no recognized rows");
+        }
+        QImage dense = fixture(1,{QStringLiteral("中文测试中文测试中文测试")},{10});
+        const OcrResult small = engine.recognize(dense,cancel);
+        check(small.error.isEmpty(),"dense small text completes safely without assuming all characters are readable");
+        QImage full(1920,1080,QImage::Format_RGB32); full.fill(Qt::white);
+        {
+            QPainter painter(&full); painter.setPen(Qt::black);
+            QFont font(QStringLiteral("Microsoft YaHei")); font.setPixelSize(32); painter.setFont(font);
+            for (int row=0; row<10; ++row) painter.drawText(QPoint(40,80+row*90),QStringLiteral("截图文字识别 HelloWorld123"));
+        }
+        const OcrResult performance=engine.recognize(full,cancel);
+        check(performance.error.isEmpty() && performance.lines.size()==10,"1080p screenshot retains all ten text rows");
+        std::printf("PERFORMANCE: 1920x1080 / ten rows / %lldms%s\n",performance.elapsed,
+                    performance.elapsed>3000 ? " / WARNING: exceeds the reference budget" : "");
+        class Calibration : public QWidget {
+        public:
+            Calibration() : QWidget(nullptr,Qt::Tool|Qt::FramelessWindowHint|Qt::WindowStaysOnTopHint) {}
+        protected:
+            void paintEvent(QPaintEvent *) override {
+                QPainter painter(this); painter.fillRect(rect(),Qt::white); painter.setPen(Qt::black);
+                QFont font(QStringLiteral("Microsoft YaHei")); font.setPixelSize(32); painter.setFont(font);
+                painter.drawText(QPoint(24,62),QStringLiteral("截图文字识别"));
+                painter.drawText(QPoint(24,132),QStringLiteral("HelloWorld123"));
+            }
+        } calibration;
+        const QRect available=QGuiApplication::primaryScreen()->availableGeometry();
+        calibration.setGeometry(QRect(available.topLeft()+QPoint(80,80),QSize(640,190)));
+        calibration.show(); calibration.repaint();
+        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        QThread::msleep(100);
+        RECT client{}; POINT origin{};
+        const HWND hwnd=reinterpret_cast<HWND>(calibration.winId());
+        check(GetClientRect(hwnd,&client) && ClientToScreen(hwnd,&origin),"live OCR fixture has valid native screen coordinates");
+        const QRect liveNative(origin.x,origin.y,client.right,client.bottom);
+        const QImage live=grabNative(liveNative);
+        const OcrResult liveResult=engine.recognize(live,cancel);
+        check(liveResult.error.isEmpty() && liveResult.text()==QStringLiteral("截图文字识别\nHelloWorld123"),
+              "actual desktop pixels pass through detection and recognition with exact Chinese and English output");
+        if (!previewPath.isEmpty()) check(live.save(previewPath+QStringLiteral("-live.png")),"save actual desktop OCR fixture");
+        const QVector<ScreenFrame> liveFrames=freezeScreens();
+        check(!liveFrames.isEmpty(),"freeze actual desktop frames for the OCR toolbar workflow");
+        calibration.close();
+        QImage invalid;
+        check(!engine.recognize(invalid,cancel).error.isEmpty(),"empty images return an explicit OCR error");
+        const QImage image = fixture(1,{QStringLiteral("截图文字识别")},{32});
+        cancel->store(true);
+        check(engine.recognize(image,cancel).cancelled,"pre-cancelled work does not load or infer");
+        cancel->store(false);
+        CaptureOverlay overlay(liveFrames);
+        std::puts("OCR phase: overlay created");
+        overlay.setAttribute(Qt::WA_DeleteOnClose,false);
+        overlay.m_mode = Adjusting;
+        overlay.m_sel = overlay.localScreenRect(logicalFromNative(liveFrames,liveNative));
+        Annotation annotation;
+        annotation.tool=ATool::Text; annotation.color=Qt::black; annotation.font=16;
+        annotation.text=QStringLiteral("OCR2026");
+        annotation.rect=QRect(overlay.m_sel.topLeft()+QPoint(24,153),QSize(300,35));
+        overlay.m_anns.append(annotation);
+        overlay.placeToolbar(); overlay.showToolBars();
+        const QRect selection = overlay.m_sel;
+        const QImage before = overlay.cropped().toImage();
+        auto *button = overlay.m_tools->findChild<QToolButton *>(QStringLiteral("ocrButton"));
+        check(button && button->isEnabled() && !button->toolTip().isEmpty(),"capture toolbar exposes a named usable OCR button");
+        button->click();
+        std::puts("OCR phase: card opened");
+        QPointer<OcrDialog> dialog = overlay.m_ocrDialog;
+        check(dialog && dialog->findChild<QSplitter *>(QStringLiteral("ocrSplit"))->count()==2,
+              "OCR opens a two-pane screenshot and text comparison");
+        QApplication::processEvents();
+        check(!overlay.isVisible() && !overlay.m_tools->isVisible() && !overlay.m_toolOptions->isVisible()
+                  && !overlay.m_inspector->isVisible() && dialog->windowModality()==Qt::NonModal && !QApplication::activeModalWidget(),
+              "OCR hides every capture overlay and does not block windows outside the card");
+        const QRect captureRect=overlay.globalScreenRect(selection);
+        const QScreen *captureScreen=QGuiApplication::screenAt(captureRect.center());
+        check(captureScreen && dialog->screen()==captureScreen
+                  && dialog->geometry()==OcrDialog::placement(captureRect,captureScreen->availableGeometry())
+                  && dialog->windowTitle()==QStringLiteral("Finalize OCR"),
+              "Finalize OCR opens at the selected capture on its own screen");
+        const HWND cardHwnd=reinterpret_cast<HWND>(dialog->winId());
+        check(GetWindow(cardHwnd,GW_OWNER)==nullptr && !(GetWindowLongPtrW(cardHwnd,GWL_EXSTYLE)&WS_EX_TOOLWINDOW),
+              "OCR is an independent taskbar window rather than a tool owned by a hidden capture overlay");
+        QWidget desktopProbe(nullptr,Qt::Tool|Qt::FramelessWindowHint);
+        desktopProbe.setGeometry(QRect(captureScreen->availableGeometry().bottomRight()-QPoint(90,90),QSize(80,80)));
+        desktopProbe.show(); desktopProbe.raise(); desktopProbe.activateWindow();
+        QApplication::processEvents();
+        const HWND probeHwnd=reinterpret_cast<HWND>(desktopProbe.winId());
+        POINT probePoint{20,20};
+        check(ClientToScreen(probeHwnd,&probePoint) && WindowFromPoint(probePoint)==probeHwnd && IsWindowEnabled(probeHwnd),
+              "an independent desktop window stays enabled and receives native hit testing while OCR is open");
+        desktopProbe.close(); dialog->raise(); dialog->activateWindow();
+        auto *text = dialog->findChild<QPlainTextEdit *>(QStringLiteral("ocrText"));
+        auto *retry = dialog->findChild<QToolButton *>(QStringLiteral("ocrRetry"));
+        auto *languageChoice = dialog->findChild<QComboBox *>(QStringLiteral("ocrLanguage"));
+        check(text->isReadOnly() && !retry->isEnabled() && languageChoice->count()==10 && !languageChoice->isEnabled(),
+              "recognition has ten explicit languages and disables only busy controls without blocking the UI");
+        auto wait = [&] {
+            QElapsedTimer timer; timer.start();
+            while (dialog && !retry->isEnabled() && timer.elapsed()<30000) {
+                QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+                QThread::msleep(10);
+            }
+            check(dialog && retry->isEnabled(),"asynchronous OCR finishes within the test timeout");
+        };
+        wait();
+        const QString expectedText=QStringLiteral("截图文字识别\nHelloWorld123\nOCR2026");
+        check(!text->isReadOnly() && text->toPlainText()==expectedText,"OCR recognizes the composed screenshot including annotations and allows editing");
+        auto *copy=dialog->findChild<QToolButton *>(QStringLiteral("ocrCopy"));
+        auto *back=dialog->findChild<QToolButton *>(QStringLiteral("ocrBack"));
+        auto *status=dialog->findChild<QLabel *>(QStringLiteral("ocrStatus"));
+        check(retry->text().isEmpty() && copy->text().isEmpty() && !retry->icon().isNull() && !copy->icon().isNull()
+                  && languageChoice->mapTo(dialog,QPoint()).x()<retry->mapTo(dialog,QPoint()).x()
+                  && retry->mapTo(dialog,QPoint()).y()<text->mapTo(dialog,QPoint()).y()
+                  && back->mapTo(dialog,QPoint()).x()<text->mapTo(dialog,QPoint()).x()
+                  && status->alignment().testFlag(Qt::AlignRight) && status->mapTo(dialog,QPoint()).y()>text->mapTo(dialog,QPoint()).y()
+                  && QRegularExpression(QStringLiteral("^\\d+\\.\\d{2}秒 · 平均置信度\\d+%$")).match(status->text()).hasMatch(),
+              "compact pane actions and bottom-right timing replace redundant headings and result metadata");
+        if (!previewPath.isEmpty()) check(dialog->grab().save(previewPath+QStringLiteral("-comparison.png")),"save comparison window preview");
+        check(text->font().pointSizeF()>=12 && dialog->font().pointSizeF()>=10.5 && copy->size()==QSize(40,40)
+                  && retry->size()==copy->size() && languageChoice->height()>=40,
+              "OCR uses readable point-sized system fonts and consistent forty-pixel action targets");
+        const auto contrast = [](const QColor &a,const QColor &b) {
+            const auto luminance = [](const QColor &color) {
+                const auto linear=[](double value) { return value<=0.04045 ? value/12.92 : std::pow((value+0.055)/1.055,2.4); };
+                return 0.2126*linear(color.redF())+0.7152*linear(color.greenF())+0.0722*linear(color.blueF());
+            };
+            const double first=luminance(a),second=luminance(b);
+            return (qMax(first,second)+0.05)/(qMin(first,second)+0.05);
+        };
+        check(contrast(QColor("#edf0f5"),QColor("#17191d"))>=4.5
+                  && contrast(QColor("#aeb7c4"),QColor("#25282e"))>=4.5
+                  && contrast(QColor("#edf0f5"),QColor("#304d75"))>=4.5
+                  && contrast(QColor("#687384"),QColor("#25282e"))>=3
+                  && contrast(QColor("#8db9ff"),QColor("#25282e"))>=3,
+              "OCR text, metadata, accent buttons, control outlines and focus cues meet their contrast budgets");
+        const QList<QWidget *> tabOrder{dialog->findChild<QToolButton *>(QStringLiteral("ocrPin")),
+            dialog->findChild<QToolButton *>(QStringLiteral("ocrMinimize")),dialog->findChild<QToolButton *>(QStringLiteral("ocrMaximize")),
+            dialog->findChild<QToolButton *>(QStringLiteral("ocrClose")),back,dialog->findChild<QGraphicsView *>(),languageChoice,retry,copy,text};
+        tabOrder.first()->setFocus();
+        for (int i=1;i<tabOrder.size();++i) {
+            QKeyEvent tab(QEvent::KeyPress,Qt::Key_Tab,Qt::NoModifier);
+            QApplication::sendEvent(QApplication::focusWidget(),&tab);
+            check(QApplication::focusWidget()==tabOrder[i],"Tab follows the visual window-actions, image and text-actions order without a keyboard trap");
+        }
+        const QSize normalSize=dialog->size();
+        dialog->resize(dialog->minimumSize()); QApplication::processEvents();
+        const auto controlsFit = [&] {
+            const QRect panelRect=dialog->findChild<QWidget *>(QStringLiteral("ocrTextPanel"))->rect();
+            QWidget *panel=dialog->findChild<QWidget *>(QStringLiteral("ocrTextPanel"));
+            return dialog->rect().contains(QRect(panel->mapTo(dialog,QPoint()),panel->size()))
+                && panelRect.contains(QRect(languageChoice->mapTo(panel,QPoint()),languageChoice->size()))
+                && panelRect.contains(QRect(copy->mapTo(panel,QPoint()),copy->size()))
+                && languageChoice->mapTo(dialog,QPoint()).x()+languageChoice->width()<=retry->mapTo(dialog,QPoint()).x()
+                && text->height()>100 && back->width()>=back->sizeHint().width();
+        };
+        check(dialog->size()==dialog->minimumSize() && controlsFit(),"minimum OCR window retains both panes and every primary action without overlap");
+        if (!previewPath.isEmpty()) check(dialog->grab().save(previewPath+QStringLiteral("-compact.png")),"save minimum-size OCR preview");
+        QVector<QPair<QWidget *,QFont>> savedFonts;
+        for (QWidget *widget:dialog->findChildren<QWidget *>())
+            if (qobject_cast<QLabel *>(widget) || qobject_cast<QToolButton *>(widget)
+                || qobject_cast<QComboBox *>(widget) || qobject_cast<QPlainTextEdit *>(widget))
+                savedFonts.append({widget,widget->font()});
+        for (const auto &entry:savedFonts) {
+            QFont largeFont=entry.second; largeFont.setPointSizeF(largeFont.pointSizeF()*1.25);
+            entry.first->setFont(largeFont);
+        }
+        for (int pass=0;pass<3;++pass) QApplication::processEvents();
+        check(languageChoice->font().pointSizeF()>=13 && text->font().pointSizeF()>=15,
+              "the enlarged-font preview actually increases both interface and reading fonts");
+        if (!controlsFit()) std::fprintf(stderr,"LAYOUT: dialog=%dx%d panel=%dx%d language=(%d,%d %dx%d) copy=(%d,%d %dx%d) text-height=%d back-width=%d back-hint=%d\n",
+            dialog->width(),dialog->height(),languageChoice->parentWidget()->width(),languageChoice->parentWidget()->height(),
+            languageChoice->x(),languageChoice->y(),languageChoice->width(),languageChoice->height(),
+            copy->x(),copy->y(),copy->width(),copy->height(),text->height(),back->width(),back->sizeHint().width());
+        check(controlsFit(),"OCR controls tolerate an application-level twenty-five percent font enlargement at minimum size");
+        if (!previewPath.isEmpty()) check(dialog->grab().save(previewPath+QStringLiteral("-large-font.png")),"save enlarged-interface-font OCR preview");
+        for (const auto &entry:savedFonts) entry.first->setFont(entry.second);
+        dialog->resize(normalSize); QApplication::processEvents();
+        text->selectAll(); text->insertPlainText(QStringLiteral("校对后的文本"));
+        auto *saved = new QMimeData;
+        QClipboard *clipboard = QGuiApplication::clipboard();
+        if (const QMimeData *data=clipboard->mimeData()) for (const QString &format:data->formats()) saved->setData(format,data->data(format));
+        copy->click();
+        const bool copied = clipboard->text()==QStringLiteral("校对后的文本");
+        clipboard->setMimeData(saved);
+        check(copied,"copy-all outputs the edited text and leaves the comparison open");
+        QTimer::singleShot(0,dialog,[dialog] {
+            for (QWidget *widget:QApplication::topLevelWidgets())
+                if (auto *question=qobject_cast<QMessageBox *>(widget))
+                    if (question->parentWidget()==dialog) question->button(QMessageBox::No)->click();
+        });
+        retry->click();
+        check(text->toPlainText()==QStringLiteral("校对后的文本") && !text->isReadOnly() && retry->isEnabled(),
+              "declining retry preserves manual corrections and does not start inference");
+        QTimer::singleShot(0,dialog,[dialog] {
+            for (QWidget *widget:QApplication::topLevelWidgets())
+                if (auto *question=qobject_cast<QMessageBox *>(widget))
+                    if (question->parentWidget()==dialog) question->button(QMessageBox::Yes)->click();
+        });
+        retry->click(); wait();
+        check(text->toPlainText()==expectedText,"retry recognizes the same retained screenshot");
+        auto *maximize=dialog->findChild<QToolButton *>(QStringLiteral("ocrMaximize"));
+        maximize->click(); QApplication::processEvents();
+        check(dialog->isMaximized() && maximize->toolTip()==QStringLiteral("还原"),"maximize changes to a restore control");
+        maximize->click(); QApplication::processEvents();
+        check(!dialog->isMaximized() && text->toPlainText()==expectedText,"restoring the card keeps the recognized text");
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrMinimize"))->click(); QApplication::processEvents();
+        check(dialog->isMinimized() && !overlay.isVisible(),"minimizing OCR does not restore the global frozen overlay");
+        dialog->showNormal(); QApplication::processEvents();
+        const auto existingWindows=QApplication::topLevelWidgets();
+        auto *pin=dialog->findChild<QToolButton *>(QStringLiteral("ocrPin"));
+        const QRect cardGeometry=dialog->geometry();
+        check(pin->isCheckable() && !pin->isChecked() && !(GetWindowLongPtrW(cardHwnd,GWL_EXSTYLE)&WS_EX_TOPMOST),
+              "OCR starts unpinned with an explicit topmost toggle");
+        pin->click(); QApplication::processEvents();
+        check(pin->isChecked() && (GetWindowLongPtrW(cardHwnd,GWL_EXSTYLE)&WS_EX_TOPMOST)
+                  && pin->toolTip()==QStringLiteral("取消置顶 OCR 卡片") && pin->accessibleName()==pin->toolTip()
+                  && dialog->geometry()==cardGeometry && reinterpret_cast<HWND>(dialog->winId())==cardHwnd
+                  && text->toPlainText()==expectedText && dialog->isVisible() && !overlay.isVisible(),
+              "pin makes the entire OCR card topmost without changing its handle, geometry, text or capture state");
+        check(QApplication::topLevelWidgets().size()==existingWindows.size(),"OCR pin does not create an image window");
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrMinimize"))->click(); QApplication::processEvents();
+        dialog->showNormal(); QApplication::processEvents();
+        maximize->click(); QApplication::processEvents();
+        maximize->click(); QApplication::processEvents();
+        check(pin->isChecked() && (GetWindowLongPtrW(cardHwnd,GWL_EXSTYLE)&WS_EX_TOPMOST) && text->toPlainText()==expectedText,
+              "topmost survives minimize restore and maximize restore without discarding the OCR result");
+        pin->click(); QApplication::processEvents();
+        check(!pin->isChecked() && !(GetWindowLongPtrW(cardHwnd,GWL_EXSTYLE)&WS_EX_TOPMOST)
+                  && pin->toolTip()==QStringLiteral("置顶 OCR 卡片") && dialog->geometry()==cardGeometry,
+              "clicking pin again returns the OCR card to normal window stacking");
+        back->click();
+        QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        check(overlay.m_sel==selection && overlay.cropped().toImage()==before && overlay.isVisible(),
+              "closing OCR restores the untouched screenshot selection and output");
+        button->click();
+        dialog = overlay.m_ocrDialog;
+        QApplication::processEvents();
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrBack"))->click();
+        QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        QThreadPool::globalInstance()->waitForDone();
+        check(!engine.busy.load(),"closing during recognition cancels cooperatively and releases the single-job slot");
+        for (QScreen *screen:QGuiApplication::screens()) {
+            const QRect area=screen->availableGeometry();
+            const QRect anchor(area.topLeft()+QPoint(30,30),QSize(100,80));
+            OcrDialog positioned(image,anchor);
+            positioned.show();
+            check(positioned.screen()==screen && positioned.geometry()==OcrDialog::placement(anchor,area),
+                  "actual OCR windows select each connected monitor from the capture anchor rather than the parent overlay");
+            positioned.reject();
+            QApplication::processEvents();
+        }
+        OcrDialog foreign(fixture(1,{QStringLiteral("HelloWorld123")},{36}));
+        foreign.show();
+        QApplication::processEvents();
+        QElapsedTimer foreignTimer; foreignTimer.start();
+        auto *foreignRetry=foreign.findChild<QToolButton *>(QStringLiteral("ocrRetry"));
+        while (!foreignRetry->isEnabled() && foreignTimer.elapsed()<30000) {
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents); QThread::msleep(10);
+        }
+        auto *foreignChoice=foreign.findChild<QComboBox *>(QStringLiteral("ocrLanguage"));
+        foreignChoice->setCurrentIndex(2);
+        foreignRetry->click(); foreignTimer.restart();
+        while (!foreignRetry->isEnabled() && foreignTimer.elapsed()<30000) {
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents); QThread::msleep(10);
+        }
+        check(foreignRetry->isEnabled() && foreign.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"))->toPlainText()==QStringLiteral("HelloWorld123")
+                  && foreign.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"))->toolTip().contains(QStringLiteral("英文")),
+              "language selection reloads the matching model and identifies the result language in its tooltip");
+        foreign.reject();
+        engine.busy.store(true);
+        OcrDialog blocked(image); blocked.show();
+        QApplication::processEvents();
+        check(blocked.findChild<QLabel *>(QStringLiteral("ocrStatus"))->text().contains(QStringLiteral("上一项"))
+                  && blocked.findChild<QToolButton *>(QStringLiteral("ocrRetry"))->isEnabled(),
+              "a second request does not queue another job while the process-wide slot is occupied");
+        blocked.reject(); engine.busy.store(false);
+        button->click();
+        dialog=overlay.m_ocrDialog;
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrClose"))->click();
+        QApplication::processEvents();
+        QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        check(!overlay.isVisible(),"closing OCR ends the capture rather than locking the desktop again");
+        QThreadPool::globalInstance()->waitForDone();
+        overlay.close();
+        std::puts("PASS: offline OCR, exact native-pixel fixtures and comparison/edit/copy/retry/cancel workflow");
+        return 0;
+    }
+    static int testSelection()
+    {
+        int failures = 0;
+        const auto check = [&failures](bool ok,const char *message) {
+            if (!ok) { ++failures; std::fprintf(stderr,"FAIL: %s\n",message); }
+        };
+        const QPoint savedCursor = QCursor::pos();
+        QVector<ScreenFrame> frames = freezeScreens();
+        for (ScreenFrame &frame:frames) frame.image.fill(QColor(160,180,200));
+        CaptureOverlay overlay(frames);
+        overlay.setAttribute(Qt::WA_DeleteOnClose,false);
+        overlay.raise(); overlay.activateWindow(); overlay.setFocus();
+        QApplication::processEvents();
+        const QPoint origin = overlay.localScreenRect(QGuiApplication::primaryScreen()->geometry()).topLeft();
+        const QRect base(origin+QPoint(233,173),QSize(171,113));
+        const auto mouse = [&overlay](QEvent::Type type,const QPoint &point,Qt::MouseButton button,Qt::MouseButtons buttons) {
+            const QPoint global = overlay.windowHandle()->mapToGlobal(QPointF(point)).toPoint();
+            QMouseEvent event(type,point,global,button,buttons,Qt::NoModifier);
+            QApplication::sendEvent(&overlay,&event);
+        };
+        const auto key = [&overlay](int code,Qt::KeyboardModifiers modifiers=Qt::NoModifier,bool repeat=false) {
+            QKeyEvent event(QEvent::KeyPress,code,modifiers,QString(),repeat);
+            QApplication::sendEvent(&overlay,&event);
+        };
+        Annotation ann;
+        ann.tool = ATool::Rect; ann.rect = QRect(base.center()-QPoint(12,12),QSize(24,24));
+        overlay.m_anns.append(ann); overlay.pushUndo();
+        const int undoCount = overlay.m_undoStack.size();
+        for (int y=-1;y<=1;++y) for (int x=-1;x<=1;++x) {
+            if (!x && !y) continue;
+            overlay.m_sel=base; overlay.m_mode=Adjusting; overlay.m_drag=H_None;
+            const QPoint outside(x<0 ? base.left()-28 : x>0 ? base.right()+24 : base.center().x(),
+                                 y<0 ? base.top()-22 : y>0 ? base.bottom()+24 : base.center().y());
+            QRect expected=base;
+            if (x<0) expected.setLeft(outside.x());
+            if (x>0) expected.setRight(outside.x());
+            if (y<0) expected.setTop(outside.y());
+            if (y>0) expected.setBottom(outside.y());
+            mouse(QEvent::MouseButtonPress,outside,Qt::LeftButton,Qt::LeftButton);
+            check(overlay.m_sel==expected && overlay.m_mode==Adjusting && overlay.m_drag!=H_New
+                      && !overlay.m_tools->isVisible(),"every outside direction immediately extends the original selection on press");
+            check(overlay.m_anns.size()==1 && overlay.m_anns.first().rect==ann.rect
+                      && overlay.m_undoStack.size()==undoCount,"outside expansion preserves annotations and undo history");
+            mouse(QEvent::MouseButtonRelease,outside,Qt::LeftButton,Qt::NoButton);
+            check(overlay.m_sel==expected && overlay.m_drag==H_None && overlay.m_tools->isVisible(),
+                  "outside release retains the expanded region and restores the toolbar");
+            overlay.m_sel=base;
+            mouse(QEvent::MouseButtonPress,outside,Qt::LeftButton,Qt::LeftButton);
+            const QPoint inside = base.center();
+            mouse(QEvent::MouseMove,inside,Qt::NoButton,Qt::LeftButton);
+            QRect smaller=base;
+            if (x<0) smaller.setLeft(inside.x());
+            if (x>0) smaller.setRight(inside.x());
+            if (y<0) smaller.setTop(inside.y());
+            if (y>0) smaller.setBottom(inside.y());
+            check(overlay.m_sel==smaller,"an outside press continues resizing against the original opposite edge or corner");
+            mouse(QEvent::MouseButtonRelease,inside,Qt::LeftButton,Qt::NoButton);
+        }
+        overlay.m_sel=base;
+        const QPoint outside(base.left()-28,base.center().y());
+        mouse(QEvent::MouseButtonPress,outside,Qt::LeftButton,Qt::LeftButton);
+        const QPoint across(base.right()+24,base.center().y());
+        mouse(QEvent::MouseMove,across,Qt::NoButton,Qt::LeftButton);
+        if (overlay.m_sel!=QRect(QPoint(base.right(),base.top()),QPoint(across.x(),base.bottom())))
+            std::fprintf(stderr,"CROSS: actual=(%d,%d %dx%d) fixed-right=%d pointer=%d\n",overlay.m_sel.x(),overlay.m_sel.y(),overlay.m_sel.width(),overlay.m_sel.height(),base.right(),across.x());
+        check(overlay.m_sel==QRect(QPoint(base.right(),base.top()),QPoint(across.x(),base.bottom())),
+              "resizing across the fixed edge normalizes rather than moving or restarting the capture");
+        mouse(QEvent::MouseButtonRelease,across,Qt::LeftButton,Qt::NoButton);
+        overlay.m_sel=base;
+        const QPoint moveStart=base.center()+QPoint(40,20);
+        mouse(QEvent::MouseButtonPress,moveStart,Qt::LeftButton,Qt::LeftButton);
+        mouse(QEvent::MouseMove,moveStart+QPoint(17,13),Qt::NoButton,Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease,moveStart+QPoint(17,13),Qt::LeftButton,Qt::NoButton);
+        check(overlay.m_sel==base.translated(17,13),"dragging the empty interior still moves the region without resizing");
+        overlay.m_sel=base; overlay.m_selAnn=-1;
+        for (int code:{Qt::Key_Left,Qt::Key_Up,Qt::Key_Right,Qt::Key_Down}) {
+            const QRect before=overlay.m_sel;
+            key(code);
+            check(overlay.m_sel==before.translated(keyDelta(code)),"ordinary arrows translate the region by exactly one coordinate without snapping");
+            const QRect once=overlay.m_sel;
+            key(code,Qt::NoModifier,true);
+            check(overlay.m_sel==once.translated(keyDelta(code)),"holding an arrow repeats region movement");
+        }
+        overlay.m_sel=QRect(QPoint(),QSize(20,20));
+        key(Qt::Key_Left); key(Qt::Key_Up);
+        check(overlay.m_sel==QRect(0,0,20,20),"region movement clamps at the virtual desktop origin");
+        overlay.m_sel=QRect(overlay.width()-20,overlay.height()-20,20,20);
+        const QRect lowerEdge=overlay.m_sel;
+        key(Qt::Key_Right); key(Qt::Key_Down);
+        check(overlay.m_sel==lowerEdge,"region movement clamps at the virtual desktop end");
+        overlay.m_sel=base;
+        key(Qt::Key_Left,Qt::KeypadModifier);
+        check(overlay.m_sel==base.translated(-1,0),"numeric-keypad arrows retain the same one-step movement semantics");
+        overlay.m_sel=base;
+        QCursor::setPos(overlay.windowHandle()->mapToGlobal(QPointF(base.center())).toPoint());
+        QApplication::processEvents();
+        for (int code:{Qt::Key_W,Qt::Key_A,Qt::Key_S,Qt::Key_D}) {
+            const QPoint before=QCursor::pos();
+            key(code);
+            check(QCursor::pos()==before+keyDelta(code) && overlay.m_sel==base && overlay.m_atool==ATool::None,
+                  "WASD moves the actual cursor one coordinate and never arms an annotation tool or changes the idle region");
+        }
+        const QPoint beforeRepeat=QCursor::pos();
+        key(Qt::Key_D,Qt::NoModifier,true);
+        check(QCursor::pos()==beforeRepeat+QPoint(1,0),"held WASD repeats cursor movement");
+        for (const QScreen *screen:QGuiApplication::screens()) {
+            QCursor::setPos(screen->geometry().center());
+            QApplication::processEvents();
+            overlay.m_sel=base; overlay.m_mode=Adjusting;
+            const QRect current=overlay.localScreenRect(screen->geometry());
+            key(Qt::Key_A,Qt::ControlModifier);
+            check(overlay.m_sel==current && overlay.m_hover.isEmpty() && !overlay.m_queryPending,
+                  "Ctrl+A selects the cursor screen including its taskbar without re-detecting windows");
+            key(Qt::Key_A,Qt::ControlModifier);
+            check(overlay.m_sel==overlay.rect(),"a second Ctrl+A selects the entire virtual desktop");
+            key(Qt::Key_A,Qt::ControlModifier);
+            check(overlay.m_sel==current,"Ctrl+A can return from the virtual desktop to the cursor screen");
+            overlay.m_mode=Selecting; overlay.m_sel={};
+            key(Qt::Key_A,Qt::ControlModifier);
+            check(overlay.m_sel==current && overlay.m_mode==Adjusting,"Ctrl+A works before any manual selection exists");
+        }
+        check(overlay.m_anns.size()==1 && overlay.m_anns.first().rect==ann.rect
+                  && overlay.m_undoStack.size()==undoCount,"keyboard region changes preserve the old annotation and its undo stack");
+        overlay.m_sel=base; overlay.m_selAnn=0;
+        key(Qt::Key_Left);
+        check(overlay.m_sel==base && overlay.m_anns.first().rect==ann.rect.translated(-1,0),
+              "a selected annotation retains priority over region nudging");
+        overlay.m_anns.clear(); overlay.m_selAnn=-1;
+        overlay.beginTextEdit(base.center());
+        overlay.m_editor->setPlainText(QStringLiteral("校对文字"));
+        key(Qt::Key_A,Qt::ControlModifier);
+        check(overlay.m_sel==base && overlay.editorActive() && overlay.m_editor->toPlainText()==QStringLiteral("校对文字"),
+              "text editing cannot turn Ctrl+A into a fullscreen selection");
+        overlay.m_editor->setPlainText(QString()); overlay.commitTextEdit(); overlay.setToolNone();
+        overlay.m_sel=base;
+        key(Qt::Key_Right);
+        const qreal scale=overlay.m_shot.devicePixelRatio();
+        QPixmap expected=overlay.m_shot.copy(QRect(qRound(overlay.m_sel.x()*scale),qRound(overlay.m_sel.y()*scale),
+                                                  qRound(overlay.m_sel.width()*scale),qRound(overlay.m_sel.height()*scale)));
+        expected.setDevicePixelRatio(1);
+        check(overlay.cropped().toImage()==expected.toImage(),"output crops the adjusted region at the frozen image's native pixel scale");
+        overlay.resetSelection();
+        check(overlay.m_sel.isEmpty() && overlay.m_mode==Selecting,"clearing the selection still permits a new capture");
+        overlay.close();
+        QCursor::setPos(savedCursor);
+        if (!failures) std::printf("PASS: eight-direction outside adjustment, cursor/region keys, screen toggle and crop output\n");
+        return failures ? 1 : 0;
+    }
     static int testColorPicker(const QString &previewPath)
     {
         QClipboard *clipboard = QGuiApplication::clipboard();
@@ -2392,8 +3863,65 @@ public:
                 const qreal ratio = liveOverlay.m_shot.devicePixelRatioF();
                 const QPoint pixel(qRound(local.x() * ratio), qRound(local.y() * ratio));
                 check(liveOverlay.rect().contains(local.toPoint()) && pixel.x() >= 0 && pixel.y() >= 0,
-                      "every captured screen starts inside the overlay, including negative-origin screens");
+                       "every captured screen starts inside the overlay, including negative-origin screens");
             }
+            const QPoint savedCursor = QCursor::pos();
+            const QPoint center = calibration.geometry().center();
+            auto moveCursor = [&check](const QPoint &global) {
+                DWORD foreground = 0;
+                GetWindowThreadProcessId(GetForegroundWindow(), &foreground);
+                check(foreground == GetCurrentProcessId(), "native fixture input requires this process to own the foreground");
+                QCursor::setPos(global);
+            };
+            auto mouse = [&liveOverlay, &moveCursor](QEvent::Type type, const QPoint &global) {
+                moveCursor(global);
+                const QPoint local = liveOverlay.mapFromGlobal(global);
+                QMouseEvent event(type, local, global,
+                                  type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                                  type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+                                  Qt::NoModifier);
+                QApplication::sendEvent(&liveOverlay, &event);
+            };
+            moveCursor(center);
+            const QPoint local = liveOverlay.mapFromGlobal(center);
+            liveOverlay.m_sel = QRect(local - QPoint(60, 40), QSize(180, 120));
+            liveOverlay.m_mode = Adjusting;
+            liveOverlay.updateInspector();
+            check(liveOverlay.m_inspector->isVisible() && liveOverlay.m_inspector->colorText() == QStringLiteral("1, 4, 9"),
+                  "a locked selection immediately permits sampling the frozen native pixel");
+            QKeyEvent copy(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier);
+            QApplication::sendEvent(&liveOverlay, &copy);
+            check(clipboard->text() == QStringLiteral("1, 4, 9") && liveOverlay.isVisible(),
+                  "C copies a color after selection without copying or closing the image");
+            mouse(QEvent::MouseButtonPress, center);
+            check(!liveOverlay.m_inspector->isVisible(), "moving the entire region hides the card on press");
+            mouse(QEvent::MouseMove, center + QPoint(20, 15));
+            check(!liveOverlay.m_inspector->isVisible(), "a held region move keeps the card hidden, including while stationary");
+            mouse(QEvent::MouseButtonRelease, center + QPoint(20, 15));
+            check(liveOverlay.m_inspector->isVisible(), "region release restores the card without another mouse move");
+            const QPoint corner = liveOverlay.mapToGlobal(liveOverlay.m_sel.bottomRight());
+            mouse(QEvent::MouseButtonPress, corner);
+            mouse(QEvent::MouseMove, corner + QPoint(30, 20));
+            check(liveOverlay.m_inspector->isVisible(), "resizing keeps the magnifier available for pixel precision");
+            mouse(QEvent::MouseButtonRelease, corner + QPoint(30, 20));
+            check(liveOverlay.m_inspector->isVisible(), "resize release leaves the card visible");
+            moveCursor(center + QPoint(400, 300));
+            liveOverlay.updateInspector();
+            check(!liveOverlay.m_inspector->isVisible(), "idle sampling outside the locked selection is hidden");
+            moveCursor(center + QPoint(20, 15));
+            liveOverlay.selectTool(ATool::Rect);
+            check(!liveOverlay.m_inspector->isVisible(), "arming an annotation tool suppresses automatic sampling");
+            moveCursor(center + QPoint(20, 15));
+            check(liveOverlay.m_sel.contains(liveOverlay.mapFromGlobal(QCursor::pos())), "tool restoration starts with the cursor inside the region");
+            liveOverlay.setToolNone();
+            if (!liveOverlay.m_inspector->isVisible())
+                std::fprintf(stderr, "inspector restore: cursor=%d,%d local=%d,%d selection=%d,%d,%d,%d drag=%d item=%d tool=%d selected=%d visible=%d\n",
+                             QCursor::pos().x(), QCursor::pos().y(), liveOverlay.mapFromGlobal(QCursor::pos()).x(), liveOverlay.mapFromGlobal(QCursor::pos()).y(),
+                             liveOverlay.m_sel.x(), liveOverlay.m_sel.y(), liveOverlay.m_sel.width(), liveOverlay.m_sel.height(),
+                             int(liveOverlay.m_drag), int(liveOverlay.m_itemDrag), int(liveOverlay.m_atool), liveOverlay.m_selAnn, int(liveOverlay.isVisible()));
+            check(liveOverlay.m_inspector->isVisible(), "leaving the annotation tool restores automatic sampling");
+            check(liveOverlay.m_shot.toImage() == frozen, "sampling and region adjustments never change frozen pixels");
+            moveCursor(savedCursor);
             liveOverlay.close();
         }
         calibration.hide();
@@ -2416,9 +3944,22 @@ public:
         }
         QImage panel(inspector->size(), QImage::Format_RGB32);
         inspector->render(&panel);
-        const int left = (inspector->width() - 176) / 2;
-        check(panel.pixelColor(left + 88, 68) == QColor(1, 4, 9), "highlighted pixel retains its raw color");
-        check(panel.pixelColor(left + 8, 12) == QColor(90, 150, 210), "nearest-neighbor magnifier preserves neighboring pixels");
+        const int left = (inspector->width() - 177) / 2;
+        check(inspector->size() == QSize(179, 217), "the compact card uses a 25 by 17 sample at sevenfold magnification");
+        check(panel.pixelColor(left + 88, 61) == QColor(1, 4, 9), "highlighted pixel retains its raw color");
+        check(panel.pixelColor(left + 15, 9) == QColor(90, 150, 210), "nearest-neighbor magnifier preserves neighboring pixels");
+        QImage translucent(inspector->size(), QImage::Format_ARGB32_Premultiplied);
+        translucent.fill(Qt::transparent);
+        inspector->render(&translucent, QPoint(), QRegion(), QWidget::DrawChildren);
+        check(translucent.pixelColor(0, 170) == QColor(0, 0, 0, 188), "the dark surface has alpha 188 rather than fading text and pixels");
+        check(translucent.pixelColor(left + 88, 61) == QColor(1, 4, 9), "the center color remains opaque on the translucent surface");
+        check(inspector->setSample(frame, sample, QRectF(0, 0, 121, 91)), "a magnifier may preview the selection boundary");
+        inspector->render(&panel);
+        check(panel.pixelColor(left + 165, 100) != QColor(1, 4, 9)
+                  && inspector->colorText() == QStringLiteral("1, 4, 9"),
+              "the magnified mask is visual only and never replaces the raw copied color");
+        check(inspector->setSample(frame, sample), "restore the unmasked sample preview");
+        inspector->render(&panel);
         if (!previewPath.isEmpty()) check(panel.save(previewPath), "save magnifier preview");
         const QImage frozen = overlay.m_shot.toImage();
         check(overlay.m_shot.devicePixelRatio() == 1.5, "frozen desktop preserves high-DPI capture resolution");
@@ -2483,7 +4024,8 @@ public:
         mouseMove(screenOrigin + QPoint(200, 40));
         check(overlay.m_sel.right() + 1 == screenOrigin.x() + 201 && overlay.m_snapX < 0,
               "no snap indicator appears away from anchor lines");
-        // Click-to-select a detected window; dragging from inside draws a new selection.
+        // A fresh capture selects a detected window; dragging overrides that window hit.
+        overlay.resetSelection();
         overlay.m_detectionOptions.elements = true;
         overlay.m_windowRects = { DetectedWindow{QRect(screenOrigin + QPoint(120, 60), QSize(80, 50)),
                                                  {QRect(screenOrigin + QPoint(140, 70), QSize(30, 20))}} };
@@ -3657,9 +5199,9 @@ public:
         QMouseEvent dragMove(QEvent::MouseMove, grown, grown + overlay.geometry().topLeft(),
                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(&overlay, &dragMove);
-        check(!overlay.m_tools->isVisible() && !overlay.m_inspector->isVisible()
+        check(!overlay.m_tools->isVisible() && overlay.m_inspector->isVisible()
                   && overlay.m_sel != expectedButton,
-              "the status bar and pixel inspector hide while the selection is being dragged");
+               "region resizing hides the status bar but retains the precision magnifier");
         QMouseEvent dragRelease(QEvent::MouseButtonRelease, grown, grown + overlay.geometry().topLeft(),
                                 Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
         QApplication::sendEvent(&overlay, &dragRelease);
@@ -3668,8 +5210,8 @@ public:
         QMouseEvent hoverAfter(QEvent::MouseMove, grown + QPoint(6, 0), grown + QPoint(6, 0) + overlay.geometry().topLeft(),
                                Qt::NoButton, Qt::NoButton, Qt::NoModifier);
         QApplication::sendEvent(&overlay, &hoverAfter);
-        check(!overlay.m_inspector->isVisible(),
-              "the color value card stays hidden inside a locked selection");
+        check(overlay.m_inspector->isVisible(),
+               "the color value card remains available inside a locked selection");
         // Instant annotation: a rectangle stroke commits, composes, and undoes.
         overlay.selectTool(ATool::Rect);
         const QRect annRect = overlay.m_sel.adjusted(12, 12, -12, -12);
@@ -4320,6 +5862,7 @@ protected:
         setFocus();                                   // Any click restores keyboard handling.
         m_pressPos = e->pos();
         m_dragStarted = false;
+        m_inspector->hide();
         if (m_mode == Adjusting && !m_spaceHeld && (m_atool == ATool::Mosaic || m_atool == ATool::None)) {
             const bool regionTool = m_atool == ATool::None || !m_mosaicBrush;
             if (regionTool && m_selAnn >= 0 && m_selAnn < m_anns.size()
@@ -4417,7 +5960,13 @@ protected:
         if (m_mode == Adjusting) {
             m_drag = hitHandle(e->pos());
             m_pressSel = m_sel;
-            if (m_drag == H_None) {                 // Clicking outside starts a new selection.
+            if (m_drag != H_None && m_drag != H_Move && !m_sel.contains(e->pos())) {
+                m_sel = resizeBy(m_drag, e->pos());  // Outside presses extend the existing edge or corner.
+                applySnap(m_drag);
+                hideToolBars();
+                updateTip();
+                update();
+            } else if (m_drag == H_None) {
                 resetSelection();
                 m_drag = H_New;
             }
@@ -4427,6 +5976,7 @@ protected:
         }
         m_pressWindow = m_drag == H_New ? windowAt(e->pos()) : QRect();
         if (m_drag == H_New) requestDetection(e->pos());
+        updateInspector();
     }
     void mouseMoveEvent(QMouseEvent *e) override
     {
@@ -4486,8 +6036,6 @@ protected:
         m_dragStarted = true;
         cancelDetection();
         hideToolBars();                              // The status bar steps aside during drags.
-        m_inspector->hide();                        // So does the pixel inspector (this event
-                                                    // ran updateInspector before the drag started).
         if (!m_hover.isNull())
             m_hover = QRect();                      // A drag replaces the hover preview with the selection.
         if (m_drag == H_New) {                      // New selection.
@@ -4498,6 +6046,7 @@ protected:
             m_sel = resizeBy(m_drag, pos);
         }
         applySnap(m_drag);
+        updateInspector();
         updateTip();
         update();
     }
@@ -4544,6 +6093,7 @@ protected:
         placeToolbar();
         showToolBars();
         updateTip();
+        updateInspector();
         update();
         if (m_pinAfterDetection) { m_pinAfterDetection = false; pinCapture(); }
     }
@@ -4610,6 +6160,46 @@ protected:
                 } else if (e->key() == Qt::Key_Y) redoAnnotation();
             }
             return;
+        }
+        if (!m_live && m_itemDrag == H_None && m_drag == H_None
+            && e->key() == Qt::Key_A && e->modifiers() == Qt::ControlModifier) {
+            const QScreen *screen = QGuiApplication::screenAt(QCursor::pos());
+            const QRect current = localScreenRect((screen ? screen : QGuiApplication::primaryScreen())->geometry());
+            cancelDetection();
+            m_sel = m_sel == current ? rect() : current;
+            m_mode = Adjusting;
+            m_hover = {};
+            m_snapX = m_snapY = -1;
+            placeToolbar(); showToolBars(); updateTip(); update();
+            updateInspector();
+            return;
+        }
+        const QPoint delta = keyDelta(e->key());
+        const bool arrow = e->key() >= Qt::Key_Left && e->key() <= Qt::Key_Down;
+        const Qt::KeyboardModifiers movementModifiers = e->modifiers() & ~Qt::KeypadModifier;
+        if (!delta.isNull() && m_selAnn < 0 && !m_live && m_itemDrag == H_None) {
+            if (movementModifiers == Qt::NoModifier && (!arrow || m_mode == Selecting)) {
+                const QRect bounds = QGuiApplication::primaryScreen()->virtualGeometry();
+                const QPoint next = QCursor::pos() + delta;
+                QCursor::setPos(qBound(bounds.left(),next.x(),bounds.right()),
+                                qBound(bounds.top(),next.y(),bounds.bottom()));
+                if (m_drag != H_None) {
+                    const QPoint local = windowHandle()->mapFromGlobal(QPointF(QCursor::pos())).toPoint();
+                    QMouseEvent move(QEvent::MouseMove,local,QCursor::pos(),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+                    mouseMoveEvent(&move);
+                } else updateInspector();
+                return;
+            }
+            if (arrow && m_mode == Adjusting && m_drag == H_None && !m_sel.isEmpty()
+                && movementModifiers == Qt::NoModifier) {
+                cancelDetection();
+                m_sel.translate(delta);
+                m_sel.moveTo(qBound(0,m_sel.x(),width()-m_sel.width()),qBound(0,m_sel.y(),height()-m_sel.height()));
+                m_snapX = m_snapY = -1;
+                placeToolbar(); showToolBars(); updateTip(); update();
+                updateInspector();
+                return;
+            }
         }
         if ((e->modifiers() & Qt::ControlModifier)
             && !(e->modifiers() & (Qt::ShiftModifier | Qt::AltModifier | Qt::MetaModifier))) {
@@ -5110,6 +6700,9 @@ private:
     }
     bool eventFilter(QObject *obj, QEvent *ev) override
     {
+        if ((obj == m_tools || obj == m_toolOptions)
+            && (ev->type() == QEvent::Enter || ev->type() == QEvent::Leave))
+            updateInspector();
         if (obj == m_mosaicWidthLabel && ev->type() == QEvent::Wheel) {
             const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
             if (delta) tuneWidth(delta > 0 ? 1 : -1, mapFromGlobal(QCursor::pos()));
@@ -5345,14 +6938,18 @@ private:
         m_sizeTip->move(qBound(0, at.x() - m_sizeTip->width() / 2, width() - m_sizeTip->width()),
                         qMax(0, at.y() - m_sizeTip->height() - 16));
     }
-    void nudgeSelected(int key)                       // Arrows / WASD move the selection 1px.
+    static QPoint keyDelta(int key)
     {
-        if (m_selAnn < 0 || m_selAnn >= m_anns.size() || m_live || editorActive())
-            return;
-        const QPoint d = key == Qt::Key_Left || key == Qt::Key_A ? QPoint(-1, 0)
+        return key == Qt::Key_Left || key == Qt::Key_A ? QPoint(-1, 0)
             : key == Qt::Key_Right || key == Qt::Key_D ? QPoint(1, 0)
             : key == Qt::Key_Up || key == Qt::Key_W ? QPoint(0, -1)
             : key == Qt::Key_Down || key == Qt::Key_S ? QPoint(0, 1) : QPoint();
+    }
+    void nudgeSelected(int key)                       // Arrows / WASD move the selected annotation one step.
+    {
+        if (m_selAnn < 0 || m_selAnn >= m_anns.size() || m_live || editorActive())
+            return;
+        const QPoint d = keyDelta(key);
         if (d.isNull()) return;
         if (!m_nudging) {
             pushUndo();                               // Coalesce a key burst into one step.
@@ -5649,6 +7246,7 @@ private:
         syncToolButtons();
         updateToolOptions();
         updateAnnotationCursor(mapFromGlobal(QCursor::pos()));
+        updateInspector();
         update();
     }
     void selectTool(ATool tool)                      // Shared by toolbar toggles and keyboard.
@@ -5663,6 +7261,7 @@ private:
         syncToolButtons();
         updateToolOptions();
         updateAnnotationCursor(mapFromGlobal(QCursor::pos()));
+        updateInspector();
         update();
     }
     void syncToolButtons()                           // Rect and Ellipse share one button.
@@ -6557,16 +8156,19 @@ private:
             return;
         }
         updateTip();
+        updateInspector();
         update();
     }
 
     void updateInspector()
     {
-        if (m_drag != H_None && m_dragStarted) {      // The pixel inspector steps aside during drags.
-            m_inspector->hide();
-            return;
-        }
-        if (m_mode == Adjusting) {                    // A locked selection edits, not samples.
+        const QPoint local = mapFromGlobal(QCursor::pos());
+        if (!isVisible() || editorActive() || m_live || m_erasing || m_itemDrag != H_None
+            || m_drag == H_Move
+            || (m_mode == Adjusting && m_drag == H_None
+                && (m_atool != ATool::None || m_selAnn >= 0 || !m_sel.contains(local)))
+            || (m_tools->isVisible() && m_tools->geometry().contains(local))
+            || (m_toolOptions->isVisible() && m_toolOptions->geometry().contains(local))) {
             m_inspector->hide();
             return;
         }
@@ -6574,13 +8176,17 @@ private:
         if (GetCursorPos(&cursor)) {
             const QPoint pixel(cursor.x, cursor.y);
             for (const ScreenFrame &frame : m_frames) {
-                if (!m_inspector->setSample(frame, pixel))
-                    continue;
-                const QPoint local = mapFromGlobal(QCursor::pos());
                 const QRect bounds = localScreenRect(frame.logicalRect);
+                const QRect hole = !m_hover.isNull() ? m_hover : m_sel;
+                const qreal sx = qreal(frame.pixelRect.width()) / bounds.width();
+                const qreal sy = qreal(frame.pixelRect.height()) / bounds.height();
+                const QRectF selectionPixels((hole.x() - bounds.x()) * sx, (hole.y() - bounds.y()) * sy,
+                                             hole.width() * sx, hole.height() * sy);
+                if (!m_inspector->setSample(frame, pixel, hole.isEmpty() ? QRectF() : selectionPixels))
+                    continue;
                 m_inspector->move(inspectorPosition(local, m_inspector->size(), bounds));
                 m_inspector->show();
-                m_tools->raise();
+                m_inspector->raise();
                 m_sizeTip->raise();
                 return;
             }
@@ -6589,9 +8195,9 @@ private:
     }
     static QPoint inspectorPosition(const QPoint &cursor, const QSize &size, const QRect &bounds)
     {
-        int x = cursor.x() + 24, y = cursor.y() + 24;
-        if (x + size.width() > bounds.right() + 1) x = cursor.x() - size.width() - 24;
-        if (y + size.height() > bounds.bottom() + 1) y = cursor.y() - size.height() - 24;
+        int x = cursor.x() + 8, y = cursor.y() + 20;
+        if (x + size.width() > bounds.right() + 1) x = cursor.x() - size.width() - 8;
+        if (y + size.height() > bounds.bottom() + 1) y = cursor.y() - size.height() - 20;
         return QPoint(qBound(bounds.left(), x, qMax(bounds.left(), bounds.right() + 1 - size.width())),
                       qBound(bounds.top(), y, qMax(bounds.top(), bounds.bottom() + 1 - size.height())));
     }
@@ -6607,6 +8213,7 @@ private:
         m_toolOptions->hide();
         m_sizeTip->hide();
         setCursor(Qt::CrossCursor);
+        updateInspector();
         update();
     }
     QRect windowAt(const QPoint &p) const
@@ -6636,7 +8243,7 @@ private:
     }
     Handle hitHandle(const QPoint &p) const
     {
-        if (m_mode != Adjusting)
+        if (m_mode != Adjusting || m_sel.isEmpty())
             return H_None;
         const QVector<QRect> hs = handleRects(m_sel);
         for (int i = 0; i < hs.size(); ++i)
@@ -6644,6 +8251,10 @@ private:
                 return Handle(H_TL + i);
         if (m_sel.contains(p))
             return H_Move;
+        if (p.x() < m_sel.left()) return p.y() < m_sel.top() ? H_TL : p.y() > m_sel.bottom() ? H_BL : H_L;
+        if (p.x() > m_sel.right()) return p.y() < m_sel.top() ? H_TR : p.y() > m_sel.bottom() ? H_BR : H_R;
+        if (p.y() < m_sel.top()) return H_T;
+        if (p.y() > m_sel.bottom()) return H_B;
         return H_None;
     }
     static Qt::CursorShape cursorForHandle(Handle h)
@@ -6678,7 +8289,8 @@ private:
         }
         default: break;
         }
-        return r.normalized();
+        return QRect(QPoint(qMin(r.left(),r.right()),qMin(r.top(),r.bottom())),
+                     QPoint(qMax(r.left(),r.right()),qMax(r.top(),r.bottom())));
     }
     // Magnetic edges: snap selection edges to nearby screen and window anchors.
     enum { SnapThreshold = 8 };
@@ -6835,6 +8447,28 @@ private:
         return pix;
     }
 private slots:
+    void ocrCapture()
+    {
+        stopItemDrag();
+        commitTextEdit();
+        const QImage image = cropped().toImage();
+        if (image.isNull()) { showOutputError(QStringLiteral("识别失败，请先选择有效截图区域")); return; }
+        const QRect captureRect=globalScreenRect(m_sel.normalized());
+        cancelDetection();
+        if (m_colorDialog) m_colorDialog->close();
+        m_tools->hide(); m_toolOptions->hide(); m_inspector->hide();
+        hide();
+        auto *dialog = showOcr(image,this,captureRect);
+        m_ocrDialog=dialog;
+        connect(dialog,&QDialog::finished,this,[this](int result) {
+            if (result==QDialog::Accepted) {
+                show(); placeToolbar(); showToolBars(); activateWindow(); setFocus();
+                updateInspector();
+            } else {
+                QTimer::singleShot(0,this,&QWidget::close);
+            }
+        });
+    }
     void undoAnnotation()
     {
         stopItemDrag();
@@ -6925,6 +8559,7 @@ private slots:
 private:
     enum Mode { Selecting, Adjusting };
     QPixmap m_shot;
+    QPointer<OcrDialog> m_ocrDialog;
     mutable QImage m_mosaicFrame;
     QVector<ScreenFrame> m_frames;
     QVector<DetectedWindow> m_windowRects;          // Detected windows (logical, overlay-local) for click-select and snapping.
@@ -7101,6 +8736,21 @@ private:
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
+    if (app.arguments().contains(QStringLiteral("--test-ocr-languages")))
+        return OcrEngine::testLanguages(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-ocr-languages"))+1));
+    if (app.arguments().contains(QStringLiteral("--test-ocr")))
+        return CaptureOverlay::testOcr(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-ocr"))+1));
+    if (app.arguments().contains(QStringLiteral("--test-ocr-loader"))) {
+        auto &engine = OcrEngine::instance();
+        const QString root = app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-ocr-loader"))+1,
+                                                  QCoreApplication::applicationDirPath());
+        const QString missing = OcrEngine::assetError(root);
+        if (!missing.isEmpty()) { std::printf("UNAVAILABLE: %s\n", qPrintable(missing)); return 0; }
+        const QString error = engine.load(root);
+        if (!error.isEmpty()) { std::fprintf(stderr,"FAIL: %s\n",qPrintable(error)); return 1; }
+        std::printf("PASS: ORT %s / API %d / recognition dictionary %d entries\n",qPrintable(engine.version()),ORT_API_VERSION,engine.dictionarySize());
+        return 0;
+    }
     if (app.arguments().contains(QStringLiteral("--test-mosaic")))
         return CaptureOverlay::testMosaic(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-mosaic")) + 1));
     if (app.arguments().contains(QStringLiteral("--test-output"))) {
@@ -7120,6 +8770,8 @@ int main(int argc, char **argv)
         return PinWindow::testPlacement();
     if (app.arguments().contains(QStringLiteral("--test-color-picker")))
         return CaptureOverlay::testColorPicker(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-color-picker")) + 1));
+    if (app.arguments().contains(QStringLiteral("--test-selection")))
+        return CaptureOverlay::testSelection();
     if (app.arguments().contains(QStringLiteral("--test-window-detection")))
         return CaptureOverlay::testWindowDetection();
     if (app.arguments().contains(QStringLiteral("--test-text-annotation")))
@@ -7191,5 +8843,7 @@ int main(int argc, char **argv)
         QMessageBox::warning(nullptr, QStringLiteral("pinshot"),
                              QStringLiteral("注册 F1 热键失败（可能被其他截图工具占用）"));
 
-    return app.exec();
+    const int exitCode = app.exec();
+    QThreadPool::globalInstance()->waitForDone();
+    return exitCode;
 }
