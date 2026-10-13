@@ -1,0 +1,82 @@
+#pragma once
+
+#include <QImage>
+#include <QVector>
+#include <QPointF>
+#include <QSize>
+#include <QString>
+#include <QStringList>
+#include <QByteArray>
+#include <QtMath>
+#include <QPolygonF>
+#include <qt_windows.h>
+#include <array>
+#include <atomic>
+#include <memory>
+
+struct OrtApi;
+struct OrtEnv;
+struct OrtSession;
+struct OrtMemoryInfo;
+struct OrtAllocator;
+struct OrtStatus;
+
+// ---------- Offline text recognition and image/text comparison. ----------
+struct OcrLine {
+    QString text;
+    QPolygonF box;
+    float score = 0;
+};
+struct OcrResult {
+    QVector<OcrLine> lines;
+    QString error;
+    bool cancelled = false;
+    qint64 elapsed = 0;
+    QString text() const {
+        QStringList rows;
+        for (const OcrLine &line : lines) rows.append(line.text);
+        return rows.join(QLatin1Char('\n'));
+    }
+};
+using OcrCancel = std::shared_ptr<std::atomic_bool>;
+
+class OcrEngine
+{
+public:
+    static OcrEngine &instance();
+    ~OcrEngine();
+    std::atomic_bool busy{false};
+    static QString assetError(const QString &root);
+    QString load(const QString &root);
+    QString version() const;
+    int dictionarySize() const;
+    static void testAlgorithms();
+    static int testLanguages(const QString &previewPath);
+    static QSize detectionSize(const QSize &source);
+    OcrResult recognize(QImage image, const OcrCancel &cancel);
+    static OcrLine decode(const QVector<float> &data, int steps, const QStringList &characters);
+    static QVector<QPolygonF> textBoxes(const QVector<float> &prob, const QSize &size, const QSize &original,
+                                       const OcrCancel &cancel);
+private:
+    static QVector<QPolygonF> mergeLineBoxes(QVector<QPolygonF> boxes);
+    OcrEngine() = default;
+    OcrEngine(const OcrEngine &) = delete;
+    void checked(OrtStatus *status);
+    void reset();
+    void names(OrtSession *session, QByteArray &input, QByteArray &output);
+    QVector<float> run(OrtSession *session, const QByteArray &inputName, const QByteArray &outputName,
+                       QVector<float> data, const std::array<int64_t, 4> &dimensions, QVector<int64_t> &shape);
+    static QVector<float> normalized(const QImage &input, int width);
+    static QPolygonF minimumBox(QVector<QPointF> points);
+    static QImage lineImage(const QImage &image, const QPolygonF &box);
+    HMODULE m_dll = nullptr;
+    const OrtApi *m_api = nullptr;
+    OrtEnv *m_env = nullptr;
+    OrtSession *m_det = nullptr, *m_rec = nullptr;
+    OrtMemoryInfo *m_memory = nullptr;
+    OrtAllocator *m_allocator = nullptr;
+    QByteArray m_detInput, m_detOutput, m_recInput, m_recOutput;
+    QStringList m_characters;
+    QString m_version;
+    int m_recHeight = 48;
+};

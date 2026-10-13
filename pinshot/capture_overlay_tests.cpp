@@ -1,0 +1,331 @@
+#include "capture_overlay.h"
+#include <QClipboard>
+#include <QWindow>
+#include "output.h"
+#include "test_support.h"
+#include "widgets.h"
+#include "pin_window.h"
+#include "long_capture.h"
+#include "ocr_dialog.h"
+#include <QGuiApplication>
+#include <QObject>
+#include <QImage>
+#include <QPixmap>
+#include <QVector>
+#include <QPoint>
+#include <QPointF>
+#include <QRect>
+#include <QSize>
+#include <QString>
+#include <QColor>
+#include <QApplication>
+#include <QScreen>
+#include <QMouseEvent>
+#include <QKeyEvent>
+#include <QtMath>
+#include <QCursor>
+#include <QTemporaryDir>
+#include <QFileInfo>
+#include <qt_windows.h>
+#include <cstdio>
+
+int CaptureOverlay::testSelection()
+{
+    int failures = 0;
+    const auto check = [&failures](bool ok,const char *message) {
+        if (!ok) { ++failures; std::fprintf(stderr,"FAIL: %s\n",message); }
+    };
+    const QPoint savedCursor = QCursor::pos();
+    QVector<ScreenFrame> frames = freezeScreens();
+    for (ScreenFrame &frame:frames) frame.image.fill(QColor(160,180,200));
+    CaptureOverlay overlay(frames);
+    overlay.setAttribute(Qt::WA_DeleteOnClose,false);
+    overlay.raise(); overlay.activateWindow(); overlay.setFocus();
+    QApplication::processEvents();
+    const QPoint origin = overlay.localScreenRect(QGuiApplication::primaryScreen()->geometry()).topLeft();
+    const QRect base(origin+QPoint(233,173),QSize(171,113));
+    const auto mouse = [&overlay](QEvent::Type type,const QPoint &point,Qt::MouseButton button,Qt::MouseButtons buttons) {
+        const QPoint global = overlay.windowHandle()->mapToGlobal(QPointF(point)).toPoint();
+        QMouseEvent event(type,point,global,button,buttons,Qt::NoModifier);
+        QApplication::sendEvent(&overlay,&event);
+    };
+    const auto key = [&overlay](int code,Qt::KeyboardModifiers modifiers=Qt::NoModifier,bool repeat=false) {
+        QKeyEvent event(QEvent::KeyPress,code,modifiers,QString(),repeat);
+        QApplication::sendEvent(&overlay,&event);
+    };
+    Annotation ann;
+    ann.tool = ATool::Rect; ann.rect = QRect(base.center()-QPoint(12,12),QSize(24,24));
+    overlay.m_anns.append(ann); overlay.pushUndo();
+    const int undoCount = overlay.m_undoStack.size();
+    for (int y=-1;y<=1;++y) for (int x=-1;x<=1;++x) {
+        if (!x && !y) continue;
+        overlay.m_sel=base; overlay.m_mode=Adjusting; overlay.m_drag=H_None;
+        const QPoint outside(x<0 ? base.left()-28 : x>0 ? base.right()+24 : base.center().x(),
+                             y<0 ? base.top()-22 : y>0 ? base.bottom()+24 : base.center().y());
+        QRect expected=base;
+        if (x<0) expected.setLeft(outside.x());
+        if (x>0) expected.setRight(outside.x());
+        if (y<0) expected.setTop(outside.y());
+        if (y>0) expected.setBottom(outside.y());
+        mouse(QEvent::MouseButtonPress,outside,Qt::LeftButton,Qt::LeftButton);
+        check(overlay.m_sel==expected && overlay.m_mode==Adjusting && overlay.m_drag!=H_New
+                  && !overlay.m_tools->isVisible(),"every outside direction immediately extends the original selection on press");
+        check(overlay.m_anns.size()==1 && overlay.m_anns.first().rect==ann.rect
+                  && overlay.m_undoStack.size()==undoCount,"outside expansion preserves annotations and undo history");
+        mouse(QEvent::MouseButtonRelease,outside,Qt::LeftButton,Qt::NoButton);
+        check(overlay.m_sel==expected && overlay.m_drag==H_None && overlay.m_tools->isVisible(),
+              "outside release retains the expanded region and restores the toolbar");
+        overlay.m_sel=base;
+        mouse(QEvent::MouseButtonPress,outside,Qt::LeftButton,Qt::LeftButton);
+        const QPoint inside = base.center();
+        mouse(QEvent::MouseMove,inside,Qt::NoButton,Qt::LeftButton);
+        QRect smaller=base;
+        if (x<0) smaller.setLeft(inside.x());
+        if (x>0) smaller.setRight(inside.x());
+        if (y<0) smaller.setTop(inside.y());
+        if (y>0) smaller.setBottom(inside.y());
+        check(overlay.m_sel==smaller,"an outside press continues resizing against the original opposite edge or corner");
+        mouse(QEvent::MouseButtonRelease,inside,Qt::LeftButton,Qt::NoButton);
+    }
+    overlay.m_sel=base;
+    const QPoint outside(base.left()-28,base.center().y());
+    mouse(QEvent::MouseButtonPress,outside,Qt::LeftButton,Qt::LeftButton);
+    const QPoint across(base.right()+24,base.center().y());
+    mouse(QEvent::MouseMove,across,Qt::NoButton,Qt::LeftButton);
+    if (overlay.m_sel!=QRect(QPoint(base.right(),base.top()),QPoint(across.x(),base.bottom())))
+        std::fprintf(stderr,"CROSS: actual=(%d,%d %dx%d) fixed-right=%d pointer=%d\n",overlay.m_sel.x(),overlay.m_sel.y(),overlay.m_sel.width(),overlay.m_sel.height(),base.right(),across.x());
+    check(overlay.m_sel==QRect(QPoint(base.right(),base.top()),QPoint(across.x(),base.bottom())),
+          "resizing across the fixed edge normalizes rather than moving or restarting the capture");
+    mouse(QEvent::MouseButtonRelease,across,Qt::LeftButton,Qt::NoButton);
+    overlay.m_sel=base;
+    const QPoint moveStart=base.center()+QPoint(40,20);
+    mouse(QEvent::MouseButtonPress,moveStart,Qt::LeftButton,Qt::LeftButton);
+    mouse(QEvent::MouseMove,moveStart+QPoint(17,13),Qt::NoButton,Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease,moveStart+QPoint(17,13),Qt::LeftButton,Qt::NoButton);
+    check(overlay.m_sel==base.translated(17,13),"dragging the empty interior still moves the region without resizing");
+    overlay.m_sel=base; overlay.m_selAnn=-1;
+    for (int code:{Qt::Key_Left,Qt::Key_Up,Qt::Key_Right,Qt::Key_Down}) {
+        const QRect before=overlay.m_sel;
+        key(code);
+        check(overlay.m_sel==before.translated(keyDelta(code)),"ordinary arrows translate the region by exactly one coordinate without snapping");
+        const QRect once=overlay.m_sel;
+        key(code,Qt::NoModifier,true);
+        check(overlay.m_sel==once.translated(keyDelta(code)),"holding an arrow repeats region movement");
+    }
+    overlay.m_sel=QRect(QPoint(),QSize(20,20));
+    key(Qt::Key_Left); key(Qt::Key_Up);
+    check(overlay.m_sel==QRect(0,0,20,20),"region movement clamps at the virtual desktop origin");
+    overlay.m_sel=QRect(overlay.width()-20,overlay.height()-20,20,20);
+    const QRect lowerEdge=overlay.m_sel;
+    key(Qt::Key_Right); key(Qt::Key_Down);
+    check(overlay.m_sel==lowerEdge,"region movement clamps at the virtual desktop end");
+    overlay.m_sel=base;
+    key(Qt::Key_Left,Qt::KeypadModifier);
+    check(overlay.m_sel==base.translated(-1,0),"numeric-keypad arrows retain the same one-step movement semantics");
+    overlay.m_sel=base;
+    QCursor::setPos(overlay.windowHandle()->mapToGlobal(QPointF(base.center())).toPoint());
+    QApplication::processEvents();
+    for (int code:{Qt::Key_W,Qt::Key_A,Qt::Key_S,Qt::Key_D}) {
+        const QPoint before=QCursor::pos();
+        key(code);
+        check(QCursor::pos()==before+keyDelta(code) && overlay.m_sel==base && overlay.m_atool==ATool::None,
+              "WASD moves the actual cursor one coordinate and never arms an annotation tool or changes the idle region");
+    }
+    const QPoint beforeRepeat=QCursor::pos();
+    key(Qt::Key_D,Qt::NoModifier,true);
+    check(QCursor::pos()==beforeRepeat+QPoint(1,0),"held WASD repeats cursor movement");
+    for (const QScreen *screen:QGuiApplication::screens()) {
+        QCursor::setPos(screen->geometry().center());
+        QApplication::processEvents();
+        overlay.m_sel=base; overlay.m_mode=Adjusting;
+        const QRect current=overlay.localScreenRect(screen->geometry());
+        key(Qt::Key_A,Qt::ControlModifier);
+        check(overlay.m_sel==current && overlay.m_hover.isEmpty() && !overlay.m_queryPending,
+              "Ctrl+A selects the cursor screen including its taskbar without re-detecting windows");
+        key(Qt::Key_A,Qt::ControlModifier);
+        check(overlay.m_sel==overlay.rect(),"a second Ctrl+A selects the entire virtual desktop");
+        key(Qt::Key_A,Qt::ControlModifier);
+        check(overlay.m_sel==current,"Ctrl+A can return from the virtual desktop to the cursor screen");
+        overlay.m_mode=Selecting; overlay.m_sel={};
+        key(Qt::Key_A,Qt::ControlModifier);
+        check(overlay.m_sel==current && overlay.m_mode==Adjusting,"Ctrl+A works before any manual selection exists");
+    }
+    check(overlay.m_anns.size()==1 && overlay.m_anns.first().rect==ann.rect
+              && overlay.m_undoStack.size()==undoCount,"keyboard region changes preserve the old annotation and its undo stack");
+    overlay.m_sel=base; overlay.m_selAnn=0;
+    key(Qt::Key_Left);
+    check(overlay.m_sel==base && overlay.m_anns.first().rect==ann.rect.translated(-1,0),
+          "a selected annotation retains priority over region nudging");
+    overlay.m_anns.clear(); overlay.m_selAnn=-1;
+    overlay.beginTextEdit(base.center());
+    overlay.m_editor->setPlainText(QStringLiteral("校对文字"));
+    key(Qt::Key_A,Qt::ControlModifier);
+    check(overlay.m_sel==base && overlay.editorActive() && overlay.m_editor->toPlainText()==QStringLiteral("校对文字"),
+          "text editing cannot turn Ctrl+A into a fullscreen selection");
+    overlay.m_editor->setPlainText(QString()); overlay.commitTextEdit(); overlay.setToolNone();
+    overlay.m_sel=base;
+    key(Qt::Key_Right);
+    const qreal scale=overlay.m_shot.devicePixelRatio();
+    QPixmap expected=overlay.m_shot.copy(QRect(qRound(overlay.m_sel.x()*scale),qRound(overlay.m_sel.y()*scale),
+                                              qRound(overlay.m_sel.width()*scale),qRound(overlay.m_sel.height()*scale)));
+    expected.setDevicePixelRatio(1);
+    check(overlay.cropped().toImage()==expected.toImage(),"output crops the adjusted region at the frozen image's native pixel scale");
+    overlay.resetSelection();
+    check(overlay.m_sel.isEmpty() && overlay.m_mode==Selecting,"clearing the selection still permits a new capture");
+    overlay.close();
+    QCursor::setPos(savedCursor);
+    if (!failures) std::printf("PASS: eight-direction outside adjustment, cursor/region keys, screen toggle and crop output\n");
+    return failures ? 1 : 0;
+}
+
+int CaptureOverlay::testOutput()
+{
+    int failures = 0;
+    const auto check = [&](bool ok, const char *message) {
+        if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); ++failures; }
+    };
+    const QRect screen = QGuiApplication::primaryScreen()->geometry();
+    QImage image(320, 240, QImage::Format_RGB32);
+    image.fill(QColor("#243648"));
+    CaptureOverlay overlay({ScreenFrame{QRect(screen.topLeft(), image.size()), QRect(0, 0, 320, 240), image}});
+    overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    overlay.m_mode = Adjusting;
+    overlay.m_sel = QRect(screen.topLeft() - overlay.pos() + QPoint(40, 40), QSize(200, 120));
+    overlay.selectTool(ATool::Text);
+    overlay.beginTextEdit(overlay.m_sel.topLeft() + QPoint(20, 20));
+    overlay.m_editor->setPlainText(QStringLiteral("Retain this annotation"));
+    overlay.commitTextEdit();
+    const QImage expected = overlay.cropped().toImage();
+    {
+        ClipboardBlocker blocker;
+        check(blocker.locked(), "ordinary-copy contention fixture acquired the lock");
+        overlay.copyCapture();
+        check(overlay.isVisible() && overlay.m_anns.size() == 1
+                  && overlay.cropped().toImage() == expected && overlay.m_sizeTip->isVisible(),
+              "failed ordinary copy keeps the selection, annotation, and failure hint");
+    }
+    QTemporaryDir directory;
+    check(directory.isValid(), "output regression has an isolated temporary directory");
+    const QString protectedPath = directory.path() + QStringLiteral("/protected.png");
+    QImage original(24, 18, QImage::Format_RGB32);
+    original.fill(Qt::magenta);
+    check(original.save(protectedPath), "create an existing image for replacement-failure regression");
+    HANDLE heldFile = CreateFileW(reinterpret_cast<LPCWSTR>(protectedPath.utf16()), GENERIC_READ,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    check(heldFile != INVALID_HANDLE_VALUE, "hold the destination without delete-sharing");
+    if (heldFile != INVALID_HANDLE_VALUE) {
+        check(!overlay.saveCaptureTo(protectedPath) && overlay.isVisible() && QImage(protectedPath) == original,
+              "failed replacement preserves both the original file and the annotated capture");
+        CloseHandle(heldFile);
+        check(overlay.saveCaptureTo(protectedPath) && QImage(protectedPath) == expected,
+              "retrying the same destination succeeds after the replacement lock is released");
+    }
+    overlay.show();
+    for (int action : {Qt::Key_Delete, Qt::Key_Z, Qt::Key_Y, Qt::Key_Escape}) {
+        Annotation ink;
+        ink.tool = ATool::Rect;
+        ink.color = Qt::red;
+        ink.fill = true;
+        ink.rect = QRect(overlay.m_sel.topLeft() + QPoint(20, 20), QSize(80, 50));
+        overlay.m_anns = {ink};
+        overlay.m_selAnn = 0;
+        overlay.m_atool = ATool::None;
+        overlay.m_itemDrag = H_None;
+        overlay.m_dragStarted = false;
+        overlay.m_undoStack = {overlay.m_anns};
+        overlay.m_redoStack = {overlay.m_anns};
+        overlay.placeToolbar();
+        overlay.showToolBars();
+        const QPoint pressPoint(ink.rect.center().x(), ink.rect.top());
+        QMouseEvent press(QEvent::MouseButtonPress, pressPoint, overlay.mapToGlobal(pressPoint),
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &press);
+        check(overlay.m_itemDrag == H_Move, "pressing an existing annotation enters object drag");
+        if (action != Qt::Key_Y) {
+            const QPoint next = pressPoint + QPoint(20, 10);
+            QMouseEvent drag(QEvent::MouseMove, next, overlay.mapToGlobal(next),
+                             Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(&overlay, &drag);
+            check(overlay.m_dragStarted && overlay.m_tools->isVisible(), "active drag keeps selected-object options available before interruption");
+        }
+        QKeyEvent interrupt(QEvent::KeyPress, action,
+            action == Qt::Key_Z || action == Qt::Key_Y ? Qt::ControlModifier : Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &interrupt);
+        check(overlay.m_itemDrag == H_None && !overlay.m_dragStarted,
+              "keyboard changes to selection or annotations terminate an active item drag");
+        if (overlay.m_itemDrag == H_None) {
+            const auto before = overlay.m_anns;
+            QMouseEvent move(QEvent::MouseMove, overlay.m_sel.center(), overlay.mapToGlobal(overlay.m_sel.center()),
+                             Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(&overlay, &move);
+            check(overlay.m_anns.size() == before.size(), "mouse movement after interrupted drag is safe");
+            QMouseEvent release(QEvent::MouseButtonRelease, overlay.m_sel.center(), overlay.mapToGlobal(overlay.m_sel.center()),
+                                Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(&overlay, &release);
+            check(overlay.m_tools->isVisible(), "interrupted drag restores the toolbar and safely accepts release");
+        }
+    }
+    overlay.m_itemDrag = H_None;
+    overlay.m_dragStarted = false;
+    overlay.m_itemDrag = H_Move;
+    overlay.m_dragStarted = true;
+    overlay.selectTool(ATool::Rect);
+    check(overlay.m_itemDrag == H_None && !overlay.m_dragStarted,
+          "switching tools terminates an active object drag");
+    overlay.m_anns.clear();
+    overlay.m_undoStack.clear();
+    overlay.m_redoStack.clear();
+    overlay.m_selAnn = -1;
+    overlay.selectTool(ATool::Text);
+    overlay.beginTextEdit(overlay.m_sel.topLeft() + QPoint(20, 20));
+    overlay.m_editor->setPlainText(QStringLiteral("Retain this annotation"));
+    overlay.commitTextEdit();
+    const QRect validSelection = overlay.m_sel;
+    overlay.m_sel = {};
+    check(overlay.cropped().isNull(), "empty selection cannot export the whole desktop");
+    const QString emptyPath = directory.path() + QStringLiteral("/empty.png");
+    check(!overlay.saveCaptureTo(emptyPath) && !QFileInfo::exists(emptyPath),
+          "saving an empty selection cannot write a desktop image");
+    overlay.show();
+    bool emittedEmpty = false;
+    const auto connection = QObject::connect(&overlay, &CaptureOverlay::grabbed, &overlay,
+        [&](const QPixmap &, const QRect &) { emittedEmpty = true; });
+    overlay.pinCapture();
+    check(!emittedEmpty && overlay.isVisible(), "empty pin export preserves the capture without creating a pin");
+    QObject::disconnect(connection);
+    overlay.show();
+    overlay.m_sel = validSelection;
+    overlay.m_sizeTip->hide();
+    overlay.m_inspector->setSample(overlay.m_frames.first(), overlay.m_frames.first().pixelRect.center());
+    overlay.m_inspector->show();
+    QKeyEvent copyColor(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier);
+    {
+        ClipboardBlocker blocker;
+        check(blocker.locked(), "color-copy contention fixture acquired the lock");
+        const DWORD sequence = GetClipboardSequenceNumber();
+        QApplication::sendEvent(&overlay, &copyColor);
+        check(overlay.isVisible() && overlay.m_sizeTip->isVisible() && GetClipboardSequenceNumber() == sequence,
+              "failed color copy provides feedback and preserves the clipboard and capture");
+    }
+    QApplication::sendEvent(&overlay, &copyColor);
+    check(QGuiApplication::clipboard()->text() == overlay.m_inspector->colorText() && !overlay.m_sizeTip->isVisible(),
+          "color copy succeeds after clipboard contention ends");
+    overlay.m_inspector->hide();
+    check(!overlay.saveCaptureTo(directory.path() + QStringLiteral("/missing/capture.png"))
+              && overlay.isVisible() && overlay.cropped().toImage() == expected && overlay.m_anns.size() == 1,
+          "failed image save keeps the same annotated capture available for retry");
+    const QString path = directory.path() + QStringLiteral("/capture.png");
+    check(overlay.saveCaptureTo(path) && !overlay.isVisible() && QImage(path) == expected,
+          "successful save closes the capture only after every output pixel was written");
+    overlay.show();
+    overlay.copyCapture();
+    const QImage copied = QGuiApplication::clipboard()->image();
+    if (copied != expected || overlay.isVisible())
+        std::fprintf(stderr, "ordinary copy visible=%d expected=%dx%d format=%d actual=%dx%d format=%d owns=%d\n",
+                     int(overlay.isVisible()), expected.width(), expected.height(), int(expected.format()),
+                     copied.width(), copied.height(), int(copied.format()), int(QGuiApplication::clipboard()->ownsClipboard()));
+    check(!overlay.isVisible() && QGuiApplication::clipboard()->image() == expected,
+          "ordinary copy succeeds after contention ends and retains the original pixels");
+    if (!failures) std::puts("PASS: failed output preserves captures and annotations; save/copy retries succeed");
+    return failures ? 1 : 0;
+}
