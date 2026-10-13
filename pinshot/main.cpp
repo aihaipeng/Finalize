@@ -67,6 +67,7 @@
 #include <imm.h>
 #include <oleacc.h>
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -2132,6 +2133,7 @@ public:
 
         // The overlay paints matching solid backgrounds for both toolbar containers.
         m_tools = new QWidget(this);
+        m_tools->setCursor(Qt::ArrowCursor);
         m_tools->setStyleSheet(
             "QToolButton{color:#fff;background:transparent;border:none;border-radius:3px;padding:4px;}"
             "QToolButton:hover,QToolButton:checked{background:rgba(255,255,255,38);}");
@@ -2181,7 +2183,6 @@ public:
             const ATool tool = t.tool;
             connect(button, &QToolButton::clicked, this, [this, tool] {
                 selectTool(tool);
-                setCursor(Qt::CrossCursor);
                 update();
             });
             m_toolBtn[int(tool)] = button;
@@ -2193,6 +2194,7 @@ public:
         for (QWidget *button : m_toolButtons) button->setFocusPolicy(Qt::NoFocus);
 
         m_toolOptions = new QWidget(this);
+        m_toolOptions->setCursor(Qt::ArrowCursor);
         m_toolOptions->setStyleSheet(QStringLiteral(
             "QToolButton{color:#fff;background:transparent;border:none;border-radius:3px;padding:3px;}"
             "QToolButton:hover,QToolButton:checked{background:rgba(255,255,255,38);}"
@@ -2510,6 +2512,7 @@ public:
               "numbers renumber after a deletion");
         const QImage beforeMosaic = overlay.cropped().toImage();
         overlay.selectTool(ATool::Mosaic);
+        overlay.selectMosaicMode(false);
         mouse(QEvent::MouseButtonPress, annOrigin + QPoint(50, 10));
         mouse(QEvent::MouseMove, annOrigin + QPoint(100, 60));
         mouse(QEvent::MouseButtonRelease, annOrigin + QPoint(100, 60));
@@ -2642,9 +2645,16 @@ public:
             overlay.selectTool(tool);
             overlay.m_toolBtn[int(tool)]->click();
             overlay.m_toolBtn[int(tool)]->click();
-            check(overlay.m_atool == tool && overlay.m_toolOptions->isVisible() && overlay.m_sizeInput,
+            check(overlay.m_atool == tool && overlay.m_toolOptions->isVisible()
+                      && (tool == ATool::Mosaic ? overlay.m_mosaicStrengthLabel != nullptr : overlay.m_sizeInput != nullptr),
                   "repeated toolbar clicks keep the matching options and numeric control visible");
             const bool textSize = tool == ATool::Text || tool == ATool::Number;
+            if (tool == ATool::Mosaic) {
+                check(overlay.m_mosaicStrengthLabel->text().toInt() == overlay.mosaicStrength()
+                          && !overlay.m_sizeInput && (overlay.mosaicBrush() ? overlay.m_mosaicWidthLabel
+                              && overlay.m_mosaicWidthLabel->text().toInt() == overlay.toolSize() : !overlay.m_mosaicWidthLabel),
+                      "mosaic exposes independent mode-specific width and strength controls");
+            } else {
             check(overlay.m_sizeInput->width() == (textSize ? 62 : 40)
                       && overlay.m_sizeInput->lineEdit()->alignment() == Qt::AlignCenter,
                   "numeric controls use a compact fixed width with centered values");
@@ -2654,6 +2664,7 @@ public:
                   "compact numeric controls still fit the complete supported values");
             check(overlay.m_toolOptions->findChildren<QLabel *>(QString(), Qt::FindDirectChildrenOnly).isEmpty(),
                   "option strips contain no visible thickness labels or wheel instructions");
+            }
             for (QWidget *bar : {overlay.m_tools, overlay.m_toolOptions})
                 for (QToolButton *button : bar->findChildren<QToolButton *>())
                     check(button->text().isEmpty(), "toolbar actions render icons or swatches rather than text");
@@ -2809,6 +2820,40 @@ public:
         check(mosaicTiles(kernelSource, 4, 7) == mosaicTiles(kernelSource, 4, 7)
                   && mosaicTiles(kernelSource, 4, 7) != mosaicTiles(kernelSource, 4, 9),
               "seeded mosaic sampling is repeatable and distinct for different seeds");
+        const int multipliers[] = {512,512,456,512,328,456,335,512,405,328,271,456,388,
+                                   335,292,512,454,405,364,328,298,271,496,456,420};
+        const int shifts[] = {9,11,12,13,13,14,14,15,15,15,15,16,16,16,16,17,17,17,
+                             17,17,17,17,18,18,18};
+        QImage blurSource(7, 5, QImage::Format_ARGB32);
+        for (int y = 0; y < blurSource.height(); ++y)
+            for (int x = 0; x < blurSource.width(); ++x)
+                blurSource.setPixel(x, y, qRgba((x * 91 + y * 31) % 256, (y * 57 + x * 11) % 256,
+                                              (x * 41 + y * 23) % 256, 60 + (x + y) * 17));
+        for (int radius = 3; radius <= 24; ++radius) {
+            QImage expected = blurSource;
+            for (bool vertical : {false, true}) {
+                const QImage input = expected;
+                for (int y = 0; y < input.height(); ++y)
+                    for (int x = 0; x < input.width(); ++x) {
+                        std::array<int, 4> sum{};
+                        for (int i = -radius; i <= radius; ++i) {
+                            const QRgb color = input.pixel(qBound(0, x + (vertical ? 0 : i), input.width() - 1),
+                                                           qBound(0, y + (vertical ? i : 0), input.height() - 1));
+                            const int weight = radius + 1 - qAbs(i);
+                            sum[0] += qRed(color) * weight; sum[1] += qGreen(color) * weight;
+                            sum[2] += qBlue(color) * weight; sum[3] += qAlpha(color) * weight;
+                        }
+                        expected.setPixel(x, y, qRgba((sum[0] * multipliers[radius]) >> shifts[radius],
+                            (sum[1] * multipliers[radius]) >> shifts[radius],
+                            (sum[2] * multipliers[radius]) >> shifts[radius],
+                            (sum[3] * multipliers[radius]) >> shifts[radius]));
+                    }
+            }
+            check(mosaicBlurred(blurSource, radius) == expected,
+                  "stack blur matches two-pass integer RGBA weights, table normalization and replicated edges");
+        }
+        check(mosaicBlurred(QImage(), 6).isNull() && mosaicBlurred(blurSource, 25).isNull(),
+              "blur rejects missing pixels and unsupported radii");
         for (qreal dpr : {1.0, 1.5, 2.0}) {
             const QRect screen = QGuiApplication::primaryScreen()->geometry();
             const QPoint origin = screen.topLeft() - QGuiApplication::primaryScreen()->virtualGeometry().topLeft();
@@ -2838,25 +2883,72 @@ public:
                 QApplication::sendEvent(target, &event);
             };
             auto mode = [&overlay, check](bool brush) {
-                auto *button = qobject_cast<QToolButton *>(overlay.m_toolOptions->layout()->itemAt(brush ? 1 : 0)->widget());
+                auto *button = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicRectangle"));
                 check(button && !button->toolTip().isEmpty(), "mosaic modes have named icon buttons");
-                button->click();
+                if (overlay.mosaicBrush() != brush) button->click();
             };
             const QImage original = overlay.cropped().toImage();
             overlay.m_toolBtn[int(ATool::Mosaic)]->click();
+            check(overlay.mosaicBrush() && overlay.toolSize() == 14 && overlay.mosaicStrength() == 6,
+                  "mosaic starts as a brush with width 14 and strength 6");
+            check(!overlay.m_sizeInput && overlay.m_mosaicWidthLabel
+                      && !overlay.m_mosaicWidthLabel->textInteractionFlags()
+                      && overlay.m_toolOptions->findChildren<QLineEdit *>().isEmpty()
+                      && overlay.m_toolOptions->findChildren<QComboBox *>().isEmpty(),
+                  "mosaic brush width is a read-only counter, not a text input or dropdown");
+            QKeyEvent typeWidth(QEvent::KeyPress, Qt::Key_9, Qt::NoModifier, QStringLiteral("9"));
+            QApplication::sendEvent(overlay.m_mosaicWidthLabel, &typeWidth);
+            check(overlay.toolSize() == 14 && overlay.m_mosaicWidthLabel->text() == QStringLiteral("14"),
+                  "typing cannot edit the brush-width counter");
+            const QPoint cursorPoint = origin + QPoint(280, 200);
+            overlay.updateAnnotationCursor(cursorPoint);
+            const QImage initialCursor = overlay.cursor().pixmap().toImage();
+            if (!previewPath.isEmpty() && dpr == 1)
+                check(initialCursor.save(previewPath + QStringLiteral(".cursor.png")), "save circular brush cursor preview");
+            check(!initialCursor.isNull() && initialCursor.pixelColor(0, 0).alpha() == 0
+                      && initialCursor.pixelColor(initialCursor.width() / 2, initialCursor.height() / 2) == QColor(Qt::white),
+                  "brush cursor is a centered solid dot with transparent corners");
+            const auto scrollBrush = [&](int delta) {
+                QWheelEvent event(cursorPoint, overlay.mapToGlobal(cursorPoint), QPoint(), QPoint(0, delta),
+                                  Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false);
+                QApplication::sendEvent(&overlay, &event);
+            };
+            scrollBrush(120); scrollBrush(120);
+            check(overlay.toolSize() == 16 && overlay.m_mosaicWidthLabel->text() == QStringLiteral("16")
+                      && overlay.cursor().pixmap().width() > initialCursor.width() && overlay.mosaicStrength() == 6,
+                  "canvas wheel grows the circular cursor and its read-only width count, not strength");
+            scrollBrush(-120); scrollBrush(-120);
+            check(overlay.cursor().pixmap().toImage() == initialCursor && overlay.toolSize() == 14,
+                  "scrolling back restores the original brush cursor and count");
+            for (int width : {4, 14, 50}) {
+                const QPixmap cursor = mosaicBrushCursor(width, dpr).pixmap();
+                check(cursor.width() == qRound((qCeil(width) | 1) * dpr)
+                          && cursor.devicePixelRatio() == dpr,
+                      "circle cursor scales its native pixels with DPR while keeping logical brush size");
+                const QImage dot = cursor.toImage();
+                for (int y = 0; y < dot.height(); ++y)
+                    for (int x = 0; x < dot.width(); ++x) {
+                        const QColor color = dot.pixelColor(x, y);
+                        if (color.alpha())
+                            check(color.red() == 255 && color.green() == 255 && color.blue() == 255,
+                                  "solid brush dots contain no contrasting outline pixels");
+                    }
+            }
+            mode(false);
             check(overlay.m_toolOptions->isVisible() && overlay.m_mosaicSlider && !overlay.mosaicBrush()
                       && overlay.m_mosaicSlider->minimum() == 3 && overlay.m_mosaicSlider->maximum() == 24,
                   "mosaic opens rectangle and brush modes with a 3-24 strength slider");
             wheel(&overlay, QPoint(0, 120));
             check(overlay.mosaicStrength() == 7 && overlay.m_mosaicSlider->value() == 7
-                      && overlay.m_sizeInput->currentText().toInt() == 7 && overlay.m_mosaicWidth == 15,
+                      && !overlay.m_sizeInput && overlay.m_mosaicStrengthLabel->text().toInt() == 7
+                      && overlay.m_mosaicWidth == 14,
                   "rectangle wheel changes strength, slider and number without changing brush width");
-            wheel(overlay.m_sizeInput->lineEdit(), QPoint(0, -120));
+            wheel(overlay.m_mosaicStrengthLabel, QPoint(0, -120));
             check(overlay.mosaicStrength() == 6 && overlay.m_mosaicSlider->value() == 6,
-                  "rectangle numeric-field wheel shares strength synchronization");
+                  "rectangle strength-label wheel shares strength synchronization");
             overlay.setToolSize(99);
             wheel(&overlay, QPoint(0, 120));
-            check(overlay.mosaicStrength() == 24 && overlay.m_sizeInput->currentText().toInt() == 24,
+            check(overlay.mosaicStrength() == 24 && overlay.m_mosaicStrengthLabel->text().toInt() == 24,
                   "rectangle strength stays at its upper limit");
             overlay.setToolSize(0);
             wheel(&overlay, QPoint(0, -120));
@@ -2871,15 +2963,25 @@ public:
                 QApplication::sendEvent(slider, &drag);
             }
             check(overlay.mosaicStrength() > 3 && overlay.mosaicStrength() == slider->value()
-                      && overlay.m_sizeInput->currentText().toInt() == slider->value(),
+                      && overlay.m_mosaicStrengthLabel->text().toInt() == slider->value(),
                   "mouse dragging the actual slider updates strength and its numeric control");
             overlay.m_mosaicSlider->setValue(10);
             mouse(QEvent::MouseButtonPress, QPoint(80, 80));
             mouse(QEvent::MouseMove, QPoint(200, 160));
+            const QRect liveView = overlay.m_ann.rect.adjusted(-8, -8, 8, 8);
+            const QImage liveBorder = overlay.grab(liveView).toImage();
+            if (!previewPath.isEmpty() && dpr == 1)
+                check(liveBorder.save(previewPath + QStringLiteral(".live-border.png")), "save live mosaic border preview");
             mouse(QEvent::MouseButtonRelease, QPoint(200, 160));
             check(overlay.m_anns.size() == 1 && !overlay.m_anns.first().mosaicBrush
                       && overlay.m_anns.first().mosaicStrength == 10 && overlay.cropped().toImage() != original,
                   "rectangle mosaic commits its independent strength and changes output pixels");
+            const int liveSelection = overlay.m_selAnn;
+            overlay.m_selAnn = -1;
+            const QImage inactiveBorder = overlay.grab(liveView).toImage();
+            overlay.m_selAnn = liveSelection;
+            check(liveBorder != inactiveBorder && overlay.grab(liveView).toImage() != inactiveBorder,
+                  "both drawing and selected states show mosaic boundaries; inactive regions show none");
             const QImage rectangle = overlay.cropped().toImage();
             const QRect nativeRectangle(qRound(40 * dpr), qRound(40 * dpr), qCeil(121 * dpr), qCeil(81 * dpr));
             for (int y = 0; y < rectangle.height(); ++y)
@@ -2901,23 +3003,35 @@ public:
             overlay.redoAnnotation();
             check(overlay.m_anns.first().mosaicStrength == 14, "redo restores the final dragged strength");
             mode(true);
-            check(overlay.mosaicBrush() && overlay.toolSize() == 15 && overlay.m_mosaicSlider->value() == 14,
+            check(overlay.toolSize() == 14, "rectangle strength changes preserve the default brush width");
+            overlay.setToolSize(15);
+            check(overlay.mosaicBrush() && overlay.toolSize() == 15 && overlay.m_mosaicSlider->value() == 14
+                      && overlay.m_mosaicWidthLabel->text().toInt() == 15
+                      && overlay.m_mosaicStrengthLabel->text().toInt() == 14
+                      && overlay.m_mosaicStrengthLabel->x() > overlay.m_mosaicSlider->x(),
                   "brush mode keeps separate remembered width and strength");
             wheel(&overlay, QPoint(0, 120));
+            wheel(overlay.m_mosaicWidthLabel, QPoint(0, 120));
             wheel(overlay.m_mosaicSlider, QPoint(0, 120));
-            check(overlay.toolSize() == 17 && overlay.m_sizeInput->currentText().toInt() == 17
-                      && overlay.m_mosaicSlider->value() == 14,
-                  "brush wheel changes thickness on canvas or slider, not strength");
-            wheel(overlay.m_sizeInput->lineEdit(), QPoint(120, 0));
+            check(overlay.toolSize() == 17 && overlay.m_mosaicWidthLabel->text().toInt() == 17
+                      && overlay.m_mosaicSlider->value() == 15 && overlay.m_mosaicStrengthLabel->text().toInt() == 15,
+                  "canvas and width-field wheels change width; strength-slider wheel changes only strength");
+            wheel(overlay.m_mosaicStrengthLabel, QPoint(0, -120));
+            check(overlay.toolSize() == 17 && overlay.m_mosaicWidthLabel->text().toInt() == 17
+                      && overlay.m_mosaicStrengthLabel->text().toInt() == 14,
+                  "strength-label wheel does not overwrite the brush-width number");
+            wheel(overlay.m_mosaicWidthLabel, QPoint(120, 0));
             wheel(overlay.m_mosaicSlider, QPoint(120, 0));
             check(overlay.toolSize() == 17 && overlay.mosaicStrength() == 14,
                   "horizontal wheel input changes neither mosaic parameter");
             overlay.m_mosaicSlider->setValue(8);
-            check(overlay.m_anns.first().mosaicStrength == 14 && overlay.toolSize() == 17,
+            check(overlay.m_anns.first().mosaicStrength == 14 && overlay.toolSize() == 17
+                      && overlay.m_mosaicWidthLabel->text().toInt() == 17
+                      && overlay.m_mosaicStrengthLabel->text().toInt() == 8,
                   "switching modes and tuning a new brush leaves the older rectangle unchanged");
             const QImage beforeBrush = overlay.cropped().toImage();
             mouse(QEvent::MouseButtonPress, QPoint(280, 100));
-            wheel(overlay.m_sizeInput, QPoint(0, 120));
+            wheel(overlay.m_mosaicWidthLabel, QPoint(0, 120));
             overlay.m_mosaicSlider->setValue(9);
             mouse(QEvent::MouseMove, QPoint(360, 190));
             mouse(QEvent::MouseMove, QPoint(460, 100));
@@ -2975,7 +3089,7 @@ public:
                   "brush width stays at its independent minimum without changing strength");
             overlay.setToolSize(18);
             wheel(&overlay, QPoint(0, -120));
-            check(overlay.toolSize() == 17 && overlay.m_sizeInput->currentText().toInt() == 17,
+            check(overlay.toolSize() == 17 && overlay.m_mosaicWidthLabel->text().toInt() == 17,
                   "downward brush wheel reduces width and updates its number");
             wheel(&overlay, QPoint(0, 120));
             overlay.m_mosaicSlider->setValue(12);
@@ -2992,6 +3106,114 @@ public:
             mouse(QEvent::MouseMove, QPoint(580, 340));
             mouse(QEvent::MouseButtonRelease, QPoint(580, 340));
             check(overlay.cropped().size() == original.size(), "brushes crossing the selection do not expand output");
+            const int oldWidth = overlay.m_mosaicWidth;
+            overlay.m_mosaicPreview->click();
+            check(overlay.mosaicBlur() && overlay.mosaicStrength() == 6 && overlay.toolSize() == oldWidth,
+                  "effect preview switches to the independent default blur strength without changing width");
+            overlay.m_mosaicSlider->setValue(11);
+            overlay.m_mosaicPreview->click();
+            check(!overlay.mosaicBlur() && overlay.mosaicStrength() == 12 && overlay.toolSize() == oldWidth,
+                  "switching back restores pixelation strength independently of blur and brush width");
+            overlay.m_mosaicPreview->click();
+            check(overlay.mosaicStrength() == 11, "switching again remembers blur strength");
+            overlay.m_mosaicPreview->click();
+            overlay.m_anns.clear();
+            overlay.m_selAnn = -1;
+            const QImage empty = overlay.cropped().toImage();
+            auto *ellipseButton = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicEllipse"));
+            ellipseButton->click();
+            mouse(QEvent::MouseButtonPress, QPoint(80, 80));
+            mouse(QEvent::MouseMove, QPoint(200, 160));
+            mouse(QEvent::MouseButtonRelease, QPoint(200, 160));
+            const QImage ellipseOutput = overlay.cropped().toImage();
+            check(overlay.m_anns.size() == 1 && overlay.m_anns[0].mosaicEllipse
+                      && !overlay.m_anns[0].mosaicBrush && ellipseOutput != empty
+                      && ellipseOutput.pixel(qRound(40 * dpr), qRound(40 * dpr))
+                         == empty.pixel(qRound(40 * dpr), qRound(40 * dpr))
+                      && !annotationHit(overlay.m_anns[0], origin + QPoint(80, 80)),
+                  "ellipse regions redact their interior while preserving bounding corners and curved hit tests");
+            overlay.m_mosaicPreview->click();
+            const QImage blurred = overlay.cropped().toImage();
+            check(overlay.m_anns[0].mosaicBlur && blurred != ellipseOutput,
+                  "selected ellipse switches effect and renders blur through the same mask");
+            overlay.undoAnnotation();
+            check(!overlay.m_anns[0].mosaicBlur && overlay.cropped().toImage() == ellipseOutput,
+                  "undo restores the selected region's effect and exact output");
+            overlay.redoAnnotation();
+            check(overlay.m_anns[0].mosaicBlur && overlay.cropped().toImage() == blurred,
+                  "redo restores blur output");
+            overlay.selectMosaicMode(false);
+            overlay.m_anns.clear();
+            Annotation ink;
+            ink.tool = ATool::Pen; ink.color = Qt::red; ink.pen = 20;
+            ink.stroke << origin + QPoint(110, 120) << origin + QPoint(170, 120);
+            overlay.m_anns.append(ink);
+            mouse(QEvent::MouseButtonPress, QPoint(80, 80));
+            mouse(QEvent::MouseMove, QPoint(200, 160));
+            mouse(QEvent::MouseButtonRelease, QPoint(200, 160));
+            overlay.cropped();
+            const QPoint sample = (origin + QPoint(140, 120)) * dpr;
+            check(overlay.m_anns[1].mosaicSource.pixelColor(sample) == QColor(Qt::red),
+                  "mosaic samples lower annotations instead of only the frozen desktop");
+            const QImage redacted = overlay.m_anns[1].mosaicCache;
+            ink.color = Qt::green;
+            overlay.m_anns.append(ink);
+            overlay.cropped();
+            check(overlay.m_anns[1].mosaicCache == redacted
+                      && overlay.m_anns[1].mosaicSource.pixelColor(sample) == QColor(Qt::red),
+                  "upper annotations never leak into the mosaic's sampled source");
+            overlay.m_anns[0].color = Qt::blue;
+            overlay.cropped();
+            check(overlay.m_anns[1].mosaicSource.pixelColor(sample) == QColor(Qt::blue)
+                      && overlay.m_anns[1].mosaicCache != redacted,
+                  "editing lower annotations invalidates the effect cache");
+            overlay.m_anns.removeLast();
+            check(overlay.annHandleAt(overlay.m_anns[1], rotateAnchor(overlay.m_anns[1])) == H_None
+                      && overlay.annAnchors(overlay.m_anns[1]).size() == 4,
+                  "mosaic regions retain resize handles but expose no rotation handle");
+            const QRect beforeMove = overlay.m_anns[1].rect;
+            const int countBeforeMove = overlay.m_anns.size();
+            const QPoint startMove = beforeMove.center() - origin;
+            mouse(QEvent::MouseButtonPress, startMove);
+            mouse(QEvent::MouseMove, startMove + QPoint(22, 13));
+            mouse(QEvent::MouseButtonRelease, startMove + QPoint(22, 13));
+            check(overlay.m_anns.size() == countBeforeMove && overlay.m_selAnn == 1
+                      && overlay.m_anns[1].rect == beforeMove.translated(22, 13) && !overlay.m_live,
+                  "clicking a region with the mosaic tool still active moves it instead of drawing a new object");
+            for (Handle handle : {H_L, H_R, H_T, H_B}) {
+                const QRect beforeResize = overlay.m_anns[1].rect;
+                const QPoint edge = handle == H_L ? QPoint(beforeResize.left(), beforeResize.center().y())
+                    : handle == H_R ? QPoint(beforeResize.right(), beforeResize.center().y())
+                    : handle == H_T ? QPoint(beforeResize.center().x(), beforeResize.top())
+                    : QPoint(beforeResize.center().x(), beforeResize.bottom());
+                const QPoint delta = handle == H_L ? QPoint(-12, 0) : handle == H_R ? QPoint(12, 0)
+                    : handle == H_T ? QPoint(0, -12) : QPoint(0, 12);
+                mouse(QEvent::MouseButtonPress, edge - origin);
+                check(overlay.m_itemDrag == handle, "each mosaic boundary is a resize target");
+                mouse(QEvent::MouseMove, edge - origin + delta);
+                mouse(QEvent::MouseButtonRelease, edge - origin + delta);
+                check(overlay.m_anns.size() == countBeforeMove && overlay.m_anns[1].rect != beforeResize,
+                      "dragging a side stretches the existing mosaic without creating another object");
+            }
+            const QImage beforeDeselect = overlay.cropped().toImage();
+            const QRect view = overlay.m_anns[1].rect.adjusted(-8, -8, 8, 8);
+            const QImage editingBorder = overlay.grab(view).toImage();
+            if (!previewPath.isEmpty() && dpr == 1)
+                check(editingBorder.save(previewPath + QStringLiteral(".editing-border.png")), "save editable mosaic border preview");
+            mouse(QEvent::MouseButtonPress, QPoint(380, 230));
+            mouse(QEvent::MouseButtonRelease, QPoint(380, 230));
+            check(overlay.m_selAnn == -1 && overlay.m_itemDrag == H_None && overlay.m_anns.size() == countBeforeMove
+                      && overlay.cropped().toImage() == beforeDeselect && overlay.grab(view).toImage() != editingBorder,
+                  "clicking outside ends region editing and removes the border without changing captured pixels");
+            if (!previewPath.isEmpty() && dpr == 1)
+                check(overlay.grab(view).save(previewPath + QStringLiteral(".locked.png")), "save inactive mosaic region preview");
+            const QRect lockedRect = overlay.m_anns[1].rect;
+            mouse(QEvent::MouseMove, QPoint(400, 250));
+            check(overlay.m_anns[1].rect == lockedRect, "an unselected mosaic no longer follows mouse movement");
+            mouse(QEvent::MouseButtonPress, lockedRect.center() - origin);
+            mouse(QEvent::MouseButtonRelease, lockedRect.center() - origin);
+            check(overlay.m_selAnn == 1 && overlay.m_anns.size() == countBeforeMove,
+                  "clicking the region again restores its editable border without adding a mosaic");
             if (!previewPath.isEmpty()) {
                 check(overlay.cropped().save(previewPath + QString(".%1.png").arg(dpr)), "save mosaic pixel preview");
                 if (dpr == 1)
@@ -3739,10 +3961,15 @@ protected:
         }
         if (m_mode == Adjusting && !m_sel.isNull())   // Annotations clip to the selection.
             paintAnnotations(p, QPointF(0, 0), 1.0, QRectF(m_sel), false);
+        if (m_live && m_ann.tool == ATool::Mosaic && !m_ann.mosaicBrush)
+            paintMosaicBorder(p, m_ann, false);
         if (m_mode == Adjusting && !m_live
             && (editorActive() || (m_selAnn >= 0 && m_selAnn < m_anns.size()
                                   && !m_anns[m_selAnn].mosaicBrush))) {
             const Annotation ann = editorActive() ? editorAnnotation() : m_anns[m_selAnn];
+            if (ann.tool == ATool::Mosaic) {
+                paintMosaicBorder(p, ann, true);
+            } else {
             p.save();
             if (!qFuzzyIsNull(ann.rot)) p.setTransform(annTransform(ann), true);
             const QRect box = annotationRect(ann);
@@ -3752,13 +3979,14 @@ protected:
             p.setBrush(Qt::white);
             for (const QPoint &anchor : annAnchors(ann))
                 p.drawRect(QRect(anchor - QPoint(4, 4), QSize(8, 8)));
-            {                                        // Rotate stalk below the item.
+            if (ann.tool != ATool::Mosaic) {          // Mosaic regions move and resize without rotation.
                 const QPoint base(box.center().x(), box.bottom() + 2);
                 const QPoint knob(box.center().x(), box.bottom() + 22);
                 p.drawLine(base, knob);
                 p.drawEllipse(QRect(knob - QPoint(5, 5), QSize(10, 10)));
             }
             p.restore();
+            }
         }
         if (m_mode == Adjusting && !m_sel.isNull() && m_hover.isNull())  // Eight resize handles.
             for (const QRect &h : handleRects(m_sel)) {
@@ -3793,6 +4021,36 @@ protected:
         setFocus();                                   // Any click restores keyboard handling.
         m_pressPos = e->pos();
         m_dragStarted = false;
+        if (m_mode == Adjusting && !m_spaceHeld && (m_atool == ATool::Mosaic || m_atool == ATool::None)) {
+            const bool regionTool = m_atool == ATool::None || !m_mosaicBrush;
+            if (regionTool && m_selAnn >= 0 && m_selAnn < m_anns.size()
+                && m_anns[m_selAnn].tool == ATool::Mosaic && !m_anns[m_selAnn].mosaicBrush) {
+                const Annotation &ann = m_anns[m_selAnn];
+                const Handle handle = annHandleAt(ann, e->pos());
+                if (handle != H_None || annotationHit(ann, e->pos())) {
+                    m_itemDrag = handle == H_None ? H_Move : handle;
+                    m_pressAnn = ann;
+                    updateAnnotationCursor(e->pos());
+                    return;
+                }
+            }
+            const int hit = regionTool ? annotationAt(e->pos()) : -1;
+            if (hit >= 0 && m_anns[hit].tool == ATool::Mosaic && !m_anns[hit].mosaicBrush) {
+                m_selAnn = hit;
+                m_pressAnn = m_anns[hit];
+                const Handle handle = annHandleAt(m_pressAnn, e->pos());
+                m_itemDrag = handle == H_None ? H_Move : handle;
+                updateToolOptions();
+                updateAnnotationCursor(e->pos());
+                update();
+                return;
+            }
+        }
+        if (m_selAnn >= 0 && m_selAnn < m_anns.size() && m_anns[m_selAnn].tool == ATool::Mosaic) {
+            m_selAnn = -1;
+            updateToolOptions();
+            update();
+        }
         if (m_mode == Adjusting && m_atool == ATool::Text && !m_spaceHeld) {
             if (m_selAnn >= 0 && m_selAnn < m_anns.size()
                 && m_anns[m_selAnn].tool == ATool::Text) {
@@ -3876,6 +4134,7 @@ protected:
         updateInspector();
         const QPoint pos = e->pos();
         if (m_waitingClick) return;
+        if (m_live && m_ann.tool == ATool::Mosaic && m_ann.mosaicBrush) updateAnnotationCursor(pos);
         if (m_live) {                               // Live annotation follows the cursor.
             const QRect dirty = annotationRect(m_ann);
             updateAnnotation(pos, e->modifiers());
@@ -3911,9 +4170,7 @@ protected:
         }
         if (m_drag == H_None) {                     // Hover: cursor shape, size hint, window detection.
             if (m_mode == Adjusting) {
-                const Handle h = hitHandle(pos);
-                setCursor(m_atool != ATool::None && h == H_Move ? Qt::CrossCursor
-                                                                : cursorForHandle(h));
+                updateAnnotationCursor(pos);
                 if (hitHandle(pos) != H_None) {
                     cancelDetection();
                     clearHover();                   // Repaint only the retired hover rectangle.
@@ -3946,7 +4203,6 @@ protected:
     }
     void mouseReleaseEvent(QMouseEvent *e) override
     {
-        Q_UNUSED(e)
         if (m_live) {                               // Commit the annotation; the tool stays active.
             m_live = false;
             commitAnnotation();
@@ -3962,6 +4218,7 @@ protected:
                 showToolBars();
             }
             update();
+            updateAnnotationCursor(e->pos());
             return;
         }
         if (m_drag == H_None)
@@ -4168,9 +4425,11 @@ private:
         int pen = 3;                                 // Stroke width in logical pixels.
         int mosaicStrength = 6;                      // Pixel block size (3-24), independent of brush width.
         bool mosaicBrush = false;
+        bool mosaicEllipse = false, mosaicBlur = false;
+        int mosaicLevels[2] = {6, 6};
         quint32 mosaicSeed = 1;
         mutable int mosaicCacheStrength = 0;
-        mutable QImage mosaicCache;
+        mutable QImage mosaicCache, mosaicSource;
         QRect rect;                                  // Rect / Ellipse / Mosaic / Text / Number box.
         QPoint a, b;                                 // Arrow endpoints.
         QPolygonF stroke;                            // Pen / Marker / Mosaic brush polyline.
@@ -4203,7 +4462,7 @@ private:
     static QTransform annTransform(const Annotation &ann)
     {
         QTransform t;
-        if (qFuzzyIsNull(ann.rot)) return t;
+        if (ann.tool == ATool::Mosaic || qFuzzyIsNull(ann.rot)) return t;
         const QPointF c = QPointF(annotationRect(ann).center());
         t.translate(c.x(), c.y());
         t.rotate(ann.rot);
@@ -4213,7 +4472,7 @@ private:
     static QRect rotatedBounds(const Annotation &ann)
     {
         const QRect r = annotationRect(ann);
-        return qFuzzyIsNull(ann.rot) ? r : annTransform(ann).mapToPolygon(r).boundingRect();
+        return ann.tool == ATool::Mosaic || qFuzzyIsNull(ann.rot) ? r : annTransform(ann).mapToPolygon(r).boundingRect();
     }
     static QPoint mapToLocal(const Annotation &ann, const QPoint &pos)
     {
@@ -4242,6 +4501,11 @@ private:
                 if (distToSegment(pos, ann.stroke[i - 1], ann.stroke[i]) <= ann.pen / 2.0 + lineTol)
                     return true;
             return QLineF(pos, ann.stroke.first()).length() <= ann.pen / 2.0 + lineTol;
+        }
+        if (ann.tool == ATool::Mosaic && ann.mosaicEllipse) {
+            QPainterPath area;
+            area.addEllipse(QRectF(ann.rect).adjusted(-tol, -tol, tol, tol));
+            return area.contains(pos);
         }
         switch (ann.tool) {
         case ATool::Rect:                            // Outlines select on their border only.
@@ -4295,18 +4559,84 @@ private:
     Handle annHandleAt(const Annotation &ann, const QPoint &pos) const
     {
         if (ann.mosaicBrush) return H_None;
-        if (QRect(rotateAnchor(ann) - QPoint(6, 6), QSize(12, 12)).contains(pos)) return H_Rotate;
+        if (ann.tool != ATool::Mosaic
+            && QRect(rotateAnchor(ann) - QPoint(6, 6), QSize(12, 12)).contains(pos)) return H_Rotate;
         const QVector<QPoint> anchors = annAnchors(ann);
         static const Handle ids[] = {H_TL, H_TR, H_BL, H_BR, H_TL, H_BR};
         for (int i = 0; i < anchors.size(); ++i)
             if (QRect(mapFromLocal(ann, anchors[i]) - QPoint(5, 5), QSize(10, 10)).contains(pos))
                 return ids[i];
+        if (ann.tool == ATool::Mosaic) {
+            const QRect r = ann.rect;
+            if (r.adjusted(-5, -5, 5, 5).contains(pos)) {
+                if (qAbs(pos.x() - r.left()) <= 5) return H_L;
+                if (qAbs(pos.x() - r.right()) <= 5) return H_R;
+                if (qAbs(pos.y() - r.top()) <= 5) return H_T;
+                if (qAbs(pos.y() - r.bottom()) <= 5) return H_B;
+            }
+        }
         return H_None;
     }
     static QPoint rotateAnchor(const Annotation &ann)  // Rotate stalk sits below the item.
     {
         const QRect r = annotationRect(ann);
         return mapFromLocal(ann, QPoint(r.center().x(), r.bottom() + 22));
+    }
+    void paintMosaicBorder(QPainter &p, const Annotation &ann, bool selected) const
+    {
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing, false);
+        p.setClipRect(QRectF(m_sel), Qt::IntersectClip);
+        p.setCompositionMode(QPainter::CompositionMode_Difference);
+        QPen border(Qt::white, 0);
+        if (selected) border.setDashPattern({4, 4});
+        p.setPen(border);
+        p.setBrush(Qt::NoBrush);
+        const QRectF bounds = QRectF(ann.rect).adjusted(0, 0, -1, -1);
+        if (ann.mosaicEllipse) p.drawEllipse(bounds);
+        else p.drawRect(bounds);
+        if (selected) {
+            p.setPen(QPen(Qt::white, 0));
+            for (const QPoint &anchor : annAnchors(ann))
+                p.drawRect(QRect(anchor - QPoint(3, 3), QSize(6, 6)));
+        }
+        p.restore();
+    }
+    static QCursor mosaicBrushCursor(qreal width, qreal dpr)
+    {
+        const int side = qCeil(width) | 1;
+        QPixmap pixmap(qRound(side * dpr), qRound(side * dpr));
+        pixmap.setDevicePixelRatio(dpr);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(Qt::white);
+        QRectF circle(0, 0, width, width);
+        circle.moveCenter(QPointF(side / 2.0, side / 2.0));
+        painter.drawEllipse(circle);
+        painter.end();
+        return QCursor(pixmap);
+    }
+    void updateAnnotationCursor(const QPoint &pos)
+    {
+        if (m_mode != Adjusting) { setCursor(Qt::CrossCursor); return; }
+        if ((m_tools->isVisible() && m_tools->geometry().contains(pos))
+            || (m_toolOptions->isVisible() && m_toolOptions->geometry().contains(pos))) {
+            setCursor(Qt::ArrowCursor);
+            return;
+        }
+        if (!m_live && m_selAnn >= 0 && m_selAnn < m_anns.size()
+            && m_anns[m_selAnn].tool == ATool::Mosaic && !m_anns[m_selAnn].mosaicBrush) {
+            const Handle handle = annHandleAt(m_anns[m_selAnn], pos);
+            if (handle != H_None) { setCursor(cursorForHandle(handle)); return; }
+            if (annotationHit(m_anns[m_selAnn], pos)) { setCursor(Qt::SizeAllCursor); return; }
+        }
+        const Handle handle = hitHandle(pos);
+        if (m_atool == ATool::Mosaic && mosaicBrush() && handle == H_Move && !m_spaceHeld) {
+            const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(pos));
+            setCursor(mosaicBrushCursor(toolSize(), screen ? screen->devicePixelRatio() : devicePixelRatioF()));
+        } else setCursor(m_atool != ATool::None && handle == H_Move ? Qt::CrossCursor : cursorForHandle(handle));
     }
     static void translateAnnotation(Annotation &ann, const QPoint &d)
     {
@@ -4332,6 +4662,17 @@ private:
                 if (m_itemDrag == H_TL) ann.a = local; else ann.b = local;
             } else {
                 const QRect r = m_pressAnn.rect.normalized();
+                if (ann.tool == ATool::Mosaic && (m_itemDrag == H_L || m_itemDrag == H_R
+                    || m_itemDrag == H_T || m_itemDrag == H_B)) {
+                    ann.rect = r;
+                    if (m_itemDrag == H_L) ann.rect.setLeft(local.x());
+                    else if (m_itemDrag == H_R) ann.rect.setRight(local.x());
+                    else if (m_itemDrag == H_T) ann.rect.setTop(local.y());
+                    else ann.rect.setBottom(local.y());
+                    ann.rect = ann.rect.normalized();
+                    m_anns[m_selAnn] = ann;
+                    return;
+                }
                 const QPoint fixed = m_itemDrag == H_TL ? r.bottomRight()
                     : m_itemDrag == H_TR ? r.bottomLeft()
                     : m_itemDrag == H_BL ? r.topRight() : r.topLeft();
@@ -4461,9 +4802,16 @@ private:
     }
     bool eventFilter(QObject *obj, QEvent *ev) override
     {
-        if (m_mosaicSlider && obj == m_mosaicSlider && ev->type() == QEvent::Wheel) {
+        if (obj == m_mosaicWidthLabel && ev->type() == QEvent::Wheel) {
             const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
             if (delta) tuneWidth(delta > 0 ? 1 : -1, mapFromGlobal(QCursor::pos()));
+            ev->accept();
+            return true;
+        }
+        if ((obj == m_mosaicSlider || obj == m_mosaicStrengthLabel || obj == m_mosaicPreview)
+            && ev->type() == QEvent::Wheel) {
+            const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
+            if (delta) setMosaicStrength(mosaicStrength() + (delta > 0 ? 1 : -1));
             ev->accept();
             return true;
         }
@@ -4723,16 +5071,41 @@ private:
     {
         if (m_live) return m_ann.mosaicStrength;
         if (m_selAnn >= 0 && m_selAnn < m_anns.size()) return m_anns[m_selAnn].mosaicStrength;
-        return m_mosaicStrength;
+        return m_mosaicLevels[m_mosaicBlur];
+    }
+    bool mosaicBlur() const
+    {
+        if (m_live) return m_ann.mosaicBlur;
+        if (m_selAnn >= 0 && m_selAnn < m_anns.size()) return m_anns[m_selAnn].mosaicBlur;
+        return m_mosaicBlur;
+    }
+    void switchMosaicEffect()
+    {
+        if (optionsTool() != ATool::Mosaic) return;
+        const bool blur = !mosaicBlur();
+        m_mosaicBlur = blur;
+        Annotation *ann = m_live ? &m_ann : nullptr;
+        if (!ann && m_selAnn >= 0 && m_selAnn < m_anns.size()) {
+            pushUndo();
+            ann = &m_anns[m_selAnn];
+        }
+        if (ann) {
+            ann->mosaicBlur = blur;
+            ann->mosaicStrength = ann->mosaicLevels[blur];
+            ann->mosaicCacheStrength = 0;
+        }
+        syncSizeInput();
+        update();
     }
     void setMosaicStrength(int value)
     {
         if (optionsTool() != ATool::Mosaic) return;
         value = qBound(3, value, 24);
         if (value != mosaicStrength()) {
-            m_mosaicStrength = value;
+            m_mosaicLevels[mosaicBlur()] = value;
             if (m_live) {
                 m_ann.mosaicStrength = value;
+                m_ann.mosaicLevels[m_ann.mosaicBlur] = value;
                 m_ann.mosaicSeed = QRandomGenerator::global()->generate();
                 m_ann.mosaicCacheStrength = 0;
             }
@@ -4741,6 +5114,7 @@ private:
                 if (!dragging || !m_mosaicDragUndo) pushUndo();
                 m_mosaicDragUndo = dragging;
                 m_anns[m_selAnn].mosaicStrength = value;
+                m_anns[m_selAnn].mosaicLevels[m_anns[m_selAnn].mosaicBlur] = value;
                 m_anns[m_selAnn].mosaicSeed = QRandomGenerator::global()->generate();
                 m_anns[m_selAnn].mosaicCacheStrength = 0;
             }
@@ -4748,10 +5122,11 @@ private:
         }
         syncSizeInput();
     }
-    void selectMosaicMode(bool brush)
+    void selectMosaicMode(bool brush, bool ellipse = false)
     {
         if (m_live) { m_live = false; commitAnnotation(); }
         m_mosaicBrush = brush;
+        m_mosaicEllipse = ellipse;
         selectTool(ATool::Mosaic);
     }
     qreal toolSize() const
@@ -4772,6 +5147,23 @@ private:
     }
     void syncSizeInput()
     {
+        if (m_mosaicWidthLabel) m_mosaicWidthLabel->setText(QString::number(toolSize()));
+        if (m_mosaicPreview) {
+            QImage preview(24, 24, QImage::Format_ARGB32);
+            preview.fill(Qt::transparent);
+            QPainter painter(&preview);
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.setPen(QPen(Qt::white, 2.5));
+            painter.drawEllipse(QRectF(7, 7, 10, 10));
+            painter.end();
+            preview = mosaicBlur() ? mosaicBlurred(preview, mosaicStrength())
+                                   : mosaicTiles(preview, mosaicStrength(), 1).scaled(24, 24);
+            m_mosaicPreview->setIcon(QIcon(QPixmap::fromImage(preview)));
+            m_mosaicPreview->setToolTip(mosaicBlur() ? QStringLiteral("模糊：点击切换为像素化，滚轮调强度")
+                                                  : QStringLiteral("像素化：点击切换为模糊，滚轮调强度"));
+        }
+        if (m_mosaicStrengthLabel)
+            m_mosaicStrengthLabel->setText(QString::number(mosaicStrength()));
         if (m_mosaicSlider) {
             const QSignalBlocker lock(m_mosaicSlider);
             m_mosaicSlider->setValue(mosaicStrength());
@@ -4810,6 +5202,7 @@ private:
                 update();
             }
             syncSizeInput();
+            updateAnnotationCursor(mapFromGlobal(QCursor::pos()));
             return;
         }
         if (value == toolSize()) { syncSizeInput(); return; }
@@ -4838,6 +5231,7 @@ private:
         if (tool == ATool::None) return;
         const bool texty = tool == ATool::Text || tool == ATool::Number;
         setToolSize(toolSize() + dir * (texty ? 0.5 : 1));
+        updateAnnotationCursor(at);
         m_sizeTip->setText(texty ? QStringLiteral("字号 %1 pt").arg(toolSize())
                                : tool == ATool::Mosaic && !mosaicBrush() ? QStringLiteral("强度 %1").arg(toolSize())
                                : QStringLiteral("粗细 %1").arg(toolSize()));
@@ -4854,7 +5248,11 @@ private:
         if (m_atool == ATool::Mosaic) {
             m_ann.pen = m_mosaicWidth;
             m_ann.mosaicBrush = m_mosaicBrush;
-            m_ann.mosaicStrength = m_mosaicStrength;
+            m_ann.mosaicEllipse = m_mosaicEllipse;
+            m_ann.mosaicBlur = m_mosaicBlur;
+            m_ann.mosaicLevels[0] = m_mosaicLevels[0];
+            m_ann.mosaicLevels[1] = m_mosaicLevels[1];
+            m_ann.mosaicStrength = m_mosaicLevels[m_mosaicBlur];
             m_ann.mosaicSeed = QRandomGenerator::global()->generate();
         }
         if (m_atool == ATool::Rect || m_atool == ATool::Ellipse) m_ann.fill = m_afill;
@@ -4936,6 +5334,7 @@ private:
         m_atool = ATool::None;
         syncToolButtons();
         updateToolOptions();
+        updateAnnotationCursor(mapFromGlobal(QCursor::pos()));
         update();
     }
     void selectTool(ATool tool)                      // Shared by toolbar toggles and keyboard.
@@ -4948,7 +5347,7 @@ private:
         m_acolor = toolColor(tool);
         syncToolButtons();
         updateToolOptions();
-        setCursor(Qt::CrossCursor);
+        updateAnnotationCursor(mapFromGlobal(QCursor::pos()));
         update();
     }
     void syncToolButtons()                           // Rect and Ellipse share one button.
@@ -5165,6 +5564,9 @@ private:
         }
         m_sizeInput = nullptr;
         m_mosaicSlider = nullptr;
+        m_mosaicStrengthLabel = nullptr;
+        m_mosaicWidthLabel = nullptr;
+        m_mosaicPreview = nullptr;
         m_mosaicDragUndo = false;
         m_colorButton = nullptr;
         delete m_toolOptions->layout();              // Drops the previous row.
@@ -5314,14 +5716,33 @@ private:
         }
         case ATool::Mosaic: {
             const bool brush = mosaicBrush();
-            addOption(lay, Icon::Rect, QStringLiteral("框选马赛克：滚轮调节强度"), !brush,
-                      [this] { selectMosaicMode(false); });
-            addOption(lay, Icon::Pen, QStringLiteral("涂抹马赛克：滚轮调节粗细"), brush,
-                      [this] { selectMosaicMode(true); });
-            addSize();
-            m_sizeInput->setToolTip(brush ? QStringLiteral("涂抹粗细：输入、下拉选择或滚轮调节")
-                                        : QStringLiteral("马赛克强度：输入、下拉选择或滚轮调节"));
-            m_sizeInput->setAccessibleName(brush ? QStringLiteral("涂抹粗细") : QStringLiteral("马赛克强度"));
+            if (brush) {
+                m_mosaicWidthLabel = new QLabel(QString::number(toolSize()));
+                m_mosaicWidthLabel->setObjectName(QStringLiteral("mosaicWidthValue"));
+                m_mosaicWidthLabel->setToolTip(QStringLiteral("涂抹粗细：滚轮调节，不可手动编辑"));
+                m_mosaicWidthLabel->setAccessibleName(QStringLiteral("涂抹粗细（只读）"));
+                m_mosaicWidthLabel->setTextInteractionFlags(Qt::NoTextInteraction);
+                m_mosaicWidthLabel->setFocusPolicy(Qt::NoFocus);
+                m_mosaicWidthLabel->setAlignment(Qt::AlignCenter);
+                m_mosaicWidthLabel->setFixedWidth(24);
+                m_mosaicWidthLabel->installEventFilter(this);
+                lay->addWidget(m_mosaicWidthLabel);
+            }
+            const bool ellipse = m_live ? m_ann.mosaicEllipse
+                : m_selAnn >= 0 && m_selAnn < m_anns.size() ? m_anns[m_selAnn].mosaicEllipse : m_mosaicEllipse;
+            addOption(lay, Icon::Rect, QStringLiteral("矩形区域：再次点击返回涂抹"), !brush && !ellipse,
+                      [this, brush, ellipse] { selectMosaicMode(!brush && !ellipse); });
+            lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("mosaicRectangle"));
+            addOption(lay, Icon::Ellipse, QStringLiteral("椭圆区域：再次点击返回涂抹"), !brush && ellipse,
+                      [this, brush, ellipse] { selectMosaicMode(!brush && ellipse, true); });
+            lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("mosaicEllipse"));
+            m_mosaicPreview = iconButton(Icon::Mosaic, QStringLiteral("像素化 / 模糊"));
+            m_mosaicPreview->setObjectName(QStringLiteral("mosaicEffectPreview"));
+            m_mosaicPreview->setAccessibleName(QStringLiteral("切换像素化 / 模糊"));
+            m_mosaicPreview->setFocusPolicy(Qt::NoFocus);
+            m_mosaicPreview->installEventFilter(this);
+            connect(m_mosaicPreview, &QToolButton::clicked, this, &CaptureOverlay::switchMosaicEffect);
+            lay->addWidget(m_mosaicPreview);
             m_mosaicSlider = new QSlider(Qt::Horizontal);
             m_mosaicSlider->setObjectName(QStringLiteral("mosaicStrength"));
             m_mosaicSlider->setAccessibleName(QStringLiteral("马赛克强度"));
@@ -5339,6 +5760,15 @@ private:
             connect(m_mosaicSlider, &QSlider::sliderPressed, this, [this] { m_mosaicDragUndo = false; });
             connect(m_mosaicSlider, &QSlider::sliderReleased, this, [this] { m_mosaicDragUndo = false; });
             lay->addWidget(m_mosaicSlider);
+            m_mosaicStrengthLabel = new QLabel;
+            m_mosaicStrengthLabel->setObjectName(QStringLiteral("mosaicStrengthValue"));
+            m_mosaicStrengthLabel->setAccessibleName(QStringLiteral("马赛克强度"));
+            m_mosaicStrengthLabel->setToolTip(QStringLiteral("马赛克强度：拖动左侧滑条或滚轮调节"));
+            m_mosaicStrengthLabel->setAlignment(Qt::AlignCenter);
+            m_mosaicStrengthLabel->setFixedWidth(24);
+            m_mosaicStrengthLabel->installEventFilter(this);
+            lay->addWidget(m_mosaicStrengthLabel);
+            syncSizeInput();
             break;
         }
         case ATool::Eraser: {
@@ -5367,10 +5797,32 @@ private:
         p.translate(origin);
         p.scale(scale, scale);
         p.setClipRect(clip, Qt::IntersectClip);
+        int remainingMosaics = m_live && m_ann.tool == ATool::Mosaic ? 1 : 0;
+        for (const Annotation &ann : m_anns) if (ann.tool == ATool::Mosaic) ++remainingMosaics;
+        QImage lower;
+        if (remainingMosaics) {
+            if (m_mosaicFrame.isNull()) {
+                m_mosaicFrame = m_shot.toImage().convertToFormat(QImage::Format_ARGB32);
+                m_mosaicFrame.setDevicePixelRatio(1);
+            }
+            lower = m_mosaicFrame;
+        }
+        const auto paint = [&](const Annotation &ann, bool visible = true) {
+            if (ann.tool == ATool::Mosaic) --remainingMosaics;
+            if (visible) drawAnnotation(p, ann, lower);
+            if (remainingMosaics > 0) {
+                const QImage source = lower;
+                QPainter layer(&lower);
+                layer.scale(m_shot.devicePixelRatioF(), m_shot.devicePixelRatioF());
+                layer.setClipRect(QRectF(m_sel));
+                drawAnnotation(layer, ann, source);
+            }
+        };
         for (int i = 0; i < m_anns.size(); ++i)
-            if (!editorActive() || i != m_editAnn) drawAnnotation(p, m_anns[i]);
-        if (includeEditor && editorActive()) drawAnnotation(p, editorAnnotation());
-        if (m_live) drawAnnotation(p, m_ann);
+            if (!editorActive() || i != m_editAnn) paint(m_anns[i]);
+            else paint(editorAnnotation(), includeEditor);
+        if (editorActive() && m_editAnn < 0) paint(editorAnnotation(), includeEditor);
+        if (m_live) paint(m_ann);
         p.restore();
     }
     static QImage mosaicTiles(const QImage &source, int block, quint32 seed)
@@ -5404,14 +5856,69 @@ private:
         }
         return tiles;
     }
-    void drawAnnotation(QPainter &p, const Annotation &ann) const
+    static QImage mosaicBlurred(const QImage &source, int radius)
+    {
+        if (source.isNull() || radius < 0 || radius > 24) return {};
+        QImage image = source.convertToFormat(QImage::Format_ARGB32);
+        if (radius == 0 || image.isNull()) return image;
+        const int divisor = (radius + 1) * (radius + 1);
+        int shift = 9;
+        for (int value = divisor; value > 1; value >>= 1) ++shift;
+        const int multiplier = ((1 << shift) + divisor - 1) / divisor;
+        const int diameter = 2 * radius + 1;
+        using Channels = std::array<int, 4>;
+        QVector<Channels> stack(diameter);
+        for (bool vertical : {false, true}) {
+            const int length = vertical ? image.height() : image.width();
+            const int lines = vertical ? image.width() : image.height();
+            for (int line = 0; line < lines; ++line) {
+                const auto pixel = [&](int offset) -> QRgb & {
+                    const int x = vertical ? line : offset, y = vertical ? offset : line;
+                    return reinterpret_cast<QRgb *>(image.scanLine(y))[x];
+                };
+                const auto channels = [](QRgb value) -> Channels {
+                    return {{qRed(value), qGreen(value), qBlue(value), qAlpha(value)}};
+                };
+                Channels sum{}, incoming{}, outgoing{};
+                for (int i = -radius; i <= radius; ++i) {
+                    const Channels color = channels(pixel(qBound(0, i, length - 1)));
+                    stack[i + radius] = color;
+                    for (int c = 0; c < 4; ++c) {
+                        sum[c] += color[c] * (radius + 1 - qAbs(i));
+                        (i <= 0 ? outgoing : incoming)[c] += color[c];
+                    }
+                }
+                int cursor = radius;
+                for (int x = 0; x < length; ++x) {
+                    pixel(x) = qRgba((sum[0] * multiplier) >> shift, (sum[1] * multiplier) >> shift,
+                                     (sum[2] * multiplier) >> shift, (sum[3] * multiplier) >> shift);
+                    Channels &start = stack[(cursor - radius + diameter) % diameter];
+                    const Channels next = channels(pixel(qMin(x + radius + 1, length - 1)));
+                    for (int c = 0; c < 4; ++c) {
+                        sum[c] -= outgoing[c];
+                        outgoing[c] -= start[c];
+                        start[c] = next[c];
+                        incoming[c] += next[c];
+                        sum[c] += incoming[c];
+                    }
+                    cursor = (cursor + 1) % diameter;
+                    for (int c = 0; c < 4; ++c) {
+                        outgoing[c] += stack[cursor][c];
+                        incoming[c] -= stack[cursor][c];
+                    }
+                }
+            }
+        }
+        return image;
+    }
+    void drawAnnotation(QPainter &p, const Annotation &ann, const QImage &source) const
     {
         QPen pen(ann.color, ann.pen);
         pen.setCapStyle(Qt::RoundCap);
         pen.setJoinStyle(Qt::RoundJoin);
         p.setBrush(Qt::NoBrush);
         p.save();
-        if (!qFuzzyIsNull(ann.rot)) {                // Rotate around the item's box center.
+        if (!qFuzzyIsNull(ann.rot) && ann.tool != ATool::Mosaic) { // Effects rotate their mask, not their source.
             const QTransform t = annTransform(ann);
             p.setTransform(t, true);
         }
@@ -5496,13 +6003,13 @@ private:
             }
             break;
         }
-        case ATool::Mosaic: {                        // Pixelate the frozen frame through a rectangle or stroke mask.
+        case ATool::Mosaic: {                        // Redact lower layers through the object's mask.
             const qreal dpr = m_shot.devicePixelRatioF();
             const QRect area = annotationRect(ann).intersected(
                 QRect(0, 0, qFloor(m_shot.width() / dpr), qFloor(m_shot.height() / dpr)));
             if (area.isEmpty() || (ann.mosaicBrush && ann.stroke.isEmpty())) break;
+            QPainterPath mask;
             if (ann.mosaicBrush) {
-                QPainterPath mask;
                 if (ann.stroke.size() == 1) mask.addEllipse(ann.stroke.first(), ann.pen / 2.0, ann.pen / 2.0);
                 else {
                     QPainterPath line;
@@ -5514,20 +6021,23 @@ private:
                     stroker.setJoinStyle(Qt::RoundJoin);
                     mask = stroker.createStroke(line);
                 }
-                p.setClipPath(mask, Qt::IntersectClip);
-            }
-            const int block = qMax(3, qRound(ann.mosaicStrength * dpr));
-            if (ann.mosaicCacheStrength != ann.mosaicStrength || ann.mosaicCache.isNull()) {
-                if (m_mosaicFrame.isNull()) m_mosaicFrame = m_shot.toImage().convertToFormat(QImage::Format_ARGB32);
-                ann.mosaicCache = mosaicTiles(m_mosaicFrame, block, ann.mosaicSeed);
+            } else if (ann.mosaicEllipse) {
+                mask.addEllipse(QRectF(ann.rect));
+            } else mask.addRect(QRectF(ann.rect));
+            p.setClipPath(mask, Qt::IntersectClip);
+            if (ann.mosaicCacheStrength != ann.mosaicStrength || ann.mosaicCache.isNull()
+                || ann.mosaicSource != source) {
+                ann.mosaicSource = source;
+                ann.mosaicCache = ann.mosaicBlur ? mosaicBlurred(source, ann.mosaicStrength)
+                    : mosaicTiles(source, qMax(3, qRound(ann.mosaicStrength * dpr)), ann.mosaicSeed);
                 ann.mosaicCacheStrength = ann.mosaicStrength;
             }
-            p.setClipRect(area, Qt::IntersectClip);
-            if (ann.mosaicCache.isNull()) p.fillRect(area, Qt::black); // Failed redaction must not expose source pixels.
+            const QRectF desktop(0, 0, m_shot.width() / dpr, m_shot.height() / dpr);
+            p.setClipRect(desktop, Qt::IntersectClip);
+            if (ann.mosaicCache.isNull()) p.fillRect(desktop, Qt::black); // Failed redaction must not expose source pixels.
             else {
                 p.setRenderHint(QPainter::SmoothPixmapTransform, false);
-                // shortcut: The sampling background is frozen; include lower annotations when layered redaction is required.
-                p.drawImage(QRectF(0, 0, m_shot.width() / dpr, m_shot.height() / dpr), ann.mosaicCache);
+                p.drawImage(desktop, ann.mosaicCache);
             }
             break;
         }
@@ -6093,8 +6603,8 @@ private:
     ATool m_atool = ATool::None;
     QColor m_acolor = QColor("#ff3b30");             // Red first: the loudest marking color.
     int m_apen = 3;
-    int m_mosaicStrength = 6, m_mosaicWidth = 15;
-    bool m_mosaicBrush = false, m_mosaicDragUndo = false;
+    int m_mosaicLevels[2] = {6, 6}, m_mosaicWidth = 14;
+    bool m_mosaicBrush = true, m_mosaicEllipse = false, m_mosaicBlur = false, m_mosaicDragUndo = false;
     qreal m_afont = 15;                              // Base text/number font size (pt).
     QString m_afamily = QStringLiteral("Microsoft YaHei UI");
     bool m_afill = false;                            // Default fill mode for rect / ellipse.
@@ -6127,6 +6637,9 @@ private:
     QWidget *m_toolOptions = nullptr;                // Per-tool option strip under the toolbar.
     QComboBox *m_sizeInput = nullptr;                 // Editable width / point-size presets.
     QSlider *m_mosaicSlider = nullptr;
+    QLabel *m_mosaicStrengthLabel = nullptr;
+    QLabel *m_mosaicWidthLabel = nullptr;
+    QToolButton *m_mosaicPreview = nullptr;
     QToolButton *m_colorButton = nullptr;
     QPointer<QDialog> m_colorDialog;
     QPointer<ColorWheel> m_colorWheel;

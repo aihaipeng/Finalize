@@ -15,3 +15,7 @@ LONGSHOT-MAPPING.md
 OCR-PLAN.md
 QT6-MIGRATION.md
 pinshot/README.md
+.agents/
+.playwright-mcp/
+aqtinstall.log
+skills-lock.json
