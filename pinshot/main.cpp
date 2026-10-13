@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include <QWidget>
+#include <QWindow>
 #include <QScreen>
 #include <QPainter>
 #include <QPainterPath>
@@ -62,6 +63,7 @@
 #include <QPointer>
 #include <QCloseEvent>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <qt_windows.h>
 #include <dwmapi.h>
 #include <imm.h>
@@ -138,17 +140,17 @@ static QVector<GdiDisplay> gdiDisplays()
     return out;
 }
 
-// Match a QScreen to its GDI native rect via the scaled center; exact for
-// uniform DPI, approximate across mixed-DPI boundaries (known limitation).
-static QRect nativeRectForScreen(const QScreen *s, const QVector<GdiDisplay> &displays)
+// Windows screen origins remain native even when Qt scales the screen sizes.
+static QRect nativeRectForScreen(const QRect &logical, const QVector<GdiDisplay> &displays)
 {
-    const QRect lg = s->geometry();
-    const qreal dpr = s->devicePixelRatio();
-    const QPoint center(qRound(lg.center().x() * dpr), qRound(lg.center().y() * dpr));
     for (const GdiDisplay &d : displays)
-        if (d.native.contains(center))
+        if (d.native.topLeft() == logical.topLeft())
             return d.native;
     return {};
+}
+static QRect nativeRectForScreen(const QScreen *s, const QVector<GdiDisplay> &displays)
+{
+    return s ? nativeRectForScreen(s->geometry(), displays) : QRect();
 }
 
 // Map a logical rect onto native pixels via the screen at its center; exact for
@@ -168,33 +170,42 @@ static QRect nativeFromLogical(const QRect &logical)
                  qRound(logical.width() * sx), qRound(logical.height() * sy));
 }
 
-static QPixmap grabScreen(const QRect &rect)
+static QPixmap grabQtScreen(const QRect &r)
 {
-    const QRect whole = QGuiApplication::primaryScreen()->virtualGeometry();
-    const QRect r = rect.isNull() || rect.isEmpty() ? whole : rect;
-    QPixmap out = QPixmap::fromImage(grabNative(nativeFromLogical(r)));
-    if (!out.isNull())
-        return out;
-    // Fallback: per-screen Qt captures (no layered windows, multi-shot).
-    // 1) Single-screen region: crop using screen-local coordinates.
     for (QScreen *s : QGuiApplication::screens()) {
         if (s->geometry().contains(r)) {
-            out = s->grabWindow(0).copy(QRect(r.topLeft() - s->geometry().topLeft(), r.size()));
-            if (!out.isNull())
-                return out;
+            const QPoint local = r.topLeft() - s->geometry().topLeft();
+            QPixmap out = s->grabWindow(0, local.x(), local.y(), r.width(), r.height());
+            out.setDevicePixelRatio(1);
+            return out;
         }
     }
-    // 2) Cross-screen region: assemble individual screen captures.
-    out = QPixmap(r.size());
+    qreal dpr = 1;
+    for (QScreen *s : QGuiApplication::screens())
+        if (s->geometry().intersects(r)) dpr = qMax(dpr, s->devicePixelRatio());
+    QPixmap out(qRound(r.width() * dpr), qRound(r.height() * dpr));
+    if (out.isNull()) return {};
+    out.setDevicePixelRatio(dpr);
     out.fill(Qt::black);
     QPainter p(&out);
     for (QScreen *s : QGuiApplication::screens()) {
         const QRect inter = s->geometry().intersected(r);
-        if (!inter.isEmpty())
-            p.drawPixmap(inter.topLeft() - r.topLeft(), s->grabWindow(0),
-                         QRect(inter.topLeft() - s->geometry().topLeft(), inter.size()));
+        if (!inter.isEmpty()) {
+            const QPoint local = inter.topLeft() - s->geometry().topLeft();
+            const QPixmap pixels = s->grabWindow(0, local.x(), local.y(), inter.width(), inter.height());
+            if (pixels.isNull()) return {};
+            p.drawPixmap(QRect(inter.topLeft() - r.topLeft(), inter.size()), pixels, pixels.rect());
+        }
     }
+    p.end();
+    out.setDevicePixelRatio(1);
     return out;
+}
+static QPixmap grabScreen(const QRect &rect)
+{
+    const QRect r = rect.isEmpty() ? QGuiApplication::primaryScreen()->virtualGeometry() : rect;
+    QPixmap out = QPixmap::fromImage(grabNative(nativeFromLogical(r)));
+    return out.isNull() ? grabQtScreen(r) : out;
 }
 
 static bool copyImageToClipboard(const QImage &image)
@@ -212,6 +223,32 @@ static bool copyImageToClipboard(const QImage &image)
         wait.exec(QEventLoop::ExcludeUserInputEvents); // Clipboard and IME owners need system events to release contention.
     } while (retry.elapsed() < 300);
     return false;
+}
+static bool copyTextToClipboard(const QString &text)
+{
+    if (text.isEmpty()) return false;
+    QClipboard *clipboard = QGuiApplication::clipboard();
+    QElapsedTimer retry;
+    retry.start();
+    do {
+        const DWORD sequence = GetClipboardSequenceNumber();
+        clipboard->setText(text);
+        if (clipboard->ownsClipboard() && GetClipboardSequenceNumber() != sequence) return true;
+        QEventLoop wait;
+        QTimer::singleShot(15, &wait, &QEventLoop::quit);
+        wait.exec(QEventLoop::ExcludeUserInputEvents);
+    } while (retry.elapsed() < 300);
+    return false;
+}
+
+// Save through a temporary file so failed replacement never truncates the destination.
+static bool saveImageAtomic(const QImage &image, const QString &path)
+{
+    if (image.isNull()) return false;
+    QSaveFile file(path);
+    const QByteArray format = QFileInfo(path).suffix().toLatin1();
+    if (format.isEmpty() || !file.open(QIODevice::WriteOnly)) return false;
+    return image.save(&file, format.constData()) && file.commit();
 }
 
 // Native clipboard contention fixture; the lock must belong to a different thread.
@@ -252,8 +289,9 @@ class PinWindow : public QWidget
 {
 public:
     explicit PinWindow(const QPixmap &pix, const QRect &displayRect)
-        : m_pix(pix), m_scale(qMin(double(displayRect.width()) / pix.width(), double(displayRect.height()) / pix.height()))
+        : m_pix(pix), m_scale(pix.isNull() ? 1 : qMin(double(displayRect.width()) / pix.width(), double(displayRect.height()) / pix.height()))
     {
+        if (pix.isNull() || displayRect.isEmpty()) return;
         setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
         setAttribute(Qt::WA_DeleteOnClose);
         setCursor(Qt::SizeAllCursor);
@@ -282,6 +320,14 @@ public:
             }
         };
         const QRect available(0, 0, 1920, 1040);
+        const QVector<GdiDisplay> displays{{QStringLiteral("left"), QRect(-1920, 0, 1920, 1080)},
+                                          {QStringLiteral("primary"), QRect(0, 0, 1920, 1080)},
+                                          {QStringLiteral("right"), QRect(1920, 0, 1920, 1080)}};
+        for (qreal dpr : {1.0, 1.5, 2.0})
+            for (const GdiDisplay &display : displays)
+                check(nativeRectForScreen(QRect(display.native.topLeft(),
+                          QSize(qRound(1920 / dpr), qRound(1080 / dpr))), displays) == display.native,
+                      "screen mapping keeps native origins at uniform and mixed DPI, including negative screens");
         const QRect source(300, 200, 600, 400);
         check(fittedGeometry(QSize(600, 400), source, available) == source,
               "a short capture keeps its original position and size");
@@ -340,6 +386,13 @@ public:
         const QRect beforeHorizontal = longPin.geometry();
         QApplication::sendEvent(&longPin, &horizontal);
         check(longPin.geometry() == beforeHorizontal, "horizontal wheel input does not resize pins");
+        QMouseEvent rightPress(QEvent::MouseButtonPress, QPoint(3, 3), longPin.pos() + QPoint(3, 3),
+                              Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+        QApplication::sendEvent(&longPin, &rightPress);
+        QMouseEvent rightMove(QEvent::MouseMove, QPoint(9, 9), longPin.pos() + QPoint(9, 9),
+                             Qt::NoButton, Qt::RightButton, Qt::NoModifier);
+        QApplication::sendEvent(&longPin, &rightMove);
+        check(longPin.geometry() == beforeHorizontal, "right-button movement cannot drag a pin");
         longPin.close();
         std::puts("PASS: original-position pins, proportional long-capture fitting, DPI, and wheel zoom");
         return 0;
@@ -373,7 +426,7 @@ protected:
             const QString path = QFileDialog::getSaveFileName(
                 this, QStringLiteral("保存图片"), dir + QStringLiteral("/pin.png"),
                 QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
-            if (!path.isEmpty() && !m_pix.save(path))
+            if (!path.isEmpty() && !saveImageAtomic(m_pix.toImage(), path))
                 QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("保存失败，请检查路径或磁盘空间后重试"));
         } else if (chosen == border) {
             m_borderOn = !m_borderOn;
@@ -385,7 +438,10 @@ protected:
         if (e->button() == Qt::LeftButton)            // Reserve right-click for the menu.
             m_dragOff = e->globalPos() - pos();
     }
-    void mouseMoveEvent(QMouseEvent *e) override  { move(e->globalPos() - m_dragOff); }
+    void mouseMoveEvent(QMouseEvent *e) override
+    {
+        if (e->buttons() & Qt::LeftButton) move(e->globalPosition().toPoint() - m_dragOff);
+    }
     void wheelEvent(QWheelEvent *e) override      // Zoom with mouse-wheel input.
     {
         if (!e->angleDelta().y()) return;
@@ -1031,6 +1087,14 @@ public:
         capture.copyCapture();
         check(capture.m_done && QGuiApplication::clipboard()->image() == image,
               "long-capture copy succeeds after the clipboard lock is released");
+        LongCapture fullScreen(QGuiApplication::primaryScreen()->availableGeometry());
+        fullScreen.buildUi();
+        fullScreen.m_affinityOk = true;
+        fullScreen.setUiVisible(false);
+        check(!fullScreen.m_bar->isVisible(), "toolbar hides independently of preview capture exclusion");
+        fullScreen.setUiVisible(true);
+        check(fullScreen.m_bar->isVisible(), "toolbar returns after capture");
+        fullScreen.cleanupUi();
         return failures ? 1 : 0;
     }
     static int testLiveCapture(const QString &previewPath)
@@ -1059,10 +1123,15 @@ public:
         QEventLoop settle;
         QTimer::singleShot(200, &settle, &QEventLoop::quit);
         settle.exec();
+        const QImage direct = grabNative(nativeFromLogical(page.geometry()));
+        const QPixmap fallback = grabQtScreen(page.geometry());
+        const bool fallbackPassed = !direct.isNull() && fallback.devicePixelRatio() == 1
+            && fallback.toImage().convertToFormat(QImage::Format_RGB32) == direct;
+        if (!fallbackPassed) std::fprintf(stderr, "FAIL: Qt fallback differs from native pixels or capture dimensions\n");
         LongCapture capture(page.geometry());
         capture.start();
         const qreal scale = qreal(capture.m_lastFrame.height()) / page.height();
-        bool passed = !capture.m_lastFrame.isNull();
+        bool passed = !capture.m_lastFrame.isNull() && fallbackPassed;
         for (int pos : {80, 180, 280, 180, 80, 0}) {
             page.offset = pos;
             page.repaint();
@@ -1374,11 +1443,9 @@ private:
     }
     void setUiVisible(bool v)
     {
-        if (!m_affinityOk) {                          // Older systems: hide UI while capturing.
-            m_bar->setVisible(v);
-            m_preview->setVisible(v);
-            QApplication::processEvents();
-        }
+        m_bar->setVisible(v);
+        if (!m_affinityOk) m_preview->setVisible(v);
+        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     }
     void updateLabel()
     {
@@ -1438,7 +1505,7 @@ private:
             QStringLiteral("PNG (*.png)"));            // Save long captures as PNG.
         if (path.isEmpty())
             return;                                    // Cancelled dialog: keep the session active.
-        if (!img.save(path)) {
+        if (!saveImageAtomic(img, path)) {
             if (m_label) m_label->setText(QStringLiteral("保存失败，请检查路径或释放内存后重试"));
             return;
         }
@@ -1505,7 +1572,7 @@ static QVector<ScreenFrame> freezeScreens()
             image = screen->grabWindow(0).toImage(); // GDI failed (locked/station): plain per-screen shot.
         if (image.isNull() || image.size() != native.size())
             return {};                              // Reject a display-mode change during capture.
-        image.setDevicePixelRatio(1);
+        image.setDevicePixelRatio(screen->devicePixelRatio());
         frames.append({screen->geometry(), native, image});
     }
     return frames;
@@ -1896,6 +1963,7 @@ static QRect uiaRectAt(UiaAutomation *automation, HWND hwnd, const QPoint &point
                 child->Release();
                 child = SUCCEEDED(hr) ? sibling : nullptr;
             }
+            if (child) child->Release();
         }
         return element;
     };
@@ -1929,6 +1997,38 @@ class WindowDetector : public QThread
 public:
     WindowDetector(HWND overlay, const DetectionOptions &options) : m_overlay(overlay), m_options(options) {}
     ~WindowDetector() override { stop(); wait(); }
+    static WindowDetector *create(HWND overlay, const DetectionOptions &options)
+    {
+        s_workers.erase(std::remove_if(s_workers.begin(), s_workers.end(),
+            [](const QPointer<WindowDetector> &worker) { return !worker || worker->isFinished(); }), s_workers.end());
+        // shortcut: Two stalled in-process providers exhaust detection capacity; use process isolation for restartable providers.
+        if (s_workers.size() >= 2) return nullptr;
+        auto *worker = new WindowDetector(overlay, options);
+        s_workers.append(worker);
+        return worker;
+    }
+    static int testCapacity()
+    {
+        class Waiting : public WindowDetector {
+        public:
+            Waiting() : WindowDetector(nullptr, DetectionOptions()) {}
+            QSemaphore entered, release;
+            void run() override { entered.release(); release.acquire(); }
+        } first, second;
+        first.start(); second.start();
+        first.entered.acquire(); second.entered.acquire();
+        s_workers.append(&first); s_workers.append(&second);
+        WindowDetector *rejected = create(nullptr, DetectionOptions());
+        const bool capped = rejected == nullptr;
+        delete rejected;
+        first.release.release(); second.release.release();
+        first.wait(); second.wait();
+        WindowDetector *resumed = create(nullptr, DetectionOptions());
+        const bool recovered = resumed != nullptr;
+        delete resumed;
+        if (!capped || !recovered) std::fprintf(stderr, "FAIL: blocked-worker capacity and release recovery\n");
+        return capped && recovered ? 0 : 1;
+    }
     quint64 query(const QPoint &point, const QRect &previous = {}) {
         QMutexLocker lock(&m_mutex);
         const quint64 id = ++m_id;
@@ -1944,7 +2044,7 @@ signals:
     void gotRect(const QRect &rect, quint64 id);
 protected:
     void run() override {
-        const HRESULT com = CoInitialize(nullptr);
+        const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         if (SUCCEEDED(com))
             CoCreateInstance(kUiaClassId, nullptr, CLSCTX_INPROC_SERVER, kUiaIid,
                              reinterpret_cast<void **>(&m_uia));
@@ -1994,6 +2094,7 @@ protected:
     }
 private:
     struct Request { QPoint point; QRect previous; quint64 id; };
+    inline static QVector<QPointer<WindowDetector>> s_workers;
     HWND m_overlay;
     DetectionOptions m_options;
     UiaAutomation *m_uia = nullptr;
@@ -2009,17 +2110,19 @@ private:
 static QRect logicalFromNative(const QVector<ScreenFrame> &frames, const QRect &native)
 {
     if (native.isEmpty()) return {};
+    QRect result;
     for (const ScreenFrame &f : frames)
-        if (f.pixelRect.contains(native.center())) {
+        if (f.pixelRect.intersects(native)) {
+            const QRect part = f.pixelRect.intersected(native);
             const double sx = double(f.logicalRect.width()) / f.pixelRect.width();
             const double sy = double(f.logicalRect.height()) / f.pixelRect.height();
-            const int x = qRound(f.logicalRect.x() + (native.x() - f.pixelRect.x()) * sx);
-            const int y = qRound(f.logicalRect.y() + (native.y() - f.pixelRect.y()) * sy);
-            const int right = qRound(f.logicalRect.x() + (native.x() + native.width() - f.pixelRect.x()) * sx);
-            const int bottom = qRound(f.logicalRect.y() + (native.y() + native.height() - f.pixelRect.y()) * sy);
-            return QRect(x, y, right - x, bottom - y);
+            const int x = qRound(f.logicalRect.x() + (part.x() - f.pixelRect.x()) * sx);
+            const int y = qRound(f.logicalRect.y() + (part.y() - f.pixelRect.y()) * sy);
+            const int right = qRound(f.logicalRect.x() + (part.x() + part.width() - f.pixelRect.x()) * sx);
+            const int bottom = qRound(f.logicalRect.y() + (part.y() + part.height() - f.pixelRect.y()) * sy);
+            result |= QRect(x, y, right - x, bottom - y);
         }
-    return native;
+    return result.isEmpty() ? native : result;
 }
 
 class PixelInspector : public QWidget
@@ -2112,17 +2215,33 @@ public:
         setFocusPolicy(Qt::StrongFocus);
         setCursor(Qt::CrossCursor);
         setGeometry(QGuiApplication::primaryScreen()->virtualGeometry());
-        setWindowTargets(nativeWindows);
+        QRect nativeDesktop;
+        for (const GdiDisplay &display : gdiDisplays()) nativeDesktop |= display.native;
+        if (!nativeDesktop.isEmpty()) {
+            // Position the native window before freezing its local coordinate system.
+            if (!SetWindowPos(reinterpret_cast<HWND>(winId()), nullptr, nativeDesktop.x(), nativeDesktop.y(),
+                              nativeDesktop.width(), nativeDesktop.height(), SWP_NOZORDER | SWP_NOACTIVATE)) {
+                QMessageBox::warning(nullptr, QStringLiteral("pinshot"), QStringLiteral("无法定位截图覆盖层"));
+                deleteLater();
+                return;
+            }
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        }
 
         qreal scale = 1;
         for (const ScreenFrame &frame : m_frames)
-            scale = qMax(scale, qreal(frame.image.width()) / frame.logicalRect.width());
+            scale = qMax(scale, frame.image.devicePixelRatio() > 1 ? frame.image.devicePixelRatio()
+                            : qreal(frame.image.width()) / frame.logicalRect.width());
         m_shot = QPixmap(qRound(width() * scale), qRound(height() * scale));
         m_shot.setDevicePixelRatio(scale);
         m_shot.fill(Qt::black);
         QPainter painter(&m_shot);
-        for (const ScreenFrame &frame : m_frames)
-            painter.drawImage(frame.logicalRect.translated(-geometry().topLeft()), frame.image);
+        for (const ScreenFrame &frame : m_frames) {
+            const QPointF local = windowHandle()->mapFromGlobal(QPointF(frame.logicalRect.topLeft()));
+            const QSizeF size = frame.image.devicePixelRatio() > 1
+                ? frame.image.deviceIndependentSize() : QSizeF(frame.logicalRect.size());
+            painter.drawImage(QRectF(local, size), frame.image);
+        }
         painter.end();
         m_inspector = new PixelInspector(this);
 
@@ -2209,6 +2328,7 @@ public:
         m_tools->hide();
 
         show();
+        setWindowTargets(nativeWindows);
         // Claim foreground synchronously (hotkey handling grants activation rights)
         // and detach the IME so plain C/Shift always reach this window.
         HWND handle = reinterpret_cast<HWND>(winId());
@@ -2218,6 +2338,8 @@ public:
         setFocus();
         updateInspector();
         if (liveDetection) {
+            m_detectionWatchdog.setSingleShot(true);
+            connect(&m_detectionWatchdog, &QTimer::timeout, this, &CaptureOverlay::recoverDetector);
             startDetector();
             requestDetection(mapFromGlobal(QCursor::pos()));
         }
@@ -2251,6 +2373,29 @@ public:
         for (const ScreenFrame &live : liveFrames)
             if (probe.setSample(live, QPoint(native.x, native.y))) sampled = true;
         check(sampled && probe.colorText() == QStringLiteral("1, 4, 9"), "live desktop capture preserves native calibration pixels");
+        {
+            CaptureOverlay liveOverlay(liveFrames);
+            liveOverlay.setAttribute(Qt::WA_DeleteOnClose, false);
+            RECT actual{};
+            GetWindowRect(reinterpret_cast<HWND>(liveOverlay.winId()), &actual);
+            QRect desktop;
+            for (const GdiDisplay &display : gdiDisplays()) desktop |= display.native;
+            check(QRect(actual.left, actual.top, actual.right - actual.left, actual.bottom - actual.top) == desktop,
+                  "the visible capture overlay covers the entire native desktop at every scale");
+            const QRect before = liveOverlay.geometry();
+            const QImage frozen = liveOverlay.m_shot.toImage();
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            check(liveOverlay.geometry() == before && liveOverlay.m_shot.toImage() == frozen,
+                  "processing window events cannot move the overlay relative to the frozen pixels");
+            for (const ScreenFrame &captured : liveFrames) {
+                const QPointF local = liveOverlay.windowHandle()->mapFromGlobal(QPointF(captured.logicalRect.topLeft()));
+                const qreal ratio = liveOverlay.m_shot.devicePixelRatioF();
+                const QPoint pixel(qRound(local.x() * ratio), qRound(local.y() * ratio));
+                check(liveOverlay.rect().contains(local.toPoint()) && pixel.x() >= 0 && pixel.y() >= 0,
+                      "every captured screen starts inside the overlay, including negative-origin screens");
+            }
+            liveOverlay.close();
+        }
         calibration.hide();
         QImage image(240, 180, QImage::Format_RGB32);
         image.fill(QColor(1, 4, 9));
@@ -2277,7 +2422,8 @@ public:
         if (!previewPath.isEmpty()) check(panel.save(previewPath), "save magnifier preview");
         const QImage frozen = overlay.m_shot.toImage();
         check(overlay.m_shot.devicePixelRatio() == 1.5, "frozen desktop preserves high-DPI capture resolution");
-        const QPoint origin = (frame.logicalRect.topLeft() - overlay.geometry().topLeft()) * 1.5;
+        const QPointF localOrigin = overlay.mapFromGlobal(QPointF(frame.logicalRect.topLeft()));
+        const QPoint origin(qRound(localOrigin.x() * 1.5), qRound(localOrigin.y() * 1.5));
         check(frozen.pixelColor(origin + QPoint(110, 83)) == QColor(90, 150, 210), "frozen capture retains native pixel detail");
         QKeyEvent copyRgb(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier);
         QApplication::sendEvent(&overlay, &copyRgb);
@@ -2856,7 +3002,6 @@ public:
               "blur rejects missing pixels and unsupported radii");
         for (qreal dpr : {1.0, 1.5, 2.0}) {
             const QRect screen = QGuiApplication::primaryScreen()->geometry();
-            const QPoint origin = screen.topLeft() - QGuiApplication::primaryScreen()->virtualGeometry().topLeft();
             QImage image(qRound(600 * dpr), qRound(360 * dpr), QImage::Format_RGB32);
             for (int y = 0; y < image.height(); ++y) {
                 QRgb *row = reinterpret_cast<QRgb *>(image.scanLine(y));
@@ -2865,6 +3010,7 @@ public:
             }
             CaptureOverlay overlay({ScreenFrame{QRect(screen.topLeft(), QSize(600, 360)),
                                                 QRect(0, 0, image.width(), image.height()), image}});
+            const QPoint origin = overlay.mapFromGlobal(screen.topLeft());
             overlay.setAttribute(Qt::WA_DeleteOnClose, false);
             overlay.m_mode = Adjusting;
             overlay.m_sel = QRect(origin + QPoint(40, 40), QSize(500, 280));
@@ -2883,14 +3029,27 @@ public:
                 QApplication::sendEvent(target, &event);
             };
             auto mode = [&overlay, check](bool brush) {
-                auto *button = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicRectangle"));
+                auto *button = overlay.m_toolOptions->findChild<QToolButton *>(brush
+                    ? QStringLiteral("mosaicBrush") : QStringLiteral("mosaicRectangle"));
                 check(button && !button->toolTip().isEmpty(), "mosaic modes have named icon buttons");
                 if (overlay.mosaicBrush() != brush) button->click();
+                check(!overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicEllipse")),
+                      "mosaic exposes no ellipse-region button");
             };
             const QImage original = overlay.cropped().toImage();
             overlay.m_toolBtn[int(ATool::Mosaic)]->click();
             check(overlay.mosaicBrush() && overlay.toolSize() == 14 && overlay.mosaicStrength() == 6,
                   "mosaic starts as a brush with width 14 and strength 6");
+            auto *brushButton = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicBrush"));
+            check(brushButton && brushButton->isChecked()
+                      && brushButton->icon().pixmap(QSize(16, 16)).toImage()
+                         == makeIcon(Icon::Pen).pixmap(QSize(16, 16)).toImage(),
+                  "mosaic brush has an explicit pencil icon and selected state");
+            brushButton->click();
+            check(overlay.mosaicBrush(), "clicking the active brush keeps brush mode");
+            if (!previewPath.isEmpty() && dpr == 1)
+                check(overlay.grab(overlay.m_tools->geometry().united(overlay.m_toolOptions->geometry()))
+                          .save(previewPath + QStringLiteral(".brush-toolbar.png")), "save explicit brush-mode toolbar preview");
             check(!overlay.m_sizeInput && overlay.m_mosaicWidthLabel
                       && !overlay.m_mosaicWidthLabel->textInteractionFlags()
                       && overlay.m_toolOptions->findChildren<QLineEdit *>().isEmpty()
@@ -3120,24 +3279,21 @@ public:
             overlay.m_anns.clear();
             overlay.m_selAnn = -1;
             const QImage empty = overlay.cropped().toImage();
-            auto *ellipseButton = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicEllipse"));
-            ellipseButton->click();
+            mode(false);
             mouse(QEvent::MouseButtonPress, QPoint(80, 80));
             mouse(QEvent::MouseMove, QPoint(200, 160));
             mouse(QEvent::MouseButtonRelease, QPoint(200, 160));
-            const QImage ellipseOutput = overlay.cropped().toImage();
-            check(overlay.m_anns.size() == 1 && overlay.m_anns[0].mosaicEllipse
-                      && !overlay.m_anns[0].mosaicBrush && ellipseOutput != empty
-                      && ellipseOutput.pixel(qRound(40 * dpr), qRound(40 * dpr))
-                         == empty.pixel(qRound(40 * dpr), qRound(40 * dpr))
-                      && !annotationHit(overlay.m_anns[0], origin + QPoint(80, 80)),
-                  "ellipse regions redact their interior while preserving bounding corners and curved hit tests");
+            const QImage regionOutput = overlay.cropped().toImage();
+            check(overlay.m_anns.size() == 1 && !overlay.m_anns[0].mosaicBrush && regionOutput != empty
+                       && regionOutput.pixel(0, 0) == empty.pixel(0, 0)
+                       && annotationHit(overlay.m_anns[0], origin + QPoint(140, 120)),
+                   "rectangle regions redact their interior while preserving pixels outside the mask");
             overlay.m_mosaicPreview->click();
             const QImage blurred = overlay.cropped().toImage();
-            check(overlay.m_anns[0].mosaicBlur && blurred != ellipseOutput,
-                  "selected ellipse switches effect and renders blur through the same mask");
+            check(overlay.m_anns[0].mosaicBlur && blurred != regionOutput,
+                   "selected rectangle switches effect and renders blur through the same mask");
             overlay.undoAnnotation();
-            check(!overlay.m_anns[0].mosaicBlur && overlay.cropped().toImage() == ellipseOutput,
+            check(!overlay.m_anns[0].mosaicBlur && overlay.cropped().toImage() == regionOutput,
                   "undo restores the selected region's effect and exact output");
             overlay.redoAnnotation();
             check(overlay.m_anns[0].mosaicBlur && overlay.cropped().toImage() == blurred,
@@ -3223,6 +3379,20 @@ public:
             QTemporaryDir directory;
             const QString path = directory.filePath(QStringLiteral("mosaic.png"));
             const QImage output = overlay.cropped().toImage();
+            overlay.pushUndo();
+            check(overlay.m_undoStack.last()[1].mosaicCache.isNull()
+                      && overlay.m_undoStack.last()[1].mosaicSource.isNull(),
+                  "undo snapshots retain semantic annotations without desktop-sized effect caches");
+            overlay.m_anns[0].color = Qt::green;
+            const QImage changedLayers = overlay.cropped().toImage();
+            overlay.undoAnnotation();
+            check(overlay.cropped().toImage() == output, "undo rebuilds effect caches with identical pixels");
+            check(overlay.m_redoStack.last()[1].mosaicCache.isNull()
+                      && overlay.m_redoStack.last()[1].mosaicSource.isNull(),
+                  "redo snapshots also discard rebuildable effect caches");
+            overlay.redoAnnotation();
+            check(overlay.cropped().toImage() == changedLayers, "redo rebuilds the changed lower-layer effect");
+            overlay.undoAnnotation();
             check(overlay.saveCaptureTo(path) && QImage(path) == output,
                   "saved mosaic output retains all pixels and source resolution");
         }
@@ -3235,6 +3405,7 @@ public:
             if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); }
         };
         static_assert(DWMWA_CLOAKED == 14, "Use the cloaking attribute, not a rendering policy");
+        check(WindowDetector::testCapacity() == 0, "stalled detection workers are bounded across capture sessions");
         DetectedWindow synthetic(QRect(0, 0, 100, 100), {QRect(0, 20, 100, 80), QRect(0, 20, 100, 80), QRect(0, 0, 100, 100)});
         prepareChildren(synthetic);
         check(synthetic.nativeChildren.size() == 2, "children are clipped, deduplicated, and split into uncovered strips");
@@ -3328,8 +3499,8 @@ public:
             check(!overlay.m_queryPending, "background detector replies without blocking the GUI");
         };
         waitResult();
-        const QRect expectedButton = logicalFromNative(frames, buttonRect).translated(-overlay.geometry().topLeft());
-        const QRect expectedEdit = logicalFromNative(frames, editRect).translated(-overlay.geometry().topLeft());
+        const QRect expectedButton = overlay.localScreenRect(logicalFromNative(frames, buttonRect));
+        const QRect expectedEdit = overlay.localScreenRect(logicalFromNative(frames, editRect));
         overlay.requestDetection(expectedButton.center());
         waitResult();
         check(overlay.m_hover == expectedButton, "live MSAA/native detection highlights a button under the overlay");
@@ -3356,7 +3527,7 @@ public:
         overlay.cancelDetection();
         // A result superseded by a newer query still paints so the border follows the cursor
         // during fast slides instead of freezing until the mouse stops.
-        overlay.requestDetection(buttonRect.center());
+        overlay.requestDetection(expectedButton.center());
         const quint64 superseded = overlay.m_queryId;      // First of two back-to-back queries.
         overlay.requestDetection(expectedEdit.center());
         overlay.handleDetectedRect(buttonRect, superseded);
@@ -3389,7 +3560,7 @@ public:
         // overlay above the fixture cannot hijack the result the way a global query would.
         QRect uiaHit, uiaGrow;
         QThread *uiaProbe = QThread::create([&] {
-            if (SUCCEEDED(CoInitialize(nullptr))) {
+            if (SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) {
                 UiaAutomation *automation = nullptr;
                 if (SUCCEEDED(CoCreateInstance(kUiaClassId, nullptr, CLSCTX_INPROC_SERVER, kUiaIid,
                                                reinterpret_cast<void **>(&automation))) && automation) {
@@ -3434,9 +3605,25 @@ public:
         silent->blockSignals(true);                  // Simulate a provider that never supplies its result.
         overlay.cancelDetection();
         overlay.requestDetection(expectedEdit.center());
+        QTimer rapidHover;
+        rapidHover.setInterval(25);
+        QObject::connect(&rapidHover, &QTimer::timeout, &overlay, [&] {
+            if (overlay.m_detector == silent)
+                overlay.requestDetection(overlay.m_detectionPoint == expectedEdit.center()
+                    ? expectedButton.center() : expectedEdit.center());
+        });
+        rapidHover.start();
         waitResult();
-        check(overlay.m_detector != silent && overlay.m_hover == expectedEdit,
+        rapidHover.stop();
+        check(overlay.m_detector != silent && !overlay.m_hover.isEmpty(),
               "the watchdog replaces a silent worker and uses native geometry without blocking capture");
+        check(overlay.m_lastHoverId == 0, "a replacement worker starts with a fresh result sequence gate");
+        overlay.requestDetection(expectedButton.center());
+        const quint64 freshSequence = overlay.m_queryId;
+        overlay.requestDetection(expectedEdit.center());
+        overlay.handleDetectedRect(buttonRect, freshSequence);
+        check(overlay.m_hover == expectedButton, "replacement workers accept superseded hover results immediately");
+        waitResult();
         if (silent) {
             silent->blockSignals(false);
             silent->stop();
@@ -3511,6 +3698,7 @@ public:
               "escape drops the annotation tool before closing the overlay");
         bool pinned = false;
         QRect pinnedRegion;
+        const QRect expectedPinnedRegion = overlay.globalScreenRect(expectedButton);
         QObject::connect(&overlay, &CaptureOverlay::grabbed, &overlay,
                          [&pinned, &pinnedRegion](const QPixmap &pix, const QRect &region) {
             pinned = !pix.isNull();
@@ -3528,7 +3716,7 @@ public:
         QApplication::sendEvent(&overlay, &release);
         waitResult();
         check(pinned && !overlay.isVisible(), "double-click pinning waits for the fresh element result");
-        check(pinnedRegion == overlay.m_sel.translated(overlay.geometry().topLeft()),
+        check(pinnedRegion == expectedPinnedRegion,
               "double-click pinning reports the locked selection's original global geometry");
         overlay.close();
         check(!overlay.isVisible() && !overlay.m_queryPending, "closing capture cancels pending detection");
@@ -3537,11 +3725,16 @@ public:
             const QRect logical = logicalFromNative(frames, cross.native);
             if (QGuiApplication::screenAt(logical.center())) {
                 overlay.setWindowTargets({cross});
-                check(overlay.m_windowRects.first().native.size() == logical.size(),
+                if (overlay.m_windowRects.first().native.size() != overlay.localScreenRect(logical).size())
+                    std::fprintf(stderr, "cross-screen local actual=%dx%d expected=%dx%d logical=(%d,%d %dx%d)\n",
+                        overlay.m_windowRects.first().native.width(), overlay.m_windowRects.first().native.height(),
+                        overlay.localScreenRect(logical).width(), overlay.localScreenRect(logical).height(),
+                        logical.x(), logical.y(), logical.width(), logical.height());
+                check(overlay.m_windowRects.first().native.size() == overlay.localScreenRect(logical).size(),
                       "non-maximized windows crossing screens retain their full rectangle");
                 cross.maximized = true;
                 overlay.setWindowTargets({cross});
-                check(rectArea(overlay.m_windowRects.first().native) < rectArea(logical),
+                check(rectArea(overlay.m_windowRects.first().native) < rectArea(overlay.localScreenRect(logical)),
                       "maximized detection rectangles are clipped to the center screen");
             }
         }
@@ -3876,7 +4069,7 @@ public:
             pinnedRegion = region;
         });
         const QImage expected = overlay.cropped().toImage();
-        const QRect expectedRegion = overlay.m_sel.translated(overlay.geometry().topLeft());
+        const QRect expectedRegion = overlay.globalScreenRect(overlay.m_sel);
         overlay.pinCapture();
         check(!pinned.isNull() && pinned.toImage() == expected && overlay.m_anns.size() == 4,
               "capture actions commit the live text and output it exactly once");
@@ -3912,6 +4105,111 @@ public:
         }
         QTemporaryDir directory;
         check(directory.isValid(), "output regression has an isolated temporary directory");
+        const QString protectedPath = directory.path() + QStringLiteral("/protected.png");
+        QImage original(24, 18, QImage::Format_RGB32);
+        original.fill(Qt::magenta);
+        check(original.save(protectedPath), "create an existing image for replacement-failure regression");
+        HANDLE heldFile = CreateFileW(reinterpret_cast<LPCWSTR>(protectedPath.utf16()), GENERIC_READ,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        check(heldFile != INVALID_HANDLE_VALUE, "hold the destination without delete-sharing");
+        if (heldFile != INVALID_HANDLE_VALUE) {
+            check(!overlay.saveCaptureTo(protectedPath) && overlay.isVisible() && QImage(protectedPath) == original,
+                  "failed replacement preserves both the original file and the annotated capture");
+            CloseHandle(heldFile);
+            check(overlay.saveCaptureTo(protectedPath) && QImage(protectedPath) == expected,
+                  "retrying the same destination succeeds after the replacement lock is released");
+        }
+        overlay.show();
+        for (int action : {Qt::Key_Delete, Qt::Key_Z, Qt::Key_Y, Qt::Key_Escape}) {
+            Annotation ink;
+            ink.tool = ATool::Rect;
+            ink.color = Qt::red;
+            ink.fill = true;
+            ink.rect = QRect(overlay.m_sel.topLeft() + QPoint(20, 20), QSize(80, 50));
+            overlay.m_anns = {ink};
+            overlay.m_selAnn = 0;
+            overlay.m_atool = ATool::None;
+            overlay.m_itemDrag = H_None;
+            overlay.m_dragStarted = false;
+            overlay.m_undoStack = {overlay.m_anns};
+            overlay.m_redoStack = {overlay.m_anns};
+            overlay.placeToolbar();
+            overlay.showToolBars();
+            const QPoint pressPoint(ink.rect.center().x(), ink.rect.top());
+            QMouseEvent press(QEvent::MouseButtonPress, pressPoint, overlay.mapToGlobal(pressPoint),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(&overlay, &press);
+            check(overlay.m_itemDrag == H_Move, "pressing an existing annotation enters object drag");
+            if (action != Qt::Key_Y) {
+                const QPoint next = pressPoint + QPoint(20, 10);
+                QMouseEvent drag(QEvent::MouseMove, next, overlay.mapToGlobal(next),
+                                 Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(&overlay, &drag);
+                check(overlay.m_dragStarted && overlay.m_tools->isVisible(), "active drag keeps selected-object options available before interruption");
+            }
+            QKeyEvent interrupt(QEvent::KeyPress, action,
+                action == Qt::Key_Z || action == Qt::Key_Y ? Qt::ControlModifier : Qt::NoModifier);
+            QApplication::sendEvent(&overlay, &interrupt);
+            check(overlay.m_itemDrag == H_None && !overlay.m_dragStarted,
+                  "keyboard changes to selection or annotations terminate an active item drag");
+            if (overlay.m_itemDrag == H_None) {
+                const auto before = overlay.m_anns;
+                QMouseEvent move(QEvent::MouseMove, overlay.m_sel.center(), overlay.mapToGlobal(overlay.m_sel.center()),
+                                 Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(&overlay, &move);
+                check(overlay.m_anns.size() == before.size(), "mouse movement after interrupted drag is safe");
+                QMouseEvent release(QEvent::MouseButtonRelease, overlay.m_sel.center(), overlay.mapToGlobal(overlay.m_sel.center()),
+                                    Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+                QApplication::sendEvent(&overlay, &release);
+                check(overlay.m_tools->isVisible(), "interrupted drag restores the toolbar and safely accepts release");
+            }
+        }
+        overlay.m_itemDrag = H_None;
+        overlay.m_dragStarted = false;
+        overlay.m_itemDrag = H_Move;
+        overlay.m_dragStarted = true;
+        overlay.selectTool(ATool::Rect);
+        check(overlay.m_itemDrag == H_None && !overlay.m_dragStarted,
+              "switching tools terminates an active object drag");
+        overlay.m_anns.clear();
+        overlay.m_undoStack.clear();
+        overlay.m_redoStack.clear();
+        overlay.m_selAnn = -1;
+        overlay.selectTool(ATool::Text);
+        overlay.beginTextEdit(overlay.m_sel.topLeft() + QPoint(20, 20));
+        overlay.m_editor->setPlainText(QStringLiteral("Retain this annotation"));
+        overlay.commitTextEdit();
+        const QRect validSelection = overlay.m_sel;
+        overlay.m_sel = {};
+        check(overlay.cropped().isNull(), "empty selection cannot export the whole desktop");
+        const QString emptyPath = directory.path() + QStringLiteral("/empty.png");
+        check(!overlay.saveCaptureTo(emptyPath) && !QFileInfo::exists(emptyPath),
+              "saving an empty selection cannot write a desktop image");
+        overlay.show();
+        bool emittedEmpty = false;
+        const auto connection = QObject::connect(&overlay, &CaptureOverlay::grabbed, &overlay,
+            [&](const QPixmap &, const QRect &) { emittedEmpty = true; });
+        overlay.pinCapture();
+        check(!emittedEmpty && overlay.isVisible(), "empty pin export preserves the capture without creating a pin");
+        QObject::disconnect(connection);
+        overlay.show();
+        overlay.m_sel = validSelection;
+        overlay.m_sizeTip->hide();
+        overlay.m_inspector->setSample(overlay.m_frames.first(), overlay.m_frames.first().pixelRect.center());
+        overlay.m_inspector->show();
+        QKeyEvent copyColor(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier);
+        {
+            ClipboardBlocker blocker;
+            check(blocker.locked(), "color-copy contention fixture acquired the lock");
+            const DWORD sequence = GetClipboardSequenceNumber();
+            QApplication::sendEvent(&overlay, &copyColor);
+            check(overlay.isVisible() && overlay.m_sizeTip->isVisible() && GetClipboardSequenceNumber() == sequence,
+                  "failed color copy provides feedback and preserves the clipboard and capture");
+        }
+        QApplication::sendEvent(&overlay, &copyColor);
+        check(QGuiApplication::clipboard()->text() == overlay.m_inspector->colorText() && !overlay.m_sizeTip->isVisible(),
+              "color copy succeeds after clipboard contention ends");
+        overlay.m_inspector->hide();
         check(!overlay.saveCaptureTo(directory.path() + QStringLiteral("/missing/capture.png"))
                   && overlay.isVisible() && overlay.cropped().toImage() == expected && overlay.m_anns.size() == 1,
               "failed image save keeps the same annotated capture available for retry");
@@ -4009,6 +4307,7 @@ protected:
         const bool wasEditing = editorActive();
         if (wasEditing) commitTextEdit();           // Canvas clicks finish input; controls keep it live.
         if (e->button() == Qt::RightButton) {       // Right click ends input, then the ladder.
+            stopItemDrag();
             if (m_live) { m_live = false; commitAnnotation(); }
             else if (wasEditing) return;
             else if (m_atool != ATool::None) setToolNone();
@@ -4155,6 +4454,7 @@ protected:
             return;
         }
         if (m_itemDrag != H_None) {                  // Move or resize the selected annotation.
+            if (m_selAnn < 0 || m_selAnn >= m_anns.size()) { stopItemDrag(); return; }
             if (!m_dragStarted) {
                 if ((pos - m_pressPos).manhattanLength() < QApplication::startDragDistance())
                     return;
@@ -4323,7 +4623,7 @@ protected:
             if (m_live) { m_live = false; endAnnotationDrag(); }
             else if (editorActive()) commitTextEdit();
             else if (m_atool != ATool::None) setToolNone();
-            else if (m_selAnn >= 0) { m_selAnn = -1; updateToolOptions(); update(); }
+            else if (m_selAnn >= 0) { stopItemDrag(); m_selAnn = -1; updateToolOptions(); update(); }
             else close();
             break;
         case Qt::Key_Space:
@@ -4367,7 +4667,9 @@ protected:
                 if (m_mode == Adjusting && !m_live) copyCapture();
             } else if (!(e->modifiers() & (Qt::AltModifier | Qt::MetaModifier))
                        && m_inspector->isVisible() && !m_inspector->colorText().isEmpty()) {
-                QGuiApplication::clipboard()->setText(m_inspector->colorText());
+                if (!copyTextToClipboard(m_inspector->colorText()))
+                    showOutputError(QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+                else m_sizeTip->hide();
             }
             break;
         case Qt::Key_Z:
@@ -4425,7 +4727,7 @@ private:
         int pen = 3;                                 // Stroke width in logical pixels.
         int mosaicStrength = 6;                      // Pixel block size (3-24), independent of brush width.
         bool mosaicBrush = false;
-        bool mosaicEllipse = false, mosaicBlur = false;
+        bool mosaicBlur = false;
         int mosaicLevels[2] = {6, 6};
         quint32 mosaicSeed = 1;
         mutable int mosaicCacheStrength = 0;
@@ -4501,11 +4803,6 @@ private:
                 if (distToSegment(pos, ann.stroke[i - 1], ann.stroke[i]) <= ann.pen / 2.0 + lineTol)
                     return true;
             return QLineF(pos, ann.stroke.first()).length() <= ann.pen / 2.0 + lineTol;
-        }
-        if (ann.tool == ATool::Mosaic && ann.mosaicEllipse) {
-            QPainterPath area;
-            area.addEllipse(QRectF(ann.rect).adjusted(-tol, -tol, tol, tol));
-            return area.contains(pos);
         }
         switch (ann.tool) {
         case ATool::Rect:                            // Outlines select on their border only.
@@ -4593,8 +4890,7 @@ private:
         p.setPen(border);
         p.setBrush(Qt::NoBrush);
         const QRectF bounds = QRectF(ann.rect).adjusted(0, 0, -1, -1);
-        if (ann.mosaicEllipse) p.drawEllipse(bounds);
-        else p.drawRect(bounds);
+        p.drawRect(bounds);
         if (selected) {
             p.setPen(QPen(Qt::white, 0));
             for (const QPoint &anchor : annAnchors(ann))
@@ -4647,6 +4943,7 @@ private:
     }
     void applyItemDrag(const QPoint &pos, Qt::KeyboardModifiers mods = Qt::NoModifier)
     {
+        if (m_selAnn < 0 || m_selAnn >= m_anns.size()) { stopItemDrag(); return; }
         Annotation ann = m_pressAnn;                 // Always computed from the press snapshot.
         if (m_itemDrag == H_Move) translateAnnotation(ann, pos - m_pressPos);
         else if (m_itemDrag == H_Rotate) {           // Drag the stalk to rotate around the center.
@@ -4695,9 +4992,19 @@ private:
         m_anns[m_selAnn] = ann;
         syncSizeInput();
     }
+    QVector<Annotation> annotationSnapshot() const
+    {
+        QVector<Annotation> snapshot = m_anns;
+        for (Annotation &ann : snapshot) {
+            ann.mosaicCache = {};
+            ann.mosaicSource = {};
+            ann.mosaicCacheStrength = 0;
+        }
+        return snapshot;
+    }
     void pushUndo()                                  // Snapshot stacks: one list per step.
     {
-        m_undoStack.append(m_anns);
+        m_undoStack.append(annotationSnapshot());
         if (m_undoStack.size() > 100) m_undoStack.removeFirst();
         m_redoStack.clear();
         syncUndoButtons();
@@ -4732,6 +5039,7 @@ private:
     }
     void deleteSelected()
     {
+        stopItemDrag();
         if (m_selAnn < 0 || m_selAnn >= m_anns.size()) { m_selAnn = -1; return; }
         pushUndo();
         m_anns.removeAt(m_selAnn);
@@ -5122,11 +5430,10 @@ private:
         }
         syncSizeInput();
     }
-    void selectMosaicMode(bool brush, bool ellipse = false)
+    void selectMosaicMode(bool brush)
     {
         if (m_live) { m_live = false; commitAnnotation(); }
         m_mosaicBrush = brush;
-        m_mosaicEllipse = ellipse;
         selectTool(ATool::Mosaic);
     }
     qreal toolSize() const
@@ -5248,7 +5555,6 @@ private:
         if (m_atool == ATool::Mosaic) {
             m_ann.pen = m_mosaicWidth;
             m_ann.mosaicBrush = m_mosaicBrush;
-            m_ann.mosaicEllipse = m_mosaicEllipse;
             m_ann.mosaicBlur = m_mosaicBlur;
             m_ann.mosaicLevels[0] = m_mosaicLevels[0];
             m_ann.mosaicLevels[1] = m_mosaicLevels[1];
@@ -5320,6 +5626,13 @@ private:
         }
         endAnnotationDrag();
     }
+    void stopItemDrag()
+    {
+        const bool moved = m_itemDrag != H_None && m_dragStarted;
+        m_itemDrag = H_None;
+        m_dragStarted = false;
+        if (moved) endAnnotationDrag();
+    }
     void endAnnotationDrag()                         // Restore what stepped aside.
     {
         m_sizeTip->hide();
@@ -5330,6 +5643,7 @@ private:
     }
     void setToolNone()
     {
+        stopItemDrag();
         commitTextEdit();
         m_atool = ATool::None;
         syncToolButtons();
@@ -5339,6 +5653,7 @@ private:
     }
     void selectTool(ATool tool)                      // Shared by toolbar toggles and keyboard.
     {
+        stopItemDrag();
         commitTextEdit();
         m_atool = tool;
         if (tool == ATool::Rect) m_shapeEllipse = false;        // R/O/popup pick the sub-shape.
@@ -5728,14 +6043,12 @@ private:
                 m_mosaicWidthLabel->installEventFilter(this);
                 lay->addWidget(m_mosaicWidthLabel);
             }
-            const bool ellipse = m_live ? m_ann.mosaicEllipse
-                : m_selAnn >= 0 && m_selAnn < m_anns.size() ? m_anns[m_selAnn].mosaicEllipse : m_mosaicEllipse;
-            addOption(lay, Icon::Rect, QStringLiteral("矩形区域：再次点击返回涂抹"), !brush && !ellipse,
-                      [this, brush, ellipse] { selectMosaicMode(!brush && !ellipse); });
+            addOption(lay, Icon::Rect, QStringLiteral("矩形马赛克"), !brush,
+                      [this] { selectMosaicMode(false); });
             lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("mosaicRectangle"));
-            addOption(lay, Icon::Ellipse, QStringLiteral("椭圆区域：再次点击返回涂抹"), !brush && ellipse,
-                      [this, brush, ellipse] { selectMosaicMode(!brush && ellipse, true); });
-            lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("mosaicEllipse"));
+            addOption(lay, Icon::Pen, QStringLiteral("马赛克笔：滚轮调节笔宽"), brush,
+                      [this] { selectMosaicMode(true); });
+            lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("mosaicBrush"));
             m_mosaicPreview = iconButton(Icon::Mosaic, QStringLiteral("像素化 / 模糊"));
             m_mosaicPreview->setObjectName(QStringLiteral("mosaicEffectPreview"));
             m_mosaicPreview->setAccessibleName(QStringLiteral("切换像素化 / 模糊"));
@@ -5811,7 +6124,7 @@ private:
             if (ann.tool == ATool::Mosaic) --remainingMosaics;
             if (visible) drawAnnotation(p, ann, lower);
             if (remainingMosaics > 0) {
-                const QImage source = lower;
+                const QImage source = ann.tool == ATool::Mosaic ? lower : QImage();
                 QPainter layer(&lower);
                 layer.scale(m_shot.devicePixelRatioF(), m_shot.devicePixelRatioF());
                 layer.setClipRect(QRectF(m_sel));
@@ -6021,8 +6334,6 @@ private:
                     stroker.setJoinStyle(Qt::RoundJoin);
                     mask = stroker.createStroke(line);
                 }
-            } else if (ann.mosaicEllipse) {
-                mask.addEllipse(QRectF(ann.rect));
             } else mask.addRect(QRectF(ann.rect));
             p.setClipPath(mask, Qt::IntersectClip);
             if (ann.mosaicCacheStrength != ann.mosaicStrength || ann.mosaicCache.isNull()
@@ -6050,7 +6361,14 @@ private:
     void startDetector()
     {
         qRegisterMetaType<WindowTargets>("WindowTargets");
-        m_detector = new WindowDetector(reinterpret_cast<HWND>(winId()), m_detectionOptions);
+        m_detectionWatchdog.stop();
+        m_lastHoverId = m_queryId = 0;
+        m_detector = WindowDetector::create(reinterpret_cast<HWND>(winId()), m_detectionOptions);
+        if (!m_detector) {
+            m_queryPending = false;
+            setWindowTargets(detectWindowRects(reinterpret_cast<HWND>(winId()), m_detectionOptions.excludedPrograms));
+            return;
+        }
         const QPointer<WindowDetector> detector = m_detector;
         connect(detector, &QThread::finished, detector, &QObject::deleteLater);
         connect(detector, &WindowDetector::gotTargets, this, [this, detector](const WindowTargets &targets, quint64 id) {
@@ -6059,7 +6377,10 @@ private:
             if (detector == m_detector && isVisible()) setWindowTargets(targets);
         }, Qt::QueuedConnection);
         connect(detector, &WindowDetector::gotRect, this, [this, detector](const QRect &rect, quint64 id) {
-            if (detector == m_detector) handleDetectedRect(rect, id);
+            if (detector == m_detector) {
+                if (m_queryPending) m_detectionWatchdog.start(500);
+                handleDetectedRect(rect, id);
+            }
         }, Qt::QueuedConnection);
         detector->start(QThread::LowestPriority);
     }
@@ -6074,20 +6395,36 @@ private:
                 if (screen != center && screen->geometry().intersects(logical)) crosses = true;
             if (center && (win.maximized || !crosses)) logical &= center->geometry();
             if (logical.isEmpty()) continue;
-            DetectedWindow target(logical.translated(-geometry().topLeft()));
+            DetectedWindow target(localScreenRect(logical));
             target.hwnd = win.hwnd;
             target.program = win.program;
             for (const QRect &child : win.nativeChildren) {
                 const QRect clipped = logical.intersected(logicalFromNative(m_frames, child));
-                if (!clipped.isEmpty()) target.nativeChildren.append(clipped.translated(-geometry().topLeft()));
+                if (!clipped.isEmpty()) target.nativeChildren.append(localScreenRect(clipped));
             }
             m_windowRects.append(target);
         }
     }
+    QRect localScreenRect(const QRect &global) const
+    {
+        if (global.isEmpty()) return {};
+        const QPointF top = windowHandle()->mapFromGlobal(QPointF(global.topLeft()));
+        const QPointF end = windowHandle()->mapFromGlobal(QPointF(global.x() + global.width(), global.y() + global.height()));
+        return QRect(QPoint(qRound(top.x()), qRound(top.y())),
+                     QSize(qRound(end.x()) - qRound(top.x()), qRound(end.y()) - qRound(top.y())));
+    }
+    QRect globalScreenRect(const QRect &local) const
+    {
+        if (local.isEmpty()) return {};
+        const QPointF top = windowHandle()->mapToGlobal(QPointF(local.topLeft()));
+        const QPointF end = windowHandle()->mapToGlobal(QPointF(local.x() + local.width(), local.y() + local.height()));
+        return QRect(QPoint(qRound(top.x()), qRound(top.y())),
+                     QSize(qRound(end.x()) - qRound(top.x()), qRound(end.y()) - qRound(top.y())));
+    }
     QRect nativeDetectionRect(const QRect &local) const
     {
         if (local.isEmpty()) return {};
-        const QRect global = local.translated(geometry().topLeft());
+        const QRect global = globalScreenRect(local);
         for (const ScreenFrame &frame : m_frames)
             if (frame.logicalRect.contains(global.center())) {
                 const double sx = double(frame.pixelRect.width()) / frame.logicalRect.width();
@@ -6101,6 +6438,7 @@ private:
     void cancelDetection()
     {
         if (m_detector) m_detector->cancel();
+        m_detectionWatchdog.stop();
         m_queryId = 0;
         m_queryPending = m_waitingClick = false;
         m_pinAfterDetection = false;
@@ -6116,33 +6454,35 @@ private:
         m_queryPending = true;
         m_expanding = !previous.isEmpty();
         m_queryId = m_detector->query(nativePoint.topLeft(), nativeDetectionRect(previous));
-        const quint64 id = m_queryId;
+        if (!m_detectionWatchdog.isActive()) m_detectionWatchdog.start(500);
+    }
+    void recoverDetector()
+    {
         const QPointer<WindowDetector> detector = m_detector;
-        QTimer::singleShot(500, this, [this, detector, id] {
-            if (!detector || detector != m_detector || id != m_queryId || !m_queryPending || !isVisible()) return;
-            setWindowTargets(detectWindowRects(reinterpret_cast<HWND>(winId()), m_detectionOptions.excludedPrograms));
-            bool identified = false;
-            for (const DetectedWindow &win : m_windowRects)
-                if (win.native.contains(m_detectionPoint) && !win.program.isEmpty()) {
-                    identified = true;
-                    if (!m_detectionOptions.disabledUiPrograms.contains(win.program, Qt::CaseInsensitive)) {
-                        m_detectionOptions.disabledUiPrograms.append(win.program);
-                        if (windowHung(win.hwnd)) {
-                            QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
-                            QStringList disabled = settings.value(QStringLiteral("Snip/crashes")).toStringList();
-                            if (!disabled.contains(win.program, Qt::CaseInsensitive)) disabled.append(win.program);
-                            settings.setValue(QStringLiteral("Snip/crashes"), disabled);
-                        }
+        const quint64 id = m_queryId;
+        if (!detector || !m_queryPending || !isVisible()) return;
+        setWindowTargets(detectWindowRects(reinterpret_cast<HWND>(winId()), m_detectionOptions.excludedPrograms));
+        bool identified = false;
+        for (const DetectedWindow &win : m_windowRects)
+            if (win.native.contains(m_detectionPoint) && !win.program.isEmpty()) {
+                identified = true;
+                if (!m_detectionOptions.disabledUiPrograms.contains(win.program, Qt::CaseInsensitive)) {
+                    m_detectionOptions.disabledUiPrograms.append(win.program);
+                    if (windowHung(win.hwnd)) {
+                        QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+                        QStringList disabled = settings.value(QStringLiteral("Snip/crashes")).toStringList();
+                        if (!disabled.contains(win.program, Qt::CaseInsensitive)) disabled.append(win.program);
+                        settings.setValue(QStringLiteral("Snip/crashes"), disabled);
                     }
-                    break;
                 }
-            if (!identified) m_detectionOptions.elements = false;
-            // A stuck provider must not hold up a click or block the next capture session.
-            detector->stop();
-            handleDetectedRect(nativeDetectionRect(windowAt(m_detectionPoint)), id);
-            startDetector();
-            m_queryId = 0;
-        });
+                break;
+            }
+        if (!identified) m_detectionOptions.elements = false;
+        // A stuck provider must not hold up a click or block the next capture session.
+        detector->stop();
+        handleDetectedRect(nativeDetectionRect(windowAt(m_detectionPoint)), id);
+        if (isVisible()) startDetector();
+        else m_detector = nullptr;
     }
     // Hover-driven repaints stay incremental: a full-desktop repaint per follow update
     // saturates the GUI thread during fast slides, and painting is stateless (frozen frame
@@ -6171,7 +6511,7 @@ private:
             if (m_mode != Selecting || !m_queryId || m_drag != H_None
                 || m_waitingClick || m_expanding || id <= m_lastHoverId) return;
             m_lastHoverId = id;
-            const QRect stale = logicalFromNative(m_frames, native).translated(-geometry().topLeft());
+            const QRect stale = localScreenRect(logicalFromNative(m_frames, native));
             if (stale.isEmpty()) return;
             const QRect old = m_hover;
             m_hover = stale;
@@ -6181,15 +6521,16 @@ private:
         }
         m_lastHoverId = id;
         m_queryPending = false;
-        QRect detected = logicalFromNative(m_frames, native).translated(-geometry().topLeft());
+        m_detectionWatchdog.stop();
+        QRect detected = localScreenRect(logicalFromNative(m_frames, native));
         if (native.isEmpty() && m_detectionOptions.windows) {
-            const QScreen *screen = QGuiApplication::screenAt(m_detectionPoint + geometry().topLeft());
-            if (screen) detected = screen->availableGeometry().translated(-geometry().topLeft());
+            const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(m_detectionPoint));
+            if (screen) detected = localScreenRect(screen->availableGeometry());
             if (!detected.contains(m_detectionPoint)) detected = QRect(m_detectionPoint, QSize(1, 1));
         }
         if (m_expanding && detected == m_hover) {
-            const QScreen *screen = QGuiApplication::screenAt(m_detectionPoint + geometry().topLeft());
-            const QRect available = screen ? screen->availableGeometry().translated(-geometry().topLeft()) : QRect();
+            const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(m_detectionPoint));
+            const QRect available = screen ? localScreenRect(screen->availableGeometry()) : QRect();
             if (available != m_hover && available.contains(m_hover)) detected = available;
         }
         if (!detected.isEmpty() && !detected.contains(m_detectionPoint)) return;
@@ -6236,7 +6577,7 @@ private:
                 if (!m_inspector->setSample(frame, pixel))
                     continue;
                 const QPoint local = mapFromGlobal(QCursor::pos());
-                const QRect bounds = frame.logicalRect.translated(-geometry().topLeft());
+                const QRect bounds = localScreenRect(frame.logicalRect);
                 m_inspector->move(inspectorPosition(local, m_inspector->size(), bounds));
                 m_inspector->show();
                 m_tools->raise();
@@ -6257,6 +6598,7 @@ private:
 
     void resetSelection()
     {
+        stopItemDrag();
         if (m_colorDialog) m_colorDialog->close();
         m_mode = Selecting;                         // m_hover is kept: the next mouse move refreshes it.
         m_sel = QRect();
@@ -6343,9 +6685,8 @@ private:
     QVector<int> snapAnchorLines(bool horizontal) const
     {
         QVector<int> out;
-        const QPoint off = -geometry().topLeft();
         for (const QScreen *s : QGuiApplication::screens()) {
-            const QRect g = s->geometry().translated(off);
+            const QRect g = localScreenRect(s->geometry());
             if (horizontal)
                 out << g.left() << g.right() + 1 << g.center().x();
             else
@@ -6436,9 +6777,8 @@ private:
     void placeToolbar()
     {
         const QRect old = m_tools->geometry().united(m_toolOptions->geometry());
-        const QScreen *screen = QGuiApplication::screenAt(m_sel.center() + geometry().topLeft());
-        const QRect avail = (screen ? screen : QGuiApplication::primaryScreen())
-                              ->availableGeometry().translated(-geometry().topLeft());
+        const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(m_sel.center()));
+        const QRect avail = localScreenRect((screen ? screen : QGuiApplication::primaryScreen())->availableGeometry());
         const QSize main = m_tools->sizeHint();
         const QSize options = optionsTool() == ATool::None ? QSize(0, 0) : m_toolOptions->sizeHint();
         const int width = qMax(main.width(), options.width());
@@ -6482,6 +6822,7 @@ private:
     }
     QPixmap cropped() const
     {
+        if (m_sel.isEmpty() || m_shot.isNull()) return {};
         const qreal scale = m_shot.devicePixelRatio();
         const QRect r = m_sel.normalized();
         QPixmap pix = m_shot.copy(QRect(qRound(r.x() * scale), qRound(r.y() * scale),
@@ -6496,9 +6837,10 @@ private:
 private slots:
     void undoAnnotation()
     {
+        stopItemDrag();
         commitTextEdit();
         if (m_undoStack.isEmpty()) return;
-        m_redoStack.append(m_anns);
+        m_redoStack.append(annotationSnapshot());
         m_anns = m_undoStack.takeLast();
         m_selAnn = -1;
         normalizeNumbers();
@@ -6508,9 +6850,10 @@ private slots:
     }
     void redoAnnotation()
     {
+        stopItemDrag();
         commitTextEdit();
         if (m_redoStack.isEmpty()) return;
-        m_undoStack.append(m_anns);
+        m_undoStack.append(annotationSnapshot());
         m_anns = m_redoStack.takeLast();
         m_selAnn = -1;
         normalizeNumbers();
@@ -6521,6 +6864,7 @@ private slots:
     void saveCapture()
     {
         commitTextEdit();
+        if (m_sel.isEmpty()) return;
         const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
         const QString path = QFileDialog::getSaveFileName(
             this, QStringLiteral("保存截图"),
@@ -6535,7 +6879,7 @@ private slots:
     }
     bool saveCaptureTo(const QString &path)
     {
-        if (!cropped().save(path)) {
+        if (!saveImageAtomic(cropped().toImage(), path)) {
             showOutputError(QStringLiteral("保存失败，请检查路径或磁盘空间后重试"));
             return false;
         }
@@ -6563,14 +6907,18 @@ private slots:
     {
         commitTextEdit();
         const QPixmap pix = cropped();
-        const QRect global = m_sel.normalized().translated(geometry().topLeft());
+        if (pix.isNull()) {
+            showOutputError(QStringLiteral("贴图失败，请确认选区有效并检查内存后重试"));
+            return;
+        }
+        const QRect global = globalScreenRect(m_sel.normalized());
         close();
         emit grabbed(pix, global);
     }
     void longCapture()
     {
         commitTextEdit();
-        const QRect global = m_sel.translated(geometry().topLeft());  // Selection uses local coordinates.
+        const QRect global = globalScreenRect(m_sel);
         close();
         emit longRequested(global);
     }
@@ -6604,7 +6952,7 @@ private:
     QColor m_acolor = QColor("#ff3b30");             // Red first: the loudest marking color.
     int m_apen = 3;
     int m_mosaicLevels[2] = {6, 6}, m_mosaicWidth = 14;
-    bool m_mosaicBrush = true, m_mosaicEllipse = false, m_mosaicBlur = false, m_mosaicDragUndo = false;
+    bool m_mosaicBrush = true, m_mosaicBlur = false, m_mosaicDragUndo = false;
     qreal m_afont = 15;                              // Base text/number font size (pt).
     QString m_afamily = QStringLiteral("Microsoft YaHei UI");
     bool m_afill = false;                            // Default fill mode for rect / ellipse.
@@ -6619,6 +6967,7 @@ private:
     bool m_erasing = false;
     bool m_eraseSnapshotted = false;
     QVector<QVector<Annotation>> m_undoStack, m_redoStack;
+    QTimer m_detectionWatchdog;
     QToolButton *m_undoButton = nullptr;             // Enabled state follows the stacks.
     QToolButton *m_redoButton = nullptr;
     QGraphicsTextItem *m_editor = nullptr;           // Native editable text with content-sized bounds.
@@ -6728,7 +7077,7 @@ public slots:
         auto *ov = new CaptureOverlay(frames, {}, options, true);
         m_capture = ov;
         connect(ov, &CaptureOverlay::grabbed, this, [](const QPixmap &pix, const QRect &region) {
-            new PinWindow(pix, region);
+            if (!pix.isNull() && !region.isEmpty()) new PinWindow(pix, region);
         });
         connect(ov, &CaptureOverlay::longRequested, this, [](const QRect &region) {
             auto *lc = new LongCapture(region);
