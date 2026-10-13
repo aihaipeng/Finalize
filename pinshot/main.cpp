@@ -51,6 +51,8 @@
 #include <QThread>
 #include <QMutex>
 #include <QWaitCondition>
+#include <QSemaphore>
+#include <QTemporaryDir>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QBuffer>
@@ -161,12 +163,62 @@ static QPixmap grabScreen(const QRect &rect)
     return out;
 }
 
+static bool copyImageToClipboard(const QImage &image)
+{
+    if (image.isNull()) return false;
+    QClipboard *clipboard = QGuiApplication::clipboard();
+    QElapsedTimer retry;
+    retry.start();
+    do {
+        const DWORD sequence = GetClipboardSequenceNumber();
+        clipboard->setImage(image);
+        if (clipboard->ownsClipboard() && GetClipboardSequenceNumber() != sequence) return true;
+        QEventLoop wait;
+        QTimer::singleShot(15, &wait, &QEventLoop::quit);
+        wait.exec(QEventLoop::ExcludeUserInputEvents); // Clipboard and IME owners need system events to release contention.
+    } while (retry.elapsed() < 300);
+    return false;
+}
+
+// Native clipboard contention fixture; the lock must belong to a different thread.
+class ClipboardBlocker
+{
+public:
+    ClipboardBlocker()
+    {
+        m_thread = QThread::create([this] {
+            HWND window = CreateWindowExW(0, L"STATIC", L"clipboard regression", 0, 0, 0, 1, 1,
+                                          nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+            QElapsedTimer retry;
+            retry.start();
+            while (window && !(m_locked = OpenClipboard(window)) && retry.elapsed() < 1000)
+                QThread::msleep(15);
+            m_ready.release();
+            m_release.acquire();
+            if (m_locked) CloseClipboard();
+            if (window) DestroyWindow(window);
+        });
+        m_thread->start();
+        while (!m_ready.tryAcquire()) {
+            QEventLoop wait;
+            QTimer::singleShot(15, &wait, &QEventLoop::quit);
+            wait.exec(QEventLoop::ExcludeUserInputEvents);
+        }
+    }
+    ~ClipboardBlocker() { m_release.release(); m_thread->wait(); delete m_thread; }
+    bool locked() const { return m_locked; }
+private:
+    QThread *m_thread = nullptr;
+    QSemaphore m_ready, m_release;
+    bool m_locked = false;
+};
+
 // ---------- Pinned image window ----------
 class PinWindow : public QWidget
 {
 public:
     explicit PinWindow(const QPixmap &pix, const QRect &displayRect)
-        : m_pix(pix), m_scale(double(displayRect.width()) / pix.width())
+        : m_pix(pix), m_scale(qMin(double(displayRect.width()) / pix.width(), double(displayRect.height()) / pix.height()))
     {
         setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
         setAttribute(Qt::WA_DeleteOnClose);
@@ -235,6 +287,26 @@ public:
                            - double(anchor.x() - source.x()) / source.width()) < 0.003,
               "wheel zoom starts from the displayed DPI scale and retains the cursor anchor");
         pin.close();
+        QPixmap longPixels(600, 20000);
+        longPixels.fill(Qt::green);
+        PinWindow longPin(longPixels, fittedGeometry(longPixels.size(), source, available));
+        longPin.setAttribute(Qt::WA_DeleteOnClose, false);
+        const QSize fitted = longPin.size();
+        const QPoint longAnchor = longPin.geometry().center();
+        QWheelEvent shrink(QPointF(longAnchor - longPin.pos()), QPointF(longAnchor), QPoint(), QPoint(0, -120),
+                           Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(&longPin, &shrink);
+        check(longPin.width() < fitted.width() && longPin.height() < fitted.height(),
+              "shrinking a long pin below five percent never enlarges it");
+        for (int i = 0; i < 100; ++i) QApplication::sendEvent(&longPin, &shrink);
+        check(longPin.width() >= 1 && longPin.height() >= 1,
+              "very small pins retain nonzero dimensions");
+        QWheelEvent horizontal(QPointF(), QPointF(longPin.pos()), QPoint(), QPoint(120, 0),
+                               Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        const QRect beforeHorizontal = longPin.geometry();
+        QApplication::sendEvent(&longPin, &horizontal);
+        check(longPin.geometry() == beforeHorizontal, "horizontal wheel input does not resize pins");
+        longPin.close();
         std::puts("PASS: original-position pins, proportional long-capture fitting, DPI, and wheel zoom");
         return 0;
     }
@@ -260,14 +332,15 @@ protected:
                                                  : QStringLiteral("加边框高亮"));
         QAction *chosen = m.exec(QCursor::pos());
         if (chosen == copy) {
-            QGuiApplication::clipboard()->setPixmap(m_pix);   // Preserve original resolution.
+            if (!copyImageToClipboard(m_pix.toImage()))
+                QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
         } else if (chosen == save) {
             const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
             const QString path = QFileDialog::getSaveFileName(
                 this, QStringLiteral("保存图片"), dir + QStringLiteral("/pin.png"),
                 QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
-            if (!path.isEmpty())
-                m_pix.save(path);
+            if (!path.isEmpty() && !m_pix.save(path))
+                QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("保存失败，请检查路径或磁盘空间后重试"));
         } else if (chosen == border) {
             m_borderOn = !m_borderOn;
             update();
@@ -281,11 +354,12 @@ protected:
     void mouseMoveEvent(QMouseEvent *e) override  { move(e->globalPos() - m_dragOff); }
     void wheelEvent(QWheelEvent *e) override      // Zoom with mouse-wheel input.
     {
+        if (!e->angleDelta().y()) return;
         const double f = e->angleDelta().y() > 0 ? 1.1 : 1 / 1.1;
-        m_scale = qBound(0.05, m_scale * f, 32.0);
+        m_scale = qBound(1.0 / qMax(m_pix.width(), m_pix.height()), m_scale * f, 32.0);
         // Keep the cursor position anchored while zooming.
         const QPoint a = e->globalPosition().toPoint();
-        const QSize ns = m_pix.size() * m_scale;
+        const QSize ns(qMax(1, qRound(m_pix.width() * m_scale)), qMax(1, qRound(m_pix.height() * m_scale)));
         QPoint np(a.x() - double(a.x() - x()) / width() * ns.width(),
                   a.y() - double(a.y() - y()) / height() * ns.height());
         setGeometry(QRect(np, ns));
@@ -803,6 +877,21 @@ public:
         const QImage animatedBefore = animated.toImage();
         regressionCheck(!animated.addFrame(unrelated) && animated.toImage() == animatedBefore,
                         "an unrelated animated frame never replaces the reference or changes the output");
+        for (bool footer : {false, true}) {
+            const auto fixedFrame = [&](int pos) {
+                QImage frame = motionPage.copy(0, pos, W, H);
+                QPainter paint(&frame);
+                paint.drawImage(0, footer ? H - 144 : 0, unrelated.copy(0, 0, W, 144));
+                return frame;
+            };
+            LongCapture fixedOverlay{QRect(0, 0, W, H)};
+            const QImage first = fixedFrame(0);
+            regressionCheck(fixedOverlay.addFrame(first), "fixed-overlay initial frame");
+            regressionCheck(!fixedOverlay.addFrame(fixedFrame(80)) && fixedOverlay.m_frameRow == 0
+                                && fixedOverlay.toImage() == first && fixedOverlay.m_lastFrame == first,
+                            "fixed headers and footers cannot hide scrolling or pollute the alignment reference");
+            regressionCheck(fixedOverlay.addFrame(first), "returning to the last accepted fixed-overlay frame recovers");
+        }
         QImage longRows(16, 70000, QImage::Format_RGB32);
         for (int y = 0; y < longRows.height(); ++y) {
             QRgb *row = reinterpret_cast<QRgb *>(longRows.scanLine(y));
@@ -883,6 +972,89 @@ public:
         std::puts("PASS: long-capture stitching regression checks");
         return 0;
     }
+    static int testOutput()
+    {
+        int failures = 0;
+        const auto check = [&](bool ok, const char *message) {
+            if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); ++failures; }
+        };
+        QImage image(64, 48, QImage::Format_RGB32);
+        image.fill(QColor("#123abc"));
+        LongCapture capture{QRect()};
+        check(capture.addFrame(image), "output fixture accepts its first frame");
+        {
+            ClipboardBlocker blocker;
+            check(blocker.locked(), "native clipboard contention fixture acquired the lock");
+            const DWORD sequence = GetClipboardSequenceNumber();
+            capture.copyCapture();
+            check(!capture.m_done && capture.toImage() == image && GetClipboardSequenceNumber() == sequence,
+                  "failed long-capture copy preserves the session, image, and existing clipboard");
+        }
+        capture.copyCapture();
+        check(capture.m_done && QGuiApplication::clipboard()->image() == image,
+              "long-capture copy succeeds after the clipboard lock is released");
+        return failures ? 1 : 0;
+    }
+    static int testLiveCapture(const QString &previewPath)
+    {
+        class Page : public QWidget {
+        public:
+            QImage image;
+            int offset = 0;
+            void paintEvent(QPaintEvent *) override {
+                QPainter painter(this);
+                painter.drawImage(rect(), image.copy(0, offset, image.width(), height()));
+            }
+        } page;
+        page.setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+        page.setGeometry(QRect(QGuiApplication::primaryScreen()->availableGeometry().topLeft() + QPoint(80, 80), QSize(960, 360)));
+        page.image = QImage(960, 1600, QImage::Format_RGB32);
+        page.image.fill(Qt::white);
+        QPainter painter(&page.image);
+        painter.setPen(Qt::black);
+        for (int y = 0; y < page.image.height(); y += 48) {
+            painter.drawText(24, y + 20, QStringLiteral("Live capture row %1: keep every row in order").arg(y * 7919));
+            painter.drawText(790, y + 20, QString::number(y * 271, 16));
+        }
+        painter.end();
+        page.show();
+        QEventLoop settle;
+        QTimer::singleShot(200, &settle, &QEventLoop::quit);
+        settle.exec();
+        LongCapture capture(page.geometry());
+        capture.start();
+        const qreal scale = qreal(capture.m_lastFrame.height()) / page.height();
+        bool passed = !capture.m_lastFrame.isNull();
+        for (int pos : {80, 180, 280, 180, 80, 0}) {
+            page.offset = pos;
+            page.repaint();
+            QElapsedTimer budget;
+            budget.start();
+            const int expected = qRound(pos * scale);
+            while (capture.m_frameRow != expected && budget.elapsed() < 2500) {
+                QEventLoop wait;
+                QTimer::singleShot(20, &wait, &QEventLoop::quit);
+                wait.exec();
+            }
+            if (capture.m_frameRow != expected || capture.m_alignmentLost) {
+                std::fprintf(stderr, "FAIL: live scrolling position=%d actual=%d expected=%d\n", pos, capture.m_frameRow, expected);
+                passed = false;
+                break;
+            }
+        }
+        if (!previewPath.isEmpty()) {
+            capture.updateUi();
+            passed = capture.m_preview->grab().save(previewPath) && passed;
+        }
+        if (capture.m_rowEnd != qRound((page.height() + 280) * scale)) {
+            std::fprintf(stderr, "FAIL: live capture accumulated an incorrect row count\n");
+            passed = false;
+        }
+        capture.cancel();
+        page.close();
+        if (passed) std::printf("PASS: live GDI scrolling capture, preview, down/up/revisit, DPR %.2f\n", double(scale));
+        return passed ? 0 : 1;
+    }
 signals:
     void finished(const QPixmap &pix);
 private:
@@ -951,17 +1123,41 @@ private:
         for (int cand = -maxOff; cand <= maxOff; ++cand)
             if (qAbs(cand - bestK) > 2) second = qMax(second, votes[cand + maxOff]);
         if (best < 12 || second * 4 >= best * 3) return false;
-        const int top = qMax(0, -bestK), bottom = qMin(H, H - bestK);
-        int cells = 0, bandMask = 0;
-        bool covered[48] = {};
-        for (const Match &match : evidence) {
-            if (match.offset != bestK || match.y < top || match.y >= bottom) continue;
-            const int band = (match.y - top) * 6 / (bottom - top);
-            const int cell = band * 8 + match.x * 8 / W;
-            if (!covered[cell]) { covered[cell] = true; ++cells; }
-            bandMask |= 1 << band;
+        const auto coveredOffset = [&](int offset, bool broad = false) {
+            if (votes[offset + maxOff] < 12) return false;
+            const int top = qMax(0, -offset), bottom = qMin(H, H - offset);
+            int cells = 0, bandMask = 0, left = W, right = 0;
+            bool covered[48] = {};
+            for (const Match &match : evidence) {
+                if (match.offset != offset || match.y < top || match.y >= bottom) continue;
+                const int band = (match.y - top) * 6 / (bottom - top);
+                const int cell = band * 8 + match.x * 8 / W;
+                if (!covered[cell]) { covered[cell] = true; ++cells; }
+                bandMask |= 1 << band;
+                left = qMin(left, match.x);
+                right = qMax(right, match.x);
+            }
+            return cells >= 3 && (bandMask & (bandMask - 1)) != 0 && (!broad || right - left >= W / 2);
+        };
+        if (!coveredOffset(bestK)) return false;
+        // Unchanged edge strips with unique texture may be fixed headers/footers, not evidence of a stationary page.
+        // shortcut: Narrow scroll panes can resemble local animation; add region segmentation if those must be supported.
+        if (coveredOffset(0)) {
+            const auto sameRow = [&](int y) {
+                return memcmp(f.constScanLine(y), m_lastFrame.constScanLine(y), size_t(W) * 4) == 0;
+            };
+            int head = 0, tail = H;
+            while (head < H && sameRow(head)) ++head;
+            while (tail > head && sameRow(tail - 1)) --tail;
+            int fixedVotes = 0;
+            for (const Match &match : evidence)
+                if (match.offset == 0 && ((head >= minOverlap && match.y + vertical < head)
+                    || (H - tail >= minOverlap && match.y - vertical >= tail))) ++fixedVotes;
+            if (fixedVotes >= 12)
+                for (int cand = -maxOff; cand <= maxOff; ++cand)
+                    if (qAbs(cand) > 2 && coveredOffset(cand, true)) return false;
         }
-        return cells >= 3 && (bandMask & (bandMask - 1)) != 0;
+        return true;
     }
     // ---- Capture loop: the user scrolls manually; polling captures and stitches frames. ----
     void nextTick(int elapsedMs)
@@ -1217,7 +1413,10 @@ private:
             if (m_label) m_label->setText(QStringLiteral("导出失败，请释放内存后重试"));
             return;
         }
-        QGuiApplication::clipboard()->setImage(img);
+        if (!copyImageToClipboard(img)) {
+            if (m_label) m_label->setText(QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+            return;
+        }
         cancel();
     }
     void cleanupUi()
@@ -2668,6 +2867,19 @@ public:
         overlay.cancelDetection();
         overlay.handleDetectedRect(buttonRect, stale);
         check(overlay.m_hover == expectedEdit, "cancelled or stale replies cannot replace the current target");
+        overlay.handleDetectedRect(buttonRect, stale + 1);
+        check(overlay.m_hover == expectedEdit,
+              "cancelling an unapplied query rejects its late reply too");
+        overlay.m_mode = Adjusting;
+        overlay.m_sel = expectedEdit;
+        overlay.m_hover = {};
+        overlay.m_queryId = stale + 2;
+        overlay.handleDetectedRect(buttonRect, stale + 1);
+        check(overlay.m_hover.isEmpty() && overlay.m_sel == expectedEdit,
+              "superseded replies cannot restore hover highlights after selection lock");
+        overlay.m_mode = Selecting;
+        overlay.m_sel = {};
+        overlay.cancelDetection();
         // A result superseded by a newer query still paints so the border follows the cursor
         // during fast slides instead of freezing until the mouse stops.
         overlay.requestDetection(buttonRect.center());
@@ -3197,6 +3409,52 @@ public:
         check(pinnedRegion == expectedRegion, "pinning preserves the annotated selection's original global geometry");
         std::puts("PASS: native text input, multiline layout, live formatting, re-editing, rotation, undo, and output");
         return 0;
+    }
+    static int testOutput()
+    {
+        int failures = 0;
+        const auto check = [&](bool ok, const char *message) {
+            if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); ++failures; }
+        };
+        const QRect screen = QGuiApplication::primaryScreen()->geometry();
+        QImage image(320, 240, QImage::Format_RGB32);
+        image.fill(QColor("#243648"));
+        CaptureOverlay overlay({ScreenFrame{QRect(screen.topLeft(), image.size()), QRect(0, 0, 320, 240), image}});
+        overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+        overlay.m_mode = Adjusting;
+        overlay.m_sel = QRect(screen.topLeft() - overlay.pos() + QPoint(40, 40), QSize(200, 120));
+        overlay.selectTool(ATool::Text);
+        overlay.beginTextEdit(overlay.m_sel.topLeft() + QPoint(20, 20));
+        overlay.m_editor->setPlainText(QStringLiteral("Retain this annotation"));
+        overlay.commitTextEdit();
+        const QImage expected = overlay.cropped().toImage();
+        {
+            ClipboardBlocker blocker;
+            check(blocker.locked(), "ordinary-copy contention fixture acquired the lock");
+            overlay.copyCapture();
+            check(overlay.isVisible() && overlay.m_anns.size() == 1
+                      && overlay.cropped().toImage() == expected && overlay.m_sizeTip->isVisible(),
+                  "failed ordinary copy keeps the selection, annotation, and failure hint");
+        }
+        QTemporaryDir directory;
+        check(directory.isValid(), "output regression has an isolated temporary directory");
+        check(!overlay.saveCaptureTo(directory.path() + QStringLiteral("/missing/capture.png"))
+                  && overlay.isVisible() && overlay.cropped().toImage() == expected && overlay.m_anns.size() == 1,
+              "failed image save keeps the same annotated capture available for retry");
+        const QString path = directory.path() + QStringLiteral("/capture.png");
+        check(overlay.saveCaptureTo(path) && !overlay.isVisible() && QImage(path) == expected,
+              "successful save closes the capture only after every output pixel was written");
+        overlay.show();
+        overlay.copyCapture();
+        const QImage copied = QGuiApplication::clipboard()->image();
+        if (copied != expected || overlay.isVisible())
+            std::fprintf(stderr, "ordinary copy visible=%d expected=%dx%d format=%d actual=%dx%d format=%d owns=%d\n",
+                         int(overlay.isVisible()), expected.width(), expected.height(), int(expected.format()),
+                         copied.width(), copied.height(), int(copied.format()), int(QGuiApplication::clipboard()->ownsClipboard()));
+        check(!overlay.isVisible() && QGuiApplication::clipboard()->image() == expected,
+              "ordinary copy succeeds after contention ends and retains the original pixels");
+        if (!failures) std::puts("PASS: failed output preserves captures and annotations; save/copy retries succeed");
+        return failures ? 1 : 0;
     }
 signals:
     void grabbed(const QPixmap &pix, const QRect &globalRegion);
@@ -4959,7 +5217,8 @@ private:
             // Hover previews follow the cursor during fast slides: a result already superseded
             // by a newer query still paints where the cursor just was instead of freezing the
             // border until the mouse stops. Clicks and expansion keep the strict identity check.
-            if (m_drag != H_None || m_waitingClick || m_expanding || id <= m_lastHoverId) return;
+            if (m_mode != Selecting || !m_queryId || m_drag != H_None
+                || m_waitingClick || m_expanding || id <= m_lastHoverId) return;
             m_lastHoverId = id;
             const QRect stale = logicalFromNative(m_frames, native).translated(-geometry().topLeft());
             if (stale.isEmpty()) return;
@@ -5321,26 +5580,33 @@ private slots:
             setFocus();
             return;
         }
-        cropped().save(path);
+        saveCaptureTo(path);
+    }
+    bool saveCaptureTo(const QString &path)
+    {
+        if (!cropped().save(path)) {
+            showOutputError(QStringLiteral("保存失败，请检查路径或磁盘空间后重试"));
+            return false;
+        }
         close();
+        return true;
     }
     void copyCapture()
     {
         commitTextEdit();
-        const QPixmap pix = cropped();
-        QClipboard *clip = QGuiApplication::clipboard();
-        clip->setPixmap(pix);
-        // IME/clipboard helpers may hold the clipboard open for a moment after an IME
-        // context switch; retry briefly instead of silently losing the copy.
-        QElapsedTimer retry;
-        retry.start();
-        while (retry.elapsed() < 300 && clip->image() != pix.toImage()) {
-            QEventLoop loop;
-            QTimer::singleShot(15, &loop, &QEventLoop::quit);
-            loop.exec();
-            clip->setPixmap(pix);
+        if (!copyImageToClipboard(cropped().toImage())) {
+            showOutputError(QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+            return;
         }
         close();
+    }
+    void showOutputError(const QString &message)
+    {
+        m_sizeTip->setText(message);
+        tipPosition(m_sel.center());
+        m_sizeTip->show();
+        activateWindow();
+        setFocus();
     }
     void pinCapture()
     {
@@ -5530,8 +5796,19 @@ int main(int argc, char **argv)
     QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
     QApplication app(argc, argv);
+    if (app.arguments().contains(QStringLiteral("--test-output"))) {
+        auto *saved = new QMimeData;
+        if (const QMimeData *data = QGuiApplication::clipboard()->mimeData())
+            for (const QString &format : data->formats()) saved->setData(format, data->data(format));
+        const int longResult = LongCapture::testOutput();
+        const int captureResult = CaptureOverlay::testOutput();
+        QGuiApplication::clipboard()->setMimeData(saved);
+        return longResult || captureResult ? 1 : 0;
+    }
     if (app.arguments().contains(QStringLiteral("--test-stitching")))
         return LongCapture::testStitching();
+    if (app.arguments().contains(QStringLiteral("--test-live-capture")))
+        return LongCapture::testLiveCapture(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-live-capture")) + 1));
     if (app.arguments().contains(QStringLiteral("--test-pin-placement")))
         return PinWindow::testPlacement();
     if (app.arguments().contains(QStringLiteral("--test-color-picker")))
