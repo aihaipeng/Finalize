@@ -23,6 +23,9 @@
 #include <QtMath>
 #include <QToolButton>
 #include <QComboBox>
+#include <QAbstractItemView>
+#include <QStylePainter>
+#include <QStyleOptionComboBox>
 #include <QFontDatabase>
 #include <QSlider>
 #include <QVBoxLayout>
@@ -49,6 +52,8 @@
 #include <QMutex>
 #include <QWaitCondition>
 #include <QElapsedTimer>
+#include <QHash>
+#include <QBuffer>
 #include <QSettings>
 #include <QInputDialog>
 #include <QPointer>
@@ -160,23 +165,78 @@ static QPixmap grabScreen(const QRect &rect)
 class PinWindow : public QWidget
 {
 public:
-    explicit PinWindow(const QPixmap &pix, const QPoint &at)
-        : m_pix(pix), m_scale(1.0)
+    explicit PinWindow(const QPixmap &pix, const QRect &displayRect)
+        : m_pix(pix), m_scale(double(displayRect.width()) / pix.width())
     {
         setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
         setAttribute(Qt::WA_DeleteOnClose);
         setCursor(Qt::SizeAllCursor);
-        QSize s = pix.size();
-        if (const QScreen *scr = QGuiApplication::screenAt(at)) {  // Fit both dimensions on the target screen.
-            const QRect av = scr->availableGeometry();
-            const double fit = qMin(1.0, qMin(av.width() * 0.9 / s.width(),
-                                              av.height() * 0.85 / s.height()));
-            m_scale = fit;
-            s = QSize(qMax(1, qRound(pix.width() * fit)), qMax(1, qRound(pix.height() * fit)));
-        }
-        resize(s);
-        move(at - QPoint(s.width(), s.height()) / 2);
+        setGeometry(displayRect);
         show();
+    }
+    static QRect fittedGeometry(const QSize &imageSize, const QRect &source, const QRect &available)
+    {
+        if (imageSize.isEmpty() || source.isEmpty() || available.isEmpty())
+            return {};
+        // Fit from the capture origin, not the screen center; never enlarge the source width.
+        const int roomWidth = qMax(1, available.right() + 1 - source.left());
+        const int roomHeight = qMax(1, available.bottom() + 1 - source.top());
+        const double scale = qMin(double(source.width()) / imageSize.width(),
+                                  qMin(double(roomWidth) / imageSize.width(),
+                                       double(roomHeight) / imageSize.height()));
+        return QRect(source.topLeft(), QSize(qMax(1, qRound(imageSize.width() * scale)),
+                                             qMax(1, qRound(imageSize.height() * scale))));
+    }
+    static int testPlacement()
+    {
+        auto check = [](bool ok, const char *message) {
+            if (!ok) {
+                std::fprintf(stderr, "FAIL: %s\n", message);
+                std::exit(1);
+            }
+        };
+        const QRect available(0, 0, 1920, 1040);
+        const QRect source(300, 200, 600, 400);
+        check(fittedGeometry(QSize(600, 400), source, available) == source,
+              "a short capture keeps its original position and size");
+        check(fittedGeometry(QSize(900, 600), source, available) == source,
+              "native capture pixels map back to the original logical size at 150 percent DPI");
+        check(fittedGeometry(QSize(600, 800), source, available) == QRect(300, 200, 600, 800),
+              "a long capture that fits is not reduced or centered");
+        const QRect tall = fittedGeometry(QSize(600, 2400), source, available);
+        check(tall == QRect(300, 200, 210, 840) && available.contains(tall),
+              "an oversized long capture uses the maximum height while retaining its origin");
+        check(fittedGeometry(QSize(900, 3600), source, available) == tall,
+              "oversized placement is independent of the native capture DPI");
+        check(fittedGeometry(QSize(1200, 600), QRect(1500, 200, 1200, 300), available)
+                  == QRect(1500, 200, 420, 210),
+              "width overflow shrinks proportionally to the remaining screen width");
+        const QPoint offset(-1920, -1080);
+        check(fittedGeometry(QSize(600, 2400), source.translated(offset), available.translated(offset))
+                  == tall.translated(offset),
+              "secondary screens with negative coordinates retain the capture origin");
+        check(fittedGeometry(QSize(600, 2400), QRect(1919, 1039, 600, 400), available)
+                  == QRect(1919, 1039, 1, 1),
+              "edge captures keep a nonempty display inside the screen");
+        check(fittedGeometry(QSize(), source, available).isEmpty(), "empty images are rejected");
+        QPixmap pixels(900, 600);
+        pixels.fill(Qt::green);
+        PinWindow pin(pixels, source);
+        pin.setAttribute(Qt::WA_DeleteOnClose, false);
+        check(pin.geometry() == source && pin.m_pix.size() == pixels.size()
+                  && qAbs(pin.m_scale - 2.0 / 3.0) < 0.000001,
+              "ordinary pins keep the source geometry and original pixels without automatic fitting");
+        const QPoint anchor = source.center();
+        QWheelEvent wheel(QPointF(anchor - source.topLeft()), QPointF(anchor), QPoint(), QPoint(0, 120),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(&pin, &wheel);
+        check(pin.size() == QSize(660, 440)
+                  && qAbs(double(anchor.x() - pin.x()) / pin.width()
+                           - double(anchor.x() - source.x()) / source.width()) < 0.003,
+              "wheel zoom starts from the displayed DPI scale and retains the cursor anchor");
+        pin.close();
+        std::puts("PASS: original-position pins, proportional long-capture fitting, DPI, and wheel zoom");
+        return 0;
     }
 protected:
     void paintEvent(QPaintEvent *) override
@@ -249,7 +309,7 @@ private:
 // in code so no resource files ship and any icon stays crisp at every scale.
 
 enum class Icon { Save, Copy, Pin, LongShot, Cancel, Rect, Ellipse, Arrow, Pen, Marker, Text,
-                  Number, Mosaic, Eraser, Undo, Redo, ArrowBoth, ArrowLine, ArrowHollow, Palette };
+                  Number, Mosaic, Eraser, Undo, Redo, ArrowBoth, ArrowLine, ArrowHollow, Palette, Bold, Italic };
 
 static void buildIconPath(QPainterPath &path, Icon icon)
 {
@@ -320,6 +380,16 @@ static void buildIconPath(QPainterPath &path, Icon icon)
         path.moveTo(12, 4); path.lineTo(12, 20);
         path.moveTo(9, 20); path.lineTo(15, 20);
         break;
+    case Icon::Bold:
+        path.moveTo(7, 4); path.lineTo(7, 20); path.lineTo(14, 20);
+        path.cubicTo(21, 20, 21, 12, 14, 12); path.lineTo(7, 12);
+        path.moveTo(7, 4); path.lineTo(13, 4); path.cubicTo(20, 4, 20, 12, 13, 12);
+        break;
+    case Icon::Italic:
+        path.moveTo(10, 4); path.lineTo(18, 4);
+        path.moveTo(14, 4); path.lineTo(10, 20);
+        path.moveTo(6, 20); path.lineTo(14, 20);
+        break;
     case Icon::Number:                                // Circled digit one.
         path.addEllipse(2, 2, 20, 20);
         path.moveTo(13, 7); path.lineTo(10, 9);
@@ -381,9 +451,32 @@ static QToolButton *iconButton(Icon icon, const QString &tip)
     button->setIcon(makeIcon(icon));
     button->setIconSize(QSize(16, 16));
     button->setToolTip(tip);
+    button->setAccessibleName(tip);
+    button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     button->setCursor(Qt::PointingHandCursor);
     return button;
 }
+
+// The closed font selector shows only its icon; the popup retains readable family names.
+class FontComboBox : public QComboBox
+{
+public:
+    FontComboBox() : m_icon(makeIcon(Icon::Text)) {}
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QStylePainter painter(this);
+        QStyleOptionComboBox option;
+        initStyleOption(&option);
+        option.currentText.clear();
+        option.currentIcon = m_icon;
+        option.iconSize = QSize(16, 16);
+        painter.drawComplexControl(QStyle::CC_ComboBox, option);
+        painter.drawControl(QStyle::CE_ComboBoxLabel, option);
+    }
+private:
+    const QIcon m_icon;
+};
 
 // ---------- Compact hue/saturation wheel; brightness is controlled by a slider. ----------
 class ColorWheel : public QWidget
@@ -589,7 +682,9 @@ public:
             lc.m_tailPad = 0;
             for (int pos : {360, 361, 361, 430, 550, 730, 610, 500, 320, 200,
                             50, 0, 150, 350, 570, 780, 980, 1180, 1300}) {
-                check(lc.addFrame(page.copy(0, pos, W, H)), "scroll frame must align");
+                const bool aligned = lc.addFrame(page.copy(0, pos, W, H));
+                if (!aligned) std::fprintf(stderr, "SCROLL position=%d reference=%d\n", pos, lc.m_frameRow);
+                check(aligned, "scroll frame must align");
                 check(lc.m_frameRow == pos - initial, "frame must retain its absolute position");
                 first = qMin(first, pos);
                 last = qMax(last, pos + H);
@@ -627,108 +722,285 @@ public:
         LongCapture emptyPage{QRect()};
         check(emptyPage.addFrame(blank) && emptyPage.addFrame(blank), "stationary blank frame");
         check(emptyPage.toImage() == blank, "blank frames must not invent content");
+        int failures = 0;
+        auto regressionCheck = [&failures](bool ok, const char *message) {
+            if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); ++failures; }
+        };
+        QImage motionPage(W, 3600, QImage::Format_RGB32);
+        motionPage.fill(Qt::white);
+        QPainter motionPainter(&motionPage);
+        motionPainter.setPen(Qt::black);
+        for (int y = 0; y < motionPage.height(); y += 48) {
+            motionPainter.drawText(24, y + 20, QStringLiteral("Scrolling capture: stable text and distinct rows"));
+            motionPainter.drawText(790, y + 20, QString::number(y * 7919, 16));
+            motionPainter.drawText(24, y + 40, QStringLiteral("Page row %1 with content that must stay in order").arg(y));
+        }
+        motionPainter.end();
+        LongCapture fast{QRect()};
+        regressionCheck(fast.addFrame(motionPage.copy(0, 0, W, H)), "fast-scroll initial frame");
+        int firstFast = 0, lastFast = H;
+        for (int pos : {281, 570, 865, 600, 300, 40, 0}) {
+            const bool accepted = fast.addFrame(motionPage.copy(0, pos, W, H));
+            regressionCheck(accepted && fast.m_frameRow == pos,
+                            "fast scrolling with narrow overlap keeps its exact displacement");
+            if (accepted) {
+                firstFast = qMin(firstFast, pos);
+                lastFast = qMax(lastFast, pos + H);
+                regressionCheck(fast.toImage() == motionPage.copy(0, firstFast, W, lastFast - firstFast),
+                                "fast scrolling never skips, repeats, or reorders image rows");
+            }
+        }
+        for (double dpr : {1.5, 2.0}) {
+            const QImage nativePage = motionPage.scaled(qRound(W * dpr), qRound(motionPage.height() * dpr),
+                                                       Qt::IgnoreAspectRatio, Qt::FastTransformation);
+            LongCapture nativeCapture{QRect(0, 0, W, H)};
+            int nativeEnd = qRound(H * dpr);
+            for (int pos : {0, 281, 570, 865, 600, 300, 40, 0}) {
+                const int y = qRound(pos * dpr);
+                const bool accepted = nativeCapture.addFrame(nativePage.copy(0, y, nativePage.width(), qRound(H * dpr)));
+                if (!accepted || nativeCapture.m_frameRow != y)
+                    std::fprintf(stderr, "DPI %.1f position=%d accepted=%d actual=%d\n", dpr, y, int(accepted), nativeCapture.m_frameRow);
+                regressionCheck(accepted && nativeCapture.m_frameRow == y,
+                                "native 150/200 percent DPI frames retain exact fast-scroll positions");
+                if (accepted) {
+                    nativeEnd = qMax(nativeEnd, y + qRound(H * dpr));
+                    regressionCheck(nativeCapture.toImage() == nativePage.copy(0, 0, nativePage.width(), nativeEnd),
+                                    "native high-DPI scrolling preserves every original output pixel");
+                }
+            }
+            const QImage beforeJump = nativeCapture.toImage();
+            regressionCheck(!nativeCapture.addFrame(nativePage.copy(0, qRound(3000 * dpr), nativePage.width(), qRound(H * dpr)))
+                                && nativeCapture.toImage() == beforeJump,
+                            "native high-DPI non-overlapping jumps cannot create plausible but incorrect splices");
+        }
+        auto animatedFrame = [&motionPage](int pos, int phase) {
+            QImage frame = motionPage.copy(0, pos, W, H);
+            for (int y = 72; y < 224; ++y) {
+                QRgb *row = reinterpret_cast<QRgb *>(frame.scanLine(y));
+                for (int x = 250; x < 730; ++x)
+                    row[x] = ((x / 7 + y / 9 + phase) % 3) ? qRgb(225, 35, 55) : qRgb(20, 60, 235);
+            }
+            return frame;
+        };
+        LongCapture animated{QRect()};
+        regressionCheck(animated.addFrame(animatedFrame(0, 0)), "animated initial frame");
+        regressionCheck(animated.addFrame(animatedFrame(0, 1)) && animated.m_frameRow == 0
+                            && animated.m_rowEnd == H,
+                        "stationary local animation must not lose alignment or extend the output");
+        int phase = 2;
+        for (int pos : {80, 160, 300, 590, 390, 150, 0}) {
+            regressionCheck(animated.addFrame(animatedFrame(pos, phase++)) && animated.m_frameRow == pos,
+                            "local animation is excluded while stable content establishes the scroll offset");
+        }
+        regressionCheck(animated.toImage().copy(0, 0, 200, animated.m_rowEnd) == motionPage.copy(0, 0, 200, animated.m_rowEnd),
+                        "animation handling preserves every stable output pixel during down/up/revisit");
+        QImage unrelated(W, H, QImage::Format_RGB32);
+        for (int y = 0; y < H; ++y) {
+            QRgb *row = reinterpret_cast<QRgb *>(unrelated.scanLine(y));
+            for (int x = 0; x < W; ++x)
+                row[x] = qRgb((x * 73 + y * 17) % 256, (x * 11 + y * 67) % 256, (x * 53 + y * 31) % 256);
+        }
+        const QImage animatedBefore = animated.toImage();
+        regressionCheck(!animated.addFrame(unrelated) && animated.toImage() == animatedBefore,
+                        "an unrelated animated frame never replaces the reference or changes the output");
+        QImage longRows(16, 70000, QImage::Format_RGB32);
+        for (int y = 0; y < longRows.height(); ++y) {
+            QRgb *row = reinterpret_cast<QRgb *>(longRows.scanLine(y));
+            for (int x = 0; x < longRows.width(); ++x)
+                row[x] = qRgb(y % 256, (y / 256) % 256, x * 13);
+        }
+        LongCapture large{QRect()};
+        large.initTiles(longRows.width());
+        large.m_tileMaxRows = 4096;
+        for (int from = 0; from < longRows.height(); from += 2048)
+            large.appendRows(longRows, from, qMin(2048, longRows.height() - from));
+        regressionCheck(large.m_rowEnd == 70000 && large.toImage() == longRows,
+                        "buffer growth preserves every pixel beyond 32767 and 65000 rows");
+        QImage prefix(16, 1024, QImage::Format_RGB32);
+        prefix.fill(Qt::green);
+        large.prependRows(prefix, 0, prefix.height());
+        const QImage extended = large.toImage();
+        regressionCheck(extended.copy(0, 0, 16, prefix.height()) == prefix
+                            && extended.copy(0, prefix.height(), 16, longRows.height()) == longRows,
+                        "prepending an extra head preserves the complete very long image");
+        QByteArray png;
+        QBuffer pngBuffer(&png);
+        pngBuffer.open(QIODevice::WriteOnly);
+        regressionCheck(extended.save(&pngBuffer, "PNG") && QImage::fromData(png, "PNG") == extended,
+                        "PNG export beyond 65000 rows round-trips every pixel");
+        regressionCheck(!large.reserveRows(1 << 25, 0) && large.m_storageFull && large.toImage() == extended,
+                        "memory budget rejection leaves the complete capture intact");
+        QLabel preview;
+        preview.resize(120, 240);
+        large.m_preview = &preview;
+        large.updateUi();
+        large.m_preview = nullptr;
+        regressionCheck(!preview.pixmap(Qt::ReturnByValue).isNull() && preview.pixmap(Qt::ReturnByValue).toImage()
+                            == extended.scaled(1, 240, Qt::IgnoreAspectRatio, Qt::FastTransformation),
+                        "very long preview scales the buffer view without copying the whole result first");
+        auto *exportCapture = new LongCapture{QRect()};
+        exportCapture->initTiles(16);
+        regressionCheck(exportCapture->appendRows(extended, 0, extended.height()),
+                        "a first frame larger than the growth step reserves enough storage");
+        QPixmap exported;
+        QObject::connect(exportCapture, &LongCapture::finished, [&exported](const QPixmap &pix) { exported = pix; });
+        exportCapture->finish();
+        regressionCheck(exported.toImage() == extended, "very long pinned output retains the original pixels");
+        LongCapture exportFailure{QRect()};
+        exportFailure.finish();
+        regressionCheck(!exportFailure.m_done, "failed export keeps the capture session open");
+        QImage performancePage(1280, 3600, QImage::Format_RGB32);
+        performancePage.fill(Qt::white);
+        QPainter performancePainter(&performancePage);
+        performancePainter.setPen(Qt::black);
+        for (int y = 0; y < performancePage.height(); y += 36) {
+            performancePainter.drawText(24, y + 24, QStringLiteral("Row %1").arg(y * 7919));
+            performancePainter.drawText(1100, y + 24, QString::number(y * 271, 16));
+        }
+        performancePainter.end();
+        LongCapture denseAnimation{QRect()};
+        qint64 maxMatchNs = 0;
+        for (int pos : {0, 250, 500, 750, 1000}) {
+            QImage frame = performancePage.copy(0, pos, 1280, 720);
+            for (int y = 100; y < 620; ++y) {
+                QRgb *row = reinterpret_cast<QRgb *>(frame.scanLine(y));
+                for (int x = 260; x < 1000; ++x) {
+                    quint32 value = quint32(x) * 747796405u ^ quint32(y) * 2891336453u ^ quint32(pos + 1) * 277803737u;
+                    value ^= value >> 16;
+                    value *= 2246822519u;
+                    row[x] = qRgb(value & 255, (value >> 8) & 255, (value >> 16) & 255);
+                }
+            }
+            QElapsedTimer timer;
+            timer.start();
+            const bool accepted = denseAnimation.addFrame(frame);
+            if (pos) maxMatchNs = qMax(maxMatchNs, timer.nsecsElapsed());
+            regressionCheck(accepted && denseAnimation.m_frameRow == pos,
+                            "dense video-like animation does not dominate the static texture evidence");
+        }
+        std::printf("PERF: 1280x720 dense-animation match maximum %.2f ms\n", double(maxMatchNs) / 1000000.0);
+        check(failures == 0, "fast-scroll, animation, and very-long-buffer regression checks");
         std::puts("PASS: long-capture stitching regression checks");
         return 0;
     }
 signals:
     void finished(const QPixmap &pix);
 private:
-    // f[y] == lastFrame[y+k]; include zero offset so stationary/repeated lists do not force a splice.
+    // Unique local texture votes for a displacement; animation and repeated rows do not vote.
+    // shortcut: Overlaps need stable unique texture; add another evidence source for textureless or fully animated pages.
     bool matchFullRes(const QImage &f, int &bestK) const
     {
         bestK = 0;
-        if (f.size() != m_lastFrame.size())
-            return false;
-        if (f == m_lastFrame)
-            return true;
-        const int H = f.height(), maxOff = H * 2 / 3;
-        auto distance = [](QRgb a, QRgb b) {
-            return qAbs(qRed(a) - qRed(b)) + qAbs(qGreen(a) - qGreen(b))
-                 + qAbs(qBlue(a) - qBlue(b));
+        if (f.size() != m_lastFrame.size()) return false;
+        if (f == m_lastFrame) return true;
+        const int H = f.height(), W = f.width();
+        const int minOverlap = qMin(H, qMax(24, H / 8)), maxOff = H - minOverlap;
+        const double dpr = m_region.width() > 0 ? double(W) / m_region.width() : 1.0;
+        const int horizontal = qMax(3, qRound(3 * dpr)), vertical = qMax(2, qRound(2 * dpr));
+        struct Feature { int x, y; bool repeated; };
+        auto signature = [=](const QImage &image, int x, int y) {
+            quint64 hash = 14695981039346656037ULL ^ quint64(x);
+            for (int dy : {-vertical, 0, vertical}) {
+                const QRgb *row = reinterpret_cast<const QRgb *>(image.constScanLine(y + dy));
+                for (int dx : {-4 * horizontal, -3 * horizontal, -2 * horizontal, -horizontal, 0,
+                               horizontal, 2 * horizontal, 3 * horizontal, 4 * horizontal}) {
+                    const QRgb color = row[x + dx];
+                    const int packed = (qRed(color) >> 3) | ((qGreen(color) >> 3) << 5) | ((qBlue(color) >> 3) << 10);
+                    hash = (hash ^ quint64(packed)) * 1099511628211ULL;
+                }
+            }
+            return hash;
         };
-        struct Sample { int x, y; QRgb color; };
-        auto samples = [&distance](const QImage &image) {
-            QVector<Sample> points;
-            const int step = qMax(1, image.width() / 192);
-            for (int y = 0; y < image.height(); y += 2) {
+        auto features = [&](const QImage &image) {
+            QHash<quint64, Feature> index;
+            const int step = qMax(1, W / 256);
+            for (int y = vertical; y < H - vertical; ++y) {
                 const QRgb *row = reinterpret_cast<const QRgb *>(image.constScanLine(y));
-                for (int x = 1; x < image.width() - 1; x += step)
-                    if (distance(row[x], row[x - 1]) >= 36)
-                        points.append({x, y, row[x]});
+                for (int x = 4 * horizontal; x < W - 4 * horizontal; x += step) {
+                    const QRgb a = row[x], b = row[x - 1];
+                    if (qAbs(qRed(a) - qRed(b)) + qAbs(qGreen(a) - qGreen(b))
+                        + qAbs(qBlue(a) - qBlue(b)) < 36) continue;
+                    const quint64 key = signature(image, x, y);
+                    auto found = index.find(key);
+                    if (found == index.end()) index.insert(key, {x, y, false});
+                    else if (found->x != x || y - found->y > vertical) found->repeated = true;
+                }
             }
-            return points;
+            return index;
         };
-        // Only text/shape edges vote; large uniform backgrounds are not alignment evidence.
-        const auto previous = samples(m_lastFrame), current = samples(f);
-        QVector<double> scores(2 * maxOff + 1, 1e18);
-        double bestScore = 1e18;
-        for (int cand = -maxOff; cand <= maxOff; ++cand) {
-            double acc = 0;
-            int cnt = 0;
-            for (const Sample &point : previous) {
-                const int y = point.y - cand;
-                if (y >= 0 && y < H) {
-                    const QRgb *row = reinterpret_cast<const QRgb *>(f.constScanLine(y));
-                    acc += distance(point.color, row[point.x]);
-                    ++cnt;
-                }
-            }
-            for (const Sample &point : current) {
-                const int y = point.y + cand;
-                if (y >= 0 && y < H) {
-                    const QRgb *row = reinterpret_cast<const QRgb *>(m_lastFrame.constScanLine(y));
-                    acc += distance(point.color, row[point.x]);
-                    ++cnt;
-                }
-            }
-            if (cnt < 32)
-                continue;
-            const double score = acc / (cnt * 765.0);
-            scores[cand + maxOff] = score;
-            if (score < bestScore || (score == bestScore && qAbs(cand) < qAbs(bestK))) {
-                bestScore = score;
+        const auto previous = features(m_lastFrame), current = features(f);
+        struct Match { int x, y, offset; };
+        QVector<Match> evidence;
+        QVector<int> votes(2 * maxOff + 1);
+        for (auto it = current.constBegin(); it != current.constEnd(); ++it) {
+            if (it->repeated) continue;
+            const auto before = previous.constFind(it.key());
+            if (before == previous.constEnd() || before->repeated || before->x != it->x) continue;
+            const int offset = before->y - it->y;
+            if (qAbs(offset) > maxOff) continue;
+            ++votes[offset + maxOff];
+            evidence.append({it->x, it->y, offset});
+        }
+        int best = 0, second = 0;
+        for (int cand = -maxOff; cand <= maxOff; ++cand)
+            if (votes[cand + maxOff] > best
+                || (votes[cand + maxOff] == best && qAbs(cand) < qAbs(bestK))) {
+                best = votes[cand + maxOff];
                 bestK = cand;
             }
+        for (int cand = -maxOff; cand <= maxOff; ++cand)
+            if (qAbs(cand - bestK) > 2) second = qMax(second, votes[cand + maxOff]);
+        if (best < 12 || second * 4 >= best * 3) return false;
+        const int top = qMax(0, -bestK), bottom = qMin(H, H - bestK);
+        int cells = 0, bandMask = 0;
+        bool covered[48] = {};
+        for (const Match &match : evidence) {
+            if (match.offset != bestK || match.y < top || match.y >= bottom) continue;
+            const int band = (match.y - top) * 6 / (bottom - top);
+            const int cell = band * 8 + match.x * 8 / W;
+            if (!covered[cell]) { covered[cell] = true; ++cells; }
+            bandMask |= 1 << band;
         }
-        if (bestScore > 0.03)
-            return false;
-        if (bestK != 0)
-            for (int cand = -maxOff; cand <= maxOff; ++cand)
-                if (qAbs(cand - bestK) > 2 && scores[cand + maxOff] <= bestScore + 0.01)
-                    return false;                    // Multiple plausible alignments: do not guess the position.
-        return true;
+        return cells >= 3 && (bandMask & (bandMask - 1)) != 0;
     }
     // ---- Capture loop: the user scrolls manually; polling captures and stitches frames. ----
-    void nextTick()
+    void nextTick(int elapsedMs)
     {
-        if (!m_done)
-            QTimer::singleShot(150, this, &LongCapture::captureFrame);   // Limit gaps between scrolling frames.
+        if (!m_done && !m_storageFull)
+            QTimer::singleShot(qMax(1, 50 - elapsedMs), this, &LongCapture::captureFrame);
     }
     void captureFrame()
     {
-        if (m_done)
+        if (m_done || m_storageFull)
             return;
-        if (m_rowEnd - m_rowStart >= 65000) { finish(); return; }   // Session height cap.
+        QElapsedTimer frameClock;
+        frameClock.start();
         setUiVisible(false);
         QApplication::processEvents();
+        if (m_done) return;
         const QImage f = grabScreen(m_region).toImage().convertToFormat(QImage::Format_RGB32);
         setUiVisible(true);
+        if (m_done) return;
         const bool wasLost = m_alignmentLost;
         const int oldRows = m_rowEnd - m_rowStart;
-        m_alignmentLost = !addFrame(f);
-        if (oldRows != m_rowEnd - m_rowStart)
+        m_alignmentLost = !addFrame(f) && !m_storageFull;
+        if (oldRows != m_rowEnd - m_rowStart
+            && (!m_previewClock.isValid() || m_previewClock.elapsed() >= 100)) {
             updateUi();
-        else if (wasLost != m_alignmentLost)
+            m_previewClock.restart();
+        } else if (oldRows != m_rowEnd - m_rowStart || wasLost != m_alignmentLost || m_storageFull) {
             updateLabel();
-        nextTick();
+        }
+        nextTick(int(frameClock.elapsed()));
     }
     bool addFrame(const QImage &f)
     {
         if (f.isNull() || f.format() != QImage::Format_RGB32)
             return false;
+        m_storageFull = false;
         if (m_rowStart == m_rowEnd) {                 // First frame.
             initTiles(f.width());
-            appendRows(f, 0, f.height());
+            if (!appendRows(f, 0, f.height())) return false;
             m_lastFrame = f;
             return true;
         }
@@ -736,11 +1008,11 @@ private:
         if (!matchFullRes(f, k))
             return false;
         const int row = m_frameRow + k;
-        if (row < m_rowStart)
-            prependRows(f, 0, m_rowStart - row);
+        if (row < m_rowStart && !prependRows(f, 0, m_rowStart - row))
+            return false;
         if (row + f.height() > m_rowEnd) {
             const int from = m_rowEnd - row;
-            appendRows(f, from, f.height() - from);
+            if (!appendRows(f, from, f.height() - from)) return false;
         }
         m_frameRow = row;
         m_lastFrame = f;
@@ -753,44 +1025,47 @@ private:
         m_bytesPerLine = width * 4;
         m_tileMaxRows = qMax(64, (64 << 20) / m_bytesPerLine);  // Allocate up to 64 MB of rows per growth step.
     }
-    void appendRows(const QImage &f, int from, int count)
+    bool reserveRows(int head, int tail)
     {
-        const int used = m_rowEnd - m_bufStart;
-        if (m_buf.isNull() || used + count > m_buf.height()) {
-            const int oldH = m_buf.isNull() ? 0 : m_buf.height();
-            QImage nb(m_width, oldH + qMax(m_tileMaxRows, 4096), QImage::Format_RGB32);
-            if (oldH) {
-                QPainter p(&nb);
-                p.drawImage(0, m_headPad, m_buf, 0, m_headPad,
-                            m_width, oldH - m_headPad - m_tailPad);
-                p.end();
-            }
-            m_buf = nb;
-        }
-        const int dstY = m_rowEnd - m_bufStart;
-        for (int i = 0; i < count; ++i)
-            memcpy(m_buf.scanLine(dstY + i), f.constScanLine(from + i), m_bytesPerLine);
-        m_rowEnd += count;
-        m_tailPad = m_buf.height() - (m_rowEnd - m_bufStart);
+        if (!m_buf.isNull() && m_headPad >= head && m_tailPad >= tail)
+            return true;
+        const int used = m_rowEnd - m_rowStart;
+        const qint64 needed = qint64(used) + head + tail;
+        const int maxRows = int((qint64(1) << 30) / m_bytesPerLine);
+        // Bound buffer memory, not image height; leave the existing capture intact if allocation fails.
+        if (needed > maxRows) { m_storageFull = true; return false; }
+        const int height = int(qMin(qint64(maxRows), qMax(needed, qint64(m_buf.height()) + m_tileMaxRows)));
+        const int newHead = int(qMin(qint64(height - used - tail),
+                                    head ? qint64(head) + m_tileMaxRows : qint64(m_headPad)));
+        QImage next(m_width, height, QImage::Format_RGB32);
+        if (next.isNull()) { m_storageFull = true; return false; }
+        if (used)
+            memcpy(next.scanLine(newHead), m_buf.constScanLine(m_headPad), size_t(used) * m_bytesPerLine);
+        m_buf = next;
+        m_headPad = newHead;
+        m_tailPad = height - newHead - used;
+        m_bufStart = m_rowStart - newHead;
+        return true;
     }
-    void prependRows(const QImage &f, int from, int count)
+    bool appendRows(const QImage &f, int from, int count)
     {
-        if (m_headPad < count) {                      // Not enough headroom: grow and shift existing rows.
-            const int extra = qMax(m_tileMaxRows, 4096);
-            QImage nb(m_width, m_buf.height() + extra, QImage::Format_RGB32);
-            QPainter p(&nb);
-            p.drawImage(0, m_headPad + extra, m_buf, 0, m_headPad,
-                        m_width, m_buf.height() - m_headPad - m_tailPad);
-            p.end();
-            m_buf = nb;
-            m_bufStart -= extra;
-            m_headPad += extra;
-        }
+        if (count <= 0) return true;
+        if (from < 0 || count > f.height() - from || !reserveRows(0, count)) return false;
+        const int dstY = m_rowEnd - m_bufStart;
+        memcpy(m_buf.scanLine(dstY), f.constScanLine(from), size_t(count) * m_bytesPerLine);
+        m_rowEnd += count;
+        m_tailPad -= count;
+        return true;
+    }
+    bool prependRows(const QImage &f, int from, int count)
+    {
+        if (count <= 0) return true;
+        if (from < 0 || count > f.height() - from || !reserveRows(count, 0)) return false;
         const int dstY = m_rowStart - m_bufStart - count;
-        for (int i = 0; i < count; ++i)
-            memcpy(m_buf.scanLine(dstY + i), f.constScanLine(from + i), m_bytesPerLine);
+        memcpy(m_buf.scanLine(dstY), f.constScanLine(from), size_t(count) * m_bytesPerLine);
         m_rowStart -= count;
-        m_headPad = m_rowStart - m_bufStart;
+        m_headPad -= count;
+        return true;
     }
     QImage toImage() const
     {
@@ -874,8 +1149,9 @@ private:
     void updateLabel()
     {
         if (m_label)
-            m_label->setText(m_alignmentLost ? QStringLiteral("无法对齐，请缓慢滚回上一位置")
-                                            : QStringLiteral("● 长截图 · %1 px").arg(m_rowEnd - m_rowStart));
+            m_label->setText(m_storageFull ? QStringLiteral("内存不足或达到安全上限，已暂停延伸，请保存或贴图")
+                : m_alignmentLost ? QStringLiteral("无法对齐，请缓慢滚回上一位置")
+                                  : QStringLiteral("● 长截图 · %1 px").arg(m_rowEnd - m_rowStart));
         if (m_bar)
             m_bar->adjustSize();
     }
@@ -886,9 +1162,9 @@ private:
             const int rows = m_rowEnd - m_rowStart;
             const double s = qMin(double(m_preview->width()) / m_width,
                                   double(m_preview->height()) / rows);
-            const QImage scaled = m_buf.copy(0, m_rowStart - m_bufStart, m_width, rows)
-                                      .scaled(qMax(1, qRound(m_width * s)), qMax(1, qRound(rows * s)),
-                                              Qt::KeepAspectRatio, Qt::FastTransformation);
+            const QImage view(m_buf.constScanLine(m_headPad), m_width, rows, m_bytesPerLine, QImage::Format_RGB32);
+            const QImage scaled = view.scaled(qMax(1, qRound(m_width * s)), qMax(1, qRound(rows * s)),
+                                             Qt::IgnoreAspectRatio, Qt::FastTransformation);
             m_preview->setPixmap(QPixmap::fromImage(scaled));
         }
     }
@@ -896,11 +1172,14 @@ private:
     {
         if (m_done)
             return;
+        const QPixmap pix = QPixmap::fromImage(toImage());
+        if (pix.isNull()) {
+            if (m_label) m_label->setText(QStringLiteral("导出失败，请释放内存后重试"));
+            return;
+        }
         m_done = true;
         cleanupUi();
-        const QImage img = toImage();
-        if (!img.isNull())
-            emit finished(QPixmap::fromImage(img));
+        emit finished(pix);
         deleteLater();
     }
     void cancel()
@@ -915,21 +1194,30 @@ private:
     void saveCapture()
     {
         const QImage img = toImage();
-        if (img.isNull()) { cancel(); return; }
+        if (img.isNull()) {
+            if (m_label) m_label->setText(QStringLiteral("导出失败，请释放内存后重试"));
+            return;
+        }
         const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
         const QString path = QFileDialog::getSaveFileName(
             nullptr, QStringLiteral("保存长截图"), dir + QStringLiteral("/longshot.png"),
             QStringLiteral("PNG (*.png)"));            // Save long captures as PNG.
         if (path.isEmpty())
             return;                                    // Cancelled dialog: keep the session active.
-        img.save(path);
+        if (!img.save(path)) {
+            if (m_label) m_label->setText(QStringLiteral("保存失败，请检查路径或释放内存后重试"));
+            return;
+        }
         cancel();
     }
     void copyCapture()
     {
         const QImage img = toImage();
-        if (!img.isNull())
-            QGuiApplication::clipboard()->setImage(img);
+        if (img.isNull()) {
+            if (m_label) m_label->setText(QStringLiteral("导出失败，请释放内存后重试"));
+            return;
+        }
+        QGuiApplication::clipboard()->setImage(img);
         cancel();
     }
     void cleanupUi()
@@ -953,6 +1241,8 @@ private:
     QWidget *m_frame = nullptr;
     bool m_affinityOk = false;
     bool m_alignmentLost = false;
+    bool m_storageFull = false;
+    QElapsedTimer m_previewClock;
     bool m_done = false;
 };
 
@@ -2111,6 +2401,7 @@ public:
         overlay.m_anns.clear();
         overlay.m_selAnn = -1;
         // Every tool exposes an editable size, and clicking it again keeps its options open.
+        QVector<QImage> toolbarPreviews;
         for (ATool tool : {ATool::Rect, ATool::Ellipse, ATool::Arrow, ATool::Pen, ATool::Marker,
                            ATool::Text, ATool::Number, ATool::Mosaic, ATool::Eraser}) {
             overlay.selectTool(tool);
@@ -2118,16 +2409,46 @@ public:
             overlay.m_toolBtn[int(tool)]->click();
             check(overlay.m_atool == tool && overlay.m_toolOptions->isVisible() && overlay.m_sizeInput,
                   "repeated toolbar clicks keep the matching options and numeric control visible");
+            const bool textSize = tool == ATool::Text || tool == ATool::Number;
+            check(overlay.m_sizeInput->width() == (textSize ? 62 : 40)
+                      && overlay.m_sizeInput->lineEdit()->alignment() == Qt::AlignCenter,
+                  "numeric controls use a compact fixed width with centered values");
+            check(overlay.m_sizeInput->lineEdit()->contentsRect().width()
+                      >= QFontMetrics(overlay.m_sizeInput->lineEdit()->font()).horizontalAdvance(
+                          textSize ? QStringLiteral("1637.5") : QStringLiteral("12")),
+                  "compact numeric controls still fit the complete supported values");
+            check(overlay.m_toolOptions->findChildren<QLabel *>(QString(), Qt::FindDirectChildrenOnly).isEmpty(),
+                  "option strips contain no visible thickness labels or wheel instructions");
+            for (QWidget *bar : {overlay.m_tools, overlay.m_toolOptions})
+                for (QToolButton *button : bar->findChildren<QToolButton *>())
+                    check(button->text().isEmpty(), "toolbar actions render icons or swatches rather than text");
+            if (!previewPath.isEmpty()) {
+                QImage bars = overlay.grab(overlay.m_tools->geometry().united(overlay.m_toolOptions->geometry())).toImage();
+                bars.setDevicePixelRatio(1);
+                toolbarPreviews.append(bars);
+            }
             const bool colored = tool != ATool::Mosaic && tool != ATool::Eraser;
             const QList<QToolButton *> swatches = overlay.m_toolOptions->findChildren<QToolButton *>(QStringLiteral("presetColor"));
             check((overlay.m_colorButton != nullptr) == colored && swatches.size() == (colored ? 8 : 0),
                   "colored tools expose eight common colors and a palette button, not a dense color grid");
             if (colored)
                 check(overlay.m_colorButton->text().isEmpty() && !overlay.m_colorButton->icon().isNull()
-                          && overlay.m_colorButton->toolButtonStyle() == Qt::ToolButtonIconOnly,
-                      "every palette button uses a white icon without a text label");
+                          && overlay.m_colorButton->toolButtonStyle() == Qt::ToolButtonIconOnly
+                          && overlay.m_colorButton->styleSheet().isEmpty(),
+                      "every palette button uses a white icon without a text label or custom border");
             for (QToolButton *swatch : swatches)
                 check(swatch->y() == swatches.first()->y(), "common color presets stay in one spacious row");
+        }
+        if (!toolbarPreviews.isEmpty()) {
+            int width = 0, height = 0;
+            for (const QImage &bars : toolbarPreviews) { width = qMax(width, bars.width()); height += bars.height() + 8; }
+            QImage sheet(width, height, QImage::Format_RGB32);
+            sheet.fill(QColor(15, 17, 20));
+            QPainter painter(&sheet);
+            int y = 0;
+            for (const QImage &bars : toolbarPreviews) { painter.drawImage(0, y, bars); y += bars.height() + 8; }
+            painter.end();
+            check(sheet.save(previewPath + QStringLiteral(".toolbars.png")), "save toolbar visual regression sheet");
         }
         check(parseAnnotationColor(QStringLiteral("rgb(0, 128,255)")) == QColor(0, 128, 255)
                   && parseAnnotationColor(QStringLiteral("#A1b2C3")) == QColor("#a1b2c3")
@@ -2503,7 +2824,12 @@ public:
         check(overlay.m_atool == ATool::None && overlay.isVisible(),
               "escape drops the annotation tool before closing the overlay");
         bool pinned = false;
-        QObject::connect(&overlay, &CaptureOverlay::grabbed, &overlay, [&pinned](const QPixmap &pix) { pinned = !pix.isNull(); });
+        QRect pinnedRegion;
+        QObject::connect(&overlay, &CaptureOverlay::grabbed, &overlay,
+                         [&pinned, &pinnedRegion](const QPixmap &pix, const QRect &region) {
+            pinned = !pix.isNull();
+            pinnedRegion = region;
+        });
         overlay.resetSelection();
         QMouseEvent press(QEvent::MouseButtonPress, expectedButton.center(), expectedButton.center() + overlay.geometry().topLeft(),
                           Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
@@ -2516,6 +2842,8 @@ public:
         QApplication::sendEvent(&overlay, &release);
         waitResult();
         check(pinned && !overlay.isVisible(), "double-click pinning waits for the fresh element result");
+        check(pinnedRegion == overlay.m_sel.translated(overlay.geometry().topLeft()),
+              "double-click pinning reports the locked selection's original global geometry");
         overlay.close();
         check(!overlay.isVisible() && !overlay.m_queryPending, "closing capture cancels pending detection");
         if (frames.size() > 1) {
@@ -2597,9 +2925,13 @@ public:
         QComboBox *fontFamily = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("annotationFont"));
         check(fontFamily && fontFamily->focusPolicy() == Qt::NoFocus,
               "the text options include a font-family selector without stealing input focus");
+        const QImage fontIcon = fontFamily->grab().toImage();
         fontFamily->setCurrentText(QStringLiteral("Arial"));
-        check(fontFamily->currentText() == QStringLiteral("Arial") && fontFamily->itemIcon(fontFamily->currentIndex()).isNull(),
-              "the font field displays a plain family name without a prefixed label or icon");
+        check(fontFamily->currentText() == QStringLiteral("Arial") && fontFamily->findText(QStringLiteral("Arial")) >= 0
+                  && dynamic_cast<FontComboBox *>(fontFamily) && fontFamily->width() == 40
+                  && fontFamily->view()->minimumWidth() >= 200
+                  && fontFamily->grab().toImage() == fontIcon && fontFamily->toolTip().contains(QStringLiteral("Arial")),
+              "the closed font selector stays icon-only while its popup and tooltip retain the selected family");
         fontEdit = overlay.m_sizeInput->findChild<QLineEdit *>();
         fontEdit->setFocus();
         fontEdit->setText(QStringLiteral("12"));
@@ -2612,7 +2944,7 @@ public:
               "editing the size keeps live text and its selection, then returns keyboard focus");
         for (QToolButton *button : overlay.m_toolOptions->findChildren<QToolButton *>()) {
             check(button->focusPolicy() == Qt::NoFocus, "text options do not steal keyboard focus");
-            if (button->text() == QStringLiteral("B") || button->text() == QStringLiteral("I"))
+            if (button->toolTip() == QStringLiteral("粗体") || button->toolTip() == QStringLiteral("斜体"))
                 button->click();
             if (button->toolTip() == QStringLiteral("#007aff")) button->click();
         }
@@ -2849,17 +3181,25 @@ public:
         QApplication::sendEvent(overlay.m_colorDialog, &paletteEscape);
         check(overlay.editorActive() && overlay.isVisible() && overlay.m_textView->hasFocus(),
               "closing the palette returns keyboard focus without closing or committing the text");
+        check(overlay.m_colorButton->styleSheet().isEmpty(), "live color changes do not restore a palette button border");
         QPixmap pinned;
-        QObject::connect(&overlay, &CaptureOverlay::grabbed, [&pinned](const QPixmap &pix) { pinned = pix; });
+        QRect pinnedRegion;
+        QObject::connect(&overlay, &CaptureOverlay::grabbed,
+                         [&pinned, &pinnedRegion](const QPixmap &pix, const QRect &region) {
+            pinned = pix;
+            pinnedRegion = region;
+        });
         const QImage expected = overlay.cropped().toImage();
+        const QRect expectedRegion = overlay.m_sel.translated(overlay.geometry().topLeft());
         overlay.pinCapture();
         check(!pinned.isNull() && pinned.toImage() == expected && overlay.m_anns.size() == 4,
               "capture actions commit the live text and output it exactly once");
+        check(pinnedRegion == expectedRegion, "pinning preserves the annotated selection's original global geometry");
         std::puts("PASS: native text input, multiline layout, live formatting, re-editing, rotation, undo, and output");
         return 0;
     }
 signals:
-    void grabbed(const QPixmap &pix);
+    void grabbed(const QPixmap &pix, const QRect &globalRegion);
     void longRequested(const QRect &globalRegion);
 protected:
     void paintEvent(QPaintEvent *) override
@@ -4042,9 +4382,6 @@ private:
             m_ann.color = color;                    // Committed annotations retain their original colors.
             update();
         }
-        if (m_colorButton && (optionsTool() == family
-            || ((optionsTool() == ATool::Rect || optionsTool() == ATool::Ellipse) && family == ATool::Rect)))
-            m_colorButton->setStyleSheet(QStringLiteral("QToolButton{border:1px solid %1;padding:3px;}").arg(color.name()));
         if (m_colorDialog && m_colorDialogTool == family) {
             const QSignalBlocker lock(m_colorWheel);
             m_colorWheel->setCurrentColor(color);
@@ -4218,6 +4555,7 @@ private:
         auto *lay = new QHBoxLayout(m_toolOptions);
         lay->setContentsMargins(4, 2, 4, 2);
         lay->setSpacing(2);
+        lay->setAlignment(Qt::AlignLeft);
         auto addOption = [this](QHBoxLayout *l, Icon icon, const QString &tip, bool on,
                                 const std::function<void()> &apply) {
             auto *b = iconButton(icon, tip);
@@ -4253,14 +4591,12 @@ private:
             m_colorButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
             m_colorButton->setFocusPolicy(Qt::NoFocus);
             m_colorButton->setCursor(Qt::PointingHandCursor);
-            m_colorButton->setStyleSheet(QStringLiteral("QToolButton{border:1px solid %1;padding:3px;}").arg(toolColor(family).name()));
             QToolButton *button = m_colorButton;
             connect(button, &QToolButton::clicked, this, [this, family, button] { showColorPalette(family, button); });
             l->addWidget(button);
         };
         const bool texty = tool == ATool::Text || tool == ATool::Number;
         auto addSize = [this, lay, texty] {
-            if (!texty) lay->addWidget(new QLabel(QStringLiteral("粗细")));
             m_sizeInput = new QComboBox;
             m_sizeInput->setEditable(true);
             m_sizeInput->setInsertPolicy(QComboBox::NoInsert);
@@ -4279,7 +4615,10 @@ private:
             m_sizeInput->setToolTip(texty ? QStringLiteral("标准字号 (pt)：小四=12，五号=10.5")
                                         : QStringLiteral("输入、下拉选择或滚轮调节粗细"));
             m_sizeInput->setFocusPolicy(Qt::ClickFocus);
-            m_sizeInput->setFixedWidth(texty ? 62 : 48);
+            m_sizeInput->setFixedWidth(texty ? 62 : 40);
+            m_sizeInput->setStyleSheet(QStringLiteral("QComboBox{padding:1px 2px;}QComboBox::drop-down{width:12px;}"));
+            m_sizeInput->lineEdit()->setAlignment(Qt::AlignCenter);
+            m_sizeInput->setAccessibleName(texty ? QStringLiteral("字号") : QStringLiteral("粗细"));
             m_sizeInput->installEventFilter(this);
             m_sizeInput->lineEdit()->installEventFilter(this);
             syncSizeInput();
@@ -4316,17 +4655,12 @@ private:
             break;
         }
         case ATool::Text: {
-            auto *bold = new QToolButton;
-            bold->setText(QStringLiteral("B"));
-            QFont bf = bold->font(); bf.setBold(true); bold->setFont(bf);
-            auto *italic = new QToolButton;
-            italic->setText(QStringLiteral("I"));
-            QFont inf = italic->font(); inf.setItalic(true); italic->setFont(inf);
+            auto *bold = iconButton(Icon::Bold, QStringLiteral("粗体"));
+            auto *italic = iconButton(Icon::Italic, QStringLiteral("斜体"));
             for (auto *b : {bold, italic}) {
                 b->setFocusPolicy(Qt::NoFocus);
                 b->setCheckable(true);
                 b->setCursor(Qt::PointingHandCursor);
-                b->setStyleSheet(QStringLiteral("QToolButton{font-size:13px;}"));
             }
             bold->setChecked(editorActive() ? m_editBold : m_abold);
             italic->setChecked(editorActive() ? m_editItalic : m_aitalic);
@@ -4336,17 +4670,21 @@ private:
             connect(italic, &QToolButton::toggled, this, &CaptureOverlay::setTextItalic);
             lay->addWidget(bold);
             lay->addWidget(italic);
-            auto *font = new QComboBox;
+            auto *font = new FontComboBox;
             font->setObjectName(QStringLiteral("annotationFont"));
             font->setEditable(false);
             font->addItems(QFontDatabase().families());
             font->setFocusPolicy(Qt::NoFocus);
-            font->setFixedWidth(145);
-            font->setToolTip(QStringLiteral("字体"));
+            font->setFixedWidth(40);
+            font->view()->setMinimumWidth(200);
+            font->setAccessibleName(QStringLiteral("字体"));
             font->setCurrentText(editorActive() ? m_editFamily
                 : m_selAnn >= 0 && m_selAnn < m_anns.size() ? m_anns[m_selAnn].family : m_afamily);
-            connect(font, &QComboBox::currentTextChanged, this,
-                    [this](const QString &family) { setTextFamily(QFont(family)); });
+            font->setToolTip(QStringLiteral("字体：%1").arg(font->currentText()));
+            connect(font, &QComboBox::currentTextChanged, this, [this, font](const QString &family) {
+                font->setToolTip(QStringLiteral("字体：%1").arg(family));
+                setTextFamily(QFont(family));
+            });
             lay->addWidget(font);
             addSize();
             addSeparator(lay);
@@ -4356,9 +4694,8 @@ private:
         case ATool::Mosaic:
         case ATool::Eraser: {
             addSize();
-            auto *hint = new QLabel(tool == ATool::Mosaic ? QStringLiteral("滚轮调节块大小")
-                                                             : QStringLiteral("滚轮调节粗细"));
-            lay->addWidget(hint);
+            m_sizeInput->setToolTip(tool == ATool::Mosaic ? QStringLiteral("输入、下拉选择或滚轮调节块大小")
+                                                       : QStringLiteral("输入、下拉选择或滚轮调节粗细"));
             break;
         }
         default:
@@ -5009,8 +5346,9 @@ private slots:
     {
         commitTextEdit();
         const QPixmap pix = cropped();
+        const QRect global = m_sel.normalized().translated(geometry().topLeft());
         close();
-        emit grabbed(pix);
+        emit grabbed(pix, global);
     }
     void longCapture()
     {
@@ -5165,16 +5503,17 @@ public slots:
         options.disabledUiPrograms = settings.value(QStringLiteral("Snip/crashes")).toStringList();
         auto *ov = new CaptureOverlay(frames, {}, options, true);
         m_capture = ov;
-        connect(ov, &CaptureOverlay::grabbed, this, [](const QPixmap &pix) {
-            new PinWindow(pix, QCursor::pos());
+        connect(ov, &CaptureOverlay::grabbed, this, [](const QPixmap &pix, const QRect &region) {
+            new PinWindow(pix, region);
         });
         connect(ov, &CaptureOverlay::longRequested, this, [](const QRect &region) {
             auto *lc = new LongCapture(region);
-            connect(lc, &LongCapture::finished, lc, [lc](const QPixmap &pix) {
-                // Center the long pin on the screen containing the cursor (the clicked pin button).
-                const QScreen *scr = QGuiApplication::screenAt(QCursor::pos());
-                const QRect av = (scr ? scr : QGuiApplication::primaryScreen())->availableGeometry();
-                new PinWindow(pix, av.center());     // PinWindow scales oversized images to fit.
+            connect(lc, &LongCapture::finished, lc, [region](const QPixmap &pix) {
+                const QScreen *scr = QGuiApplication::screenAt(region.topLeft());
+                if (!scr) scr = QGuiApplication::primaryScreen();
+                const QRect av = scr->availableGeometry().contains(region.topLeft())
+                    ? scr->availableGeometry() : scr->geometry();
+                new PinWindow(pix, PinWindow::fittedGeometry(pix.size(), region, av));
             });
             lc->start();
         });
@@ -5193,6 +5532,8 @@ int main(int argc, char **argv)
     QApplication app(argc, argv);
     if (app.arguments().contains(QStringLiteral("--test-stitching")))
         return LongCapture::testStitching();
+    if (app.arguments().contains(QStringLiteral("--test-pin-placement")))
+        return PinWindow::testPlacement();
     if (app.arguments().contains(QStringLiteral("--test-color-picker")))
         return CaptureOverlay::testColorPicker(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-color-picker")) + 1));
     if (app.arguments().contains(QStringLiteral("--test-window-detection")))
