@@ -2291,19 +2291,6 @@ struct OcrResult {
     }
 };
 using OcrCancel = std::shared_ptr<std::atomic_bool>;
-struct OcrModel { const char *title; const char *det; const char *rec; };
-static const std::array<OcrModel,10> ocrModels{{
-    {"简体中文 / 中英混排", "det.onnx", "rec.onnx"},
-    {"繁體中文", "det.onnx", "rec-cht.onnx"},
-    {"英文", "det.onnx", "rec-en.onnx"},
-    {"日文", "det.onnx", "rec-japan-v5.onnx"},
-    {"韩文", "det.onnx", "rec-korean-v5.onnx"},
-    {"西班牙语", "det.onnx", "rec-latin-v5.onnx"},
-    {"葡萄牙语", "det.onnx", "rec-latin-v5.onnx"},
-    {"德语", "det.onnx", "rec-latin-v5.onnx"},
-    {"法语", "det.onnx", "rec-latin-v5.onnx"},
-    {"俄文", "det.onnx", "rec-cyrillic-v5.onnx"}
-}};
 
 class OcrEngine
 {
@@ -2311,19 +2298,16 @@ public:
     static OcrEngine &instance() { static OcrEngine engine; return engine; }
     ~OcrEngine() { reset(); }
     std::atomic_bool busy{false};
-    static QString assetError(const QString &root, int language = 0) {
-        if (language < 0 || language >= int(ocrModels.size())) return QStringLiteral("不支持的 OCR 语言");
-        const auto &model = ocrModels[language];
-        for (const QString &file : {QStringLiteral("onnxruntime.dll"), QStringLiteral("models/")+QLatin1String(model.det),
-                                   QStringLiteral("models/")+QLatin1String(model.rec)})
+    static QString assetError(const QString &root) {
+        for (const QString &file : {QStringLiteral("onnxruntime.dll"), QStringLiteral("models/PP-OCRv6_det_small.onnx"),
+                                   QStringLiteral("models/PP-OCRv6_rec_small.onnx")})
             if (!QFileInfo(root + QLatin1Char('/') + file).isFile())
                 return QStringLiteral("缺少 OCR 文件：%1\n请将运行时与模型放回程序目录后重试。").arg(file);
         return {};
     }
-    QString load(const QString &root, int language = 0) {
-        if (m_det && m_rec && language >= 0 && language < int(ocrModels.size())
-            && std::strcmp(ocrModels[language].rec,ocrModels[m_language].rec)==0) { m_language=language; return {}; }
-        const QString missing = assetError(root,language);
+    QString load(const QString &root) {
+        if (m_det && m_rec) return {};
+        const QString missing = assetError(root);
         if (!missing.isEmpty()) return missing;
         reset();
         try {
@@ -2345,8 +2329,8 @@ public:
             checked(m_api->DisableCpuMemArena(raw));
             checked(m_api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &m_memory));
             checked(m_api->GetAllocatorWithDefaultOptions(&m_allocator));
-            const QString det = QDir::toNativeSeparators(root + QStringLiteral("/models/")+QLatin1String(ocrModels[language].det));
-            const QString rec = QDir::toNativeSeparators(root + QStringLiteral("/models/")+QLatin1String(ocrModels[language].rec));
+            const QString det = QDir::toNativeSeparators(root + QStringLiteral("/models/PP-OCRv6_det_small.onnx"));
+            const QString rec = QDir::toNativeSeparators(root + QStringLiteral("/models/PP-OCRv6_rec_small.onnx"));
             checked(m_api->CreateSession(m_env, reinterpret_cast<const wchar_t *>(det.utf16()), raw, &m_det));
             checked(m_api->CreateSession(m_env, reinterpret_cast<const wchar_t *>(rec.utf16()), raw, &m_rec));
             names(m_det, m_detInput, m_detOutput);
@@ -2381,7 +2365,6 @@ public:
                 throw std::runtime_error("Invalid recognition dictionary");
             m_characters.prepend(QString());
             m_characters.append(QStringLiteral(" "));
-            m_language = language;
             return {};
         } catch (const std::exception &error) {
             reset();
@@ -2423,8 +2406,8 @@ public:
         check(line.text == QStringLiteral("AAB ") && std::abs(line.score-0.95f)<0.00001f,
               "CTC removes repeated tokens and blanks but retains blank-separated repeats and spaces");
         QImage red(1,1,QImage::Format_RGB32); red.fill(Qt::red);
-        const auto input = normalized(red,2,false);
-        check(input == QVector<float>({-1,0,-1,0,1,0}),"recognition input uses BGR, minus-one-to-one normalization and zero padding");
+        const auto input = normalized(red,2);
+        check(input == QVector<float>({-1,0,-1,0,1,0}),"detection and recognition use BGR, minus-one-to-one normalization and zero padding");
         const QSize reduced = detectionSize(QSize(2000,1000));
         check(reduced == QSize(1440,736),"large detection input shrinks and aligns to multiples of 32");
         bool invalid = false;
@@ -2444,20 +2427,21 @@ public:
         const QString missing = assetError(QCoreApplication::applicationDirPath());
         if (!missing.isEmpty()) { std::printf("UNAVAILABLE: %s\n",qPrintable(missing)); return 0; }
         const auto cancel = std::make_shared<std::atomic_bool>(false);
-        struct Sample { const char *name; QString text; int language; };
+        struct Sample { const char *name; QString text; bool supported = true; };
         const QVector<Sample> samples{
-            {"Simplified-Chinese",QStringLiteral("截图文字识别"),0},
-            {"Traditional-Chinese",QStringLiteral("繁體中文測試"),1},
-            {"English",QStringLiteral("Hello World 123"),2},
-            {"Japanese",QStringLiteral("こんにちは世界"),3},
-            {"Korean",QStringLiteral("안녕하세요 세계"),4},
-            {"Spanish",QStringLiteral("Hola señor 123"),5},
-            {"Portuguese",QStringLiteral("Olá mundo 123"),6},
-            {"German",QStringLiteral("Grüße Welt 123"),7},
-            {"French",QStringLiteral("Bonjour été 123"),8},
-            {"Russian",QStringLiteral("Привет мир 123"),9},
-            {"Arabic",QStringLiteral("مرحبا بالعالم"),-1},
-            {"Greek",QStringLiteral("Καλημέρα κόσμε"),-1}
+            {"Simplified-Chinese",QStringLiteral("截图文字识别")},
+            {"Traditional-Chinese",QStringLiteral("繁體中文測試")},
+            {"English",QStringLiteral("Hello World 123")},
+            {"Japanese",QStringLiteral("こんにちは世界")},
+            {"Korean",QStringLiteral("안녕하세요 세계"),false},
+            {"Spanish",QStringLiteral("Hola señor 123")},
+            {"Portuguese",QStringLiteral("Olá mundo 123")},
+            {"German",QStringLiteral("Grüße Welt 123")},
+            {"French",QStringLiteral("Bonjour été 123")},
+            {"Russian",QStringLiteral("Привет мир 123"),false},
+            {"Arabic",QStringLiteral("مرحبا بالعالم"),false},
+            {"Greek",QStringLiteral("Καλημέρα κόσμε"),false},
+            {"Mixed",QStringLiteral("截图 繁體 日本語 Hello été")}
         };
         int failures = 0, matchesSupported = 0;
         for (qreal dpr : {1.0,1.5,2.0}) for (const auto &sample : samples) {
@@ -2471,15 +2455,15 @@ public:
             painter.drawText(QRectF(32,20,736,140),Qt::AlignVCenter|Qt::AlignLeft,sample.text);
             painter.end();
             image.setDevicePixelRatio(dpr);
-            const OcrResult result = engine.recognize(image,cancel,qMax(0,sample.language));
+            const OcrResult result = engine.recognize(image,cancel);
             const bool matches = result.error.isEmpty() && !result.cancelled && result.text()==sample.text;
-            if (sample.language >= 0) { if (!matches) ++failures; else ++matchesSupported; }
+            if (sample.supported) { if (!matches) ++failures; else ++matchesSupported; }
             std::printf("%s language=%s dpr=%.1f elapsed=%lldms expected=[%s] actual=[%s] error=[%s]\n",
-                        sample.language < 0 ? "UNSUPPORTED" : matches ? "PASS" : "FAIL",sample.name,dpr,result.elapsed,
+                        !sample.supported ? "UNSUPPORTED" : matches ? "PASS" : "FAIL",sample.name,dpr,result.elapsed,
                         qPrintable(sample.text),qPrintable(result.text()),qPrintable(result.error));
             if (!previewPath.isEmpty() && !image.save(previewPath+QStringLiteral("-%1-%2.png").arg(QLatin1String(sample.name)).arg(dpr))) return 1;
         }
-        std::printf("LANGUAGE SUMMARY: %d/30 supported exact matches; %d supported mismatches; 6 unsupported probes (not passes)\n",matchesSupported,failures);
+        std::printf("LANGUAGE SUMMARY: %d/27 supported exact matches; %d supported mismatches; 12 unsupported probes (not passes)\n",matchesSupported,failures);
         return failures ? 1 : 0;
     }
     static QSize detectionSize(const QSize &source) {
@@ -2487,21 +2471,21 @@ public:
         return QSize(qMax(32, qRound(source.width() * ratio / 32) * 32),
                      qMax(32, qRound(source.height() * ratio / 32) * 32));
     }
-    OcrResult recognize(QImage image, const OcrCancel &cancel, int language = 0) {
+    OcrResult recognize(QImage image, const OcrCancel &cancel) {
         OcrResult result;
         QElapsedTimer timer;
         timer.start();
         try {
             if (cancel->load()) { result.cancelled = true; return result; }
             if (image.isNull()) throw std::runtime_error("Empty screenshot");
-            result.error = load(QCoreApplication::applicationDirPath(),language);
+            result.error = load(QCoreApplication::applicationDirPath());
             if (!result.error.isEmpty()) return result;
             if (cancel->load()) { result.cancelled=true; return result; }
             image.setDevicePixelRatio(1);
             const QSize size = detectionSize(image.size());
             const QImage reduced = image.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
             QVector<int64_t> shape;
-            const QVector<float> probability = run(m_det, m_detInput, m_detOutput, normalized(reduced, size.width(), true),
+            const QVector<float> probability = run(m_det, m_detInput, m_detOutput, normalized(reduced, size.width()),
                                                     {1, 3, size.height(), size.width()}, shape);
             if (shape.size() != 4 || shape[0] != 1 || shape[1] != 1
                 || shape[2] <= 0 || shape[3] <= 0 || shape[2] > 1440 || shape[3] > 1440)
@@ -2515,8 +2499,14 @@ public:
                 const int contentWidth = qMax(1, int(std::ceil(double(m_recHeight) * crop.width() / crop.height())));
                 const int width = qMax(320, (contentWidth + 31) / 32 * 32);
                 if (width > 8192) throw std::runtime_error("Text line is too wide; select a smaller region");
-                const QImage resized = crop.scaled(contentWidth, m_recHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-                const QVector<float> logits = run(m_rec, m_recInput, m_recOutput, normalized(resized, width, false),
+                // Avoid area averaging fine text strokes when shrinking recognition rows.
+                QImage resized(contentWidth, m_recHeight, QImage::Format_RGB32);
+                if (resized.isNull()) throw std::runtime_error("Cannot resize a detected text line");
+                QPainter painter(&resized);
+                painter.setRenderHint(QPainter::SmoothPixmapTransform);
+                painter.drawImage(resized.rect(), crop);
+                painter.end();
+                const QVector<float> logits = run(m_rec, m_recInput, m_recOutput, normalized(resized, width),
                                                   {1, 3, m_recHeight, width}, shape);
                 if (shape.size() != 3 || shape[0] != 1 || shape[2] != m_characters.size())
                     throw std::runtime_error("Recognition output does not match its dictionary");
@@ -2659,7 +2649,6 @@ private:
         if (m_dll) FreeLibrary(m_dll);
         m_dll = nullptr;
         m_characters.clear();
-        m_language = -1;
     }
     void names(OrtSession *session, QByteArray &input, QByteArray &output) {
         size_t in = 0, out = 0;
@@ -2702,20 +2691,17 @@ private:
         for (float value : result) if (!std::isfinite(value)) throw std::runtime_error("Non-finite OCR output");
         return result;
     }
-    static QVector<float> normalized(const QImage &input, int width, bool detection) {
+    static QVector<float> normalized(const QImage &input, int width) {
         const QImage image = input.convertToFormat(QImage::Format_RGB32);
         if (image.isNull() || width < image.width()) throw std::runtime_error("Invalid OCR input");
         const int plane = width * image.height();
         QVector<float> data(plane * 3, 0);
-        const float mean[] = {0.485f, 0.456f, 0.406f}, deviation[] = {0.229f, 0.224f, 0.225f};
         for (int y = 0; y < image.height(); ++y) {
             const QRgb *row = reinterpret_cast<const QRgb *>(image.constScanLine(y));
             for (int x = 0; x < image.width(); ++x) {
                 const int bgr[] = {qBlue(row[x]), qGreen(row[x]), qRed(row[x])};
                 for (int channel = 0; channel < 3; ++channel)
-                    data[channel * plane + y * width + x] = detection
-                        ? (bgr[channel] / 255.0f - mean[channel]) / deviation[channel]
-                        : bgr[channel] / 127.5f - 1.0f;
+                    data[channel * plane + y * width + x] = bgr[channel] / 127.5f - 1.0f;
             }
         }
         return data;
@@ -2789,7 +2775,7 @@ private:
     QByteArray m_detInput, m_detOutput, m_recInput, m_recOutput;
     QStringList m_characters;
     QString m_version;
-    int m_language = -1, m_recHeight = 48;
+    int m_recHeight = 48;
 };
 
 class OcrImageView : public QGraphicsView
@@ -2861,9 +2847,6 @@ public:
             "QToolButton:focus{border-color:%7;} QToolButton#ocrPin:checked{background:%8;border-color:%7;}"
             "QToolButton#ocrCopy{background:%8;} QToolButton#ocrCopy:hover{border-color:%7;}"
             "QToolButton:disabled{background:transparent;} QToolButton#ocrClose:hover{background:%9;}"
-            "QComboBox{background:%3;color:%4;border:1px solid %6;border-radius:6px;padding:6px 10px;}"
-            "QComboBox:hover,QComboBox:focus{border-color:%7;} QComboBox:disabled{color:%5;border-color:%2;}"
-            "QComboBox QAbstractItemView{background:%2;color:%4;border:1px solid %6;padding:4px;selection-background-color:%8;selection-color:%4;}"
             "QSplitter::handle{background:transparent;} QSplitter::handle:hover{background:%6;}"
             "QScrollBar:vertical{background:%3;width:12px;margin:0;} QScrollBar:horizontal{background:%3;height:12px;margin:0;}"
             "QScrollBar::handle{background:%6;border-radius:4px;min-width:24px;min-height:24px;}"
@@ -2959,23 +2942,7 @@ public:
         textLayout->setSpacing(12);
         auto *actions = new QHBoxLayout;
         actions->setSpacing(8);
-        auto *languageLabel = new QLabel(QStringLiteral("识别语言"));
-        actions->addWidget(languageLabel);
-        m_languageChoice = new QComboBox;
-        m_languageChoice->setObjectName(QStringLiteral("ocrLanguage"));
-        m_languageChoice->setAccessibleName(QStringLiteral("OCR 识别语言"));
-        languageLabel->setBuddy(m_languageChoice);
-        m_languageChoice->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-        m_languageChoice->setMinimumContentsLength(6);
-        m_languageChoice->setMinimumWidth(140);
-        m_languageChoice->setMinimumHeight(40);
-        for (const auto &model : ocrModels) m_languageChoice->addItem(QString::fromUtf8(model.title).section(QStringLiteral(" / "),0,0));
-        m_languageChoice->view()->setMinimumWidth(m_languageChoice->fontMetrics().horizontalAdvance(m_languageChoice->itemText(0))+40);
-        m_languageChoice->setToolTip(QStringLiteral("按截图文字选择语言，然后点击重新识别；不自动猜测语言"));
-        connect(m_languageChoice,&QComboBox::currentIndexChanged,this,[this] {
-            m_status->setText(QStringLiteral("语言已更改，点击重新识别"));
-        });
-        actions->addWidget(m_languageChoice,1);
+        actions->addStretch();
         m_retry = iconButton(Icon::Refresh,QStringLiteral("ocrRetry"),QStringLiteral("重新识别"));
         connect(m_retry,&QToolButton::clicked,this,&OcrDialog::start);
         actions->addWidget(m_retry);
@@ -3009,8 +2976,8 @@ public:
         textLayout->addWidget(m_status);
         imageLayout->addSpacing(m_status->sizeHint().height()+12);
         setTabOrder(pin,minimize); setTabOrder(minimize,m_maximize); setTabOrder(m_maximize,close);
-        setTabOrder(close,back); setTabOrder(back,imageView); setTabOrder(imageView,m_languageChoice);
-        setTabOrder(m_languageChoice,m_retry); setTabOrder(m_retry,m_copy); setTabOrder(m_copy,m_text);
+        setTabOrder(close,back); setTabOrder(back,imageView); setTabOrder(imageView,m_retry);
+        setTabOrder(m_retry,m_copy); setTabOrder(m_copy,m_text);
         connect(m_copy, &QToolButton::clicked, this, [this] {
             if (!copyTextToClipboard(m_text->toPlainText()))
                 m_status->setText(QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
@@ -3030,7 +2997,6 @@ public:
             m_timer.stop();
             const OcrResult result = m_watcher.result();
             m_retry->setEnabled(true);
-            m_languageChoice->setEnabled(true);
             if (m_cancel->load()) return;
             if (!result.error.isEmpty()) {
                 m_status->setText(result.error);
@@ -3046,8 +3012,7 @@ public:
             m_status->setText(result.lines.isEmpty() ? QStringLiteral("未识别到文字，可返回截图调整选区")
                 : QStringLiteral("%1秒 · 平均置信度%2%").arg(result.elapsed/1000.0,0,'f',2)
                     .arg(confidence*100/result.lines.size(),0,'f',0));
-            m_text->setToolTip(QStringLiteral("识别语言：%1；置信度不等于准确率，请对照原图校对")
-                                   .arg(QString::fromUtf8(ocrModels[m_jobLanguage].title)));
+            m_text->setToolTip(QStringLiteral("置信度不等于准确率，请对照原图校对"));
             m_text->setFocus();
         });
         connect(this, &QDialog::finished, this, [this] { m_closed=true; if (m_cancel) m_cancel->store(true); });
@@ -3073,15 +3038,12 @@ public:
         m_cancel = std::make_shared<std::atomic_bool>(false);
         const auto cancel = m_cancel;
         const QImage image = m_image;
-        const int language = m_languageChoice->currentIndex();
-        m_jobLanguage = language;
         m_retry->setEnabled(false);
-        m_languageChoice->setEnabled(false);
         m_text->setReadOnly(true);
         m_status->setText(QStringLiteral("正在本地识别…"));
         m_timer.start();
-        m_watcher.setFuture(QtConcurrent::run([&engine,image,cancel,language] {
-            const OcrResult result = engine.recognize(image,cancel,language);
+        m_watcher.setFuture(QtConcurrent::run([&engine,image,cancel] {
+            const OcrResult result = engine.recognize(image,cancel);
             engine.busy.store(false);
             return result;
         }));
@@ -3140,11 +3102,10 @@ private:
     QPlainTextEdit *m_text = nullptr;
     QLabel *m_status = nullptr;
     QToolButton *m_retry = nullptr, *m_copy = nullptr, *m_maximize = nullptr;
-    QComboBox *m_languageChoice = nullptr;
     OcrCancel m_cancel;
     QFutureWatcher<OcrResult> m_watcher;
     QTimer m_timer;
-    int m_ticks = 0, m_jobLanguage = 0;
+    int m_ticks = 0;
     bool m_closed = false;
 };
 
@@ -3418,9 +3379,16 @@ public:
         const QRect liveNative(origin.x,origin.y,client.right,client.bottom);
         const QImage live=grabNative(liveNative);
         const OcrResult liveResult=engine.recognize(live,cancel);
+        std::printf("LIVE OCR: %dx%d / %lldms / text=[%s] / error=[%s]\n",live.width(),live.height(),liveResult.elapsed,
+                    qPrintable(liveResult.text()),qPrintable(liveResult.error));
+        for (const OcrLine &line : liveResult.lines) {
+            std::printf("LIVE BOX: text=[%s]",qPrintable(line.text));
+            for (const QPointF &point : line.box) std::printf(" (%.3f,%.3f)",point.x(),point.y());
+            std::putchar('\n');
+        }
+        if (!previewPath.isEmpty()) check(live.save(previewPath+QStringLiteral("-live.png")),"save actual desktop OCR fixture");
         check(liveResult.error.isEmpty() && liveResult.text()==QStringLiteral("截图文字识别\nHelloWorld123"),
               "actual desktop pixels pass through detection and recognition with exact Chinese and English output");
-        if (!previewPath.isEmpty()) check(live.save(previewPath+QStringLiteral("-live.png")),"save actual desktop OCR fixture");
         const QVector<ScreenFrame> liveFrames=freezeScreens();
         check(!liveFrames.isEmpty(),"freeze actual desktop frames for the OCR toolbar workflow");
         calibration.close();
@@ -3474,9 +3442,8 @@ public:
         desktopProbe.close(); dialog->raise(); dialog->activateWindow();
         auto *text = dialog->findChild<QPlainTextEdit *>(QStringLiteral("ocrText"));
         auto *retry = dialog->findChild<QToolButton *>(QStringLiteral("ocrRetry"));
-        auto *languageChoice = dialog->findChild<QComboBox *>(QStringLiteral("ocrLanguage"));
-        check(text->isReadOnly() && !retry->isEnabled() && languageChoice->count()==10 && !languageChoice->isEnabled(),
-              "recognition has ten explicit languages and disables only busy controls without blocking the UI");
+        check(text->isReadOnly() && !retry->isEnabled() && dialog->findChildren<QComboBox *>().isEmpty(),
+              "unified recognition has no language selector and disables only busy controls without blocking the UI");
         auto wait = [&] {
             QElapsedTimer timer; timer.start();
             while (dialog && !retry->isEnabled() && timer.elapsed()<30000) {
@@ -3492,7 +3459,7 @@ public:
         auto *back=dialog->findChild<QToolButton *>(QStringLiteral("ocrBack"));
         auto *status=dialog->findChild<QLabel *>(QStringLiteral("ocrStatus"));
         check(retry->text().isEmpty() && copy->text().isEmpty() && !retry->icon().isNull() && !copy->icon().isNull()
-                  && languageChoice->mapTo(dialog,QPoint()).x()<retry->mapTo(dialog,QPoint()).x()
+                  && retry->mapTo(dialog,QPoint()).x()+retry->width()<=copy->mapTo(dialog,QPoint()).x()
                   && retry->mapTo(dialog,QPoint()).y()<text->mapTo(dialog,QPoint()).y()
                   && back->mapTo(dialog,QPoint()).x()<text->mapTo(dialog,QPoint()).x()
                   && status->alignment().testFlag(Qt::AlignRight) && status->mapTo(dialog,QPoint()).y()>text->mapTo(dialog,QPoint()).y()
@@ -3500,7 +3467,7 @@ public:
               "compact pane actions and bottom-right timing replace redundant headings and result metadata");
         if (!previewPath.isEmpty()) check(dialog->grab().save(previewPath+QStringLiteral("-comparison.png")),"save comparison window preview");
         check(text->font().pointSizeF()>=12 && dialog->font().pointSizeF()>=10.5 && copy->size()==QSize(40,40)
-                  && retry->size()==copy->size() && languageChoice->height()>=40,
+                  && retry->size()==copy->size(),
               "OCR uses readable point-sized system fonts and consistent forty-pixel action targets");
         const auto contrast = [](const QColor &a,const QColor &b) {
             const auto luminance = [](const QColor &color) {
@@ -3518,7 +3485,7 @@ public:
               "OCR text, metadata, accent buttons, control outlines and focus cues meet their contrast budgets");
         const QList<QWidget *> tabOrder{dialog->findChild<QToolButton *>(QStringLiteral("ocrPin")),
             dialog->findChild<QToolButton *>(QStringLiteral("ocrMinimize")),dialog->findChild<QToolButton *>(QStringLiteral("ocrMaximize")),
-            dialog->findChild<QToolButton *>(QStringLiteral("ocrClose")),back,dialog->findChild<QGraphicsView *>(),languageChoice,retry,copy,text};
+            dialog->findChild<QToolButton *>(QStringLiteral("ocrClose")),back,dialog->findChild<QGraphicsView *>(),retry,copy,text};
         tabOrder.first()->setFocus();
         for (int i=1;i<tabOrder.size();++i) {
             QKeyEvent tab(QEvent::KeyPress,Qt::Key_Tab,Qt::NoModifier);
@@ -3531,9 +3498,9 @@ public:
             const QRect panelRect=dialog->findChild<QWidget *>(QStringLiteral("ocrTextPanel"))->rect();
             QWidget *panel=dialog->findChild<QWidget *>(QStringLiteral("ocrTextPanel"));
             return dialog->rect().contains(QRect(panel->mapTo(dialog,QPoint()),panel->size()))
-                && panelRect.contains(QRect(languageChoice->mapTo(panel,QPoint()),languageChoice->size()))
+                && panelRect.contains(QRect(retry->mapTo(panel,QPoint()),retry->size()))
                 && panelRect.contains(QRect(copy->mapTo(panel,QPoint()),copy->size()))
-                && languageChoice->mapTo(dialog,QPoint()).x()+languageChoice->width()<=retry->mapTo(dialog,QPoint()).x()
+                && retry->mapTo(dialog,QPoint()).x()+retry->width()<=copy->mapTo(dialog,QPoint()).x()
                 && text->height()>100 && back->width()>=back->sizeHint().width();
         };
         check(dialog->size()==dialog->minimumSize() && controlsFit(),"minimum OCR window retains both panes and every primary action without overlap");
@@ -3541,18 +3508,18 @@ public:
         QVector<QPair<QWidget *,QFont>> savedFonts;
         for (QWidget *widget:dialog->findChildren<QWidget *>())
             if (qobject_cast<QLabel *>(widget) || qobject_cast<QToolButton *>(widget)
-                || qobject_cast<QComboBox *>(widget) || qobject_cast<QPlainTextEdit *>(widget))
+                || qobject_cast<QPlainTextEdit *>(widget))
                 savedFonts.append({widget,widget->font()});
         for (const auto &entry:savedFonts) {
             QFont largeFont=entry.second; largeFont.setPointSizeF(largeFont.pointSizeF()*1.25);
             entry.first->setFont(largeFont);
         }
         for (int pass=0;pass<3;++pass) QApplication::processEvents();
-        check(languageChoice->font().pointSizeF()>=13 && text->font().pointSizeF()>=15,
+        check(retry->font().pointSizeF()>=13 && text->font().pointSizeF()>=15,
               "the enlarged-font preview actually increases both interface and reading fonts");
-        if (!controlsFit()) std::fprintf(stderr,"LAYOUT: dialog=%dx%d panel=%dx%d language=(%d,%d %dx%d) copy=(%d,%d %dx%d) text-height=%d back-width=%d back-hint=%d\n",
-            dialog->width(),dialog->height(),languageChoice->parentWidget()->width(),languageChoice->parentWidget()->height(),
-            languageChoice->x(),languageChoice->y(),languageChoice->width(),languageChoice->height(),
+        if (!controlsFit()) std::fprintf(stderr,"LAYOUT: dialog=%dx%d panel=%dx%d retry=(%d,%d %dx%d) copy=(%d,%d %dx%d) text-height=%d back-width=%d back-hint=%d\n",
+            dialog->width(),dialog->height(),retry->parentWidget()->width(),retry->parentWidget()->height(),
+            retry->x(),retry->y(),retry->width(),retry->height(),
             copy->x(),copy->y(),copy->width(),copy->height(),text->height(),back->width(),back->sizeHint().width());
         check(controlsFit(),"OCR controls tolerate an application-level twenty-five percent font enlargement at minimum size");
         if (!previewPath.isEmpty()) check(dialog->grab().save(previewPath+QStringLiteral("-large-font.png")),"save enlarged-interface-font OCR preview");
@@ -3632,7 +3599,8 @@ public:
             positioned.reject();
             QApplication::processEvents();
         }
-        OcrDialog foreign(fixture(1,{QStringLiteral("HelloWorld123")},{36}));
+        const QString mixedText=QStringLiteral("截图 繁體 日本語 Hello été");
+        OcrDialog foreign(fixture(1,{mixedText},{36}));
         foreign.show();
         QApplication::processEvents();
         QElapsedTimer foreignTimer; foreignTimer.start();
@@ -3640,15 +3608,13 @@ public:
         while (!foreignRetry->isEnabled() && foreignTimer.elapsed()<30000) {
             QApplication::processEvents(QEventLoop::ExcludeUserInputEvents); QThread::msleep(10);
         }
-        auto *foreignChoice=foreign.findChild<QComboBox *>(QStringLiteral("ocrLanguage"));
-        foreignChoice->setCurrentIndex(2);
         foreignRetry->click(); foreignTimer.restart();
         while (!foreignRetry->isEnabled() && foreignTimer.elapsed()<30000) {
             QApplication::processEvents(QEventLoop::ExcludeUserInputEvents); QThread::msleep(10);
         }
-        check(foreignRetry->isEnabled() && foreign.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"))->toPlainText()==QStringLiteral("HelloWorld123")
-                  && foreign.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"))->toolTip().contains(QStringLiteral("英文")),
-              "language selection reloads the matching model and identifies the result language in its tooltip");
+        check(foreignRetry->isEnabled() && foreign.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"))->toPlainText()==mixedText
+                  && foreign.findChildren<QComboBox *>().isEmpty(),
+              "one model recognizes and retries mixed scripts without a language selector");
         foreign.reject();
         engine.busy.store(true);
         OcrDialog blocked(image); blocked.show();
