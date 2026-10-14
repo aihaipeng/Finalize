@@ -33,6 +33,8 @@
 #include <QFontMetrics>
 #include <QMimeData>
 #include <QEventLoop>
+#include <QBoxLayout>
+#include <QHelpEvent>
 #include <qt_windows.h>
 #include <cstdio>
 #include <cstdlib>
@@ -497,7 +499,51 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     mouse(QEvent::MouseMove, annOrigin + QPoint(95, 55));
     mouse(QEvent::MouseButtonRelease, annOrigin + QPoint(95, 55));
     check(overlay.m_anns.last().fill, "fill mode carries into fresh shapes");
+    {
+        QImage solid(140, 110, QImage::Format_ARGB32);
+        solid.fill(Qt::transparent);
+        QPainter painter(&solid);
+        overlay.drawAnnotation(painter, overlay.m_anns.last(), QImage());
+        painter.end();
+        const QPoint inside = overlay.m_anns.last().rect.center();
+        check(solid.pixelColor(inside).alpha() == 255, "filled shapes are solid, not a translucent wash");
+    }
     overlay.m_afill = false;
+    overlay.selectTool(ATool::Marker);
+    QToolButton *markerFill = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("fillButton"));
+    check(markerFill != nullptr, "the marker strip exposes a fill button");
+    if (markerFill) markerFill->click();
+    markerFill = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("fillButton"));
+    check(overlay.m_markerFill && markerFill && markerFill->isChecked(), "the marker fill button toggles and shows its state");
+    mouse(QEvent::MouseButtonPress, annOrigin + QPoint(10, 10));
+    mouse(QEvent::MouseMove, annOrigin + QPoint(70, 30));
+    mouse(QEvent::MouseButtonRelease, annOrigin + QPoint(70, 30));
+    check(overlay.m_anns.last().tool == ATool::Marker && overlay.m_anns.last().fill
+              && overlay.m_anns.last().rect == QRect(annOrigin + QPoint(10, 10), annOrigin + QPoint(70, 30)).normalized()
+              && overlay.m_anns.last().stroke.isEmpty(),
+          "marker fill drags a highlight rectangle instead of a stroke");
+    {
+        const QRect area = overlay.m_anns.last().rect;
+        QImage block(area.width() + 20, area.height() + 20, QImage::Format_ARGB32);
+        block.fill(Qt::transparent);
+        QPainter painter(&block);
+        painter.translate(QPoint(10, 10) - area.topLeft());   // Overlay coords onto the small canvas.
+        overlay.drawAnnotation(painter, overlay.m_anns.last(), QImage());
+        painter.end();
+        const int alpha = block.pixelColor(block.rect().center()).alpha();
+        check(alpha > 60 && alpha < 200, "the highlight rectangle is translucent");
+    }
+    overlay.toggleFill();
+    check(!overlay.m_markerFill, "the marker fill toggles back to freehand strokes");
+    check(numberLabel(4, 0) == QStringLiteral("4") && numberLabel(9, 1) == QStringLiteral("IX")
+              && numberLabel(14, 1) == QStringLiteral("XIV") && numberLabel(27, 2) == QStringLiteral("AA")
+              && numberLabel(3, 3) == QStringLiteral("c") && numberLabel(10, 4) == QStringLiteral("十")
+              && numberLabel(21, 4) == QStringLiteral("二十一") && numberLabel(105, 4) == QStringLiteral("一百零五"),
+          "number formats render arabic, roman, letter and chinese labels");
+    {
+        QHelpEvent tip(QEvent::ToolTip, QPoint(4, 4), overlay.m_shapeButton->mapToGlobal(QPoint(4, 4)));
+        check(overlay.eventFilter(overlay.m_shapeButton, &tip), "hover tooltips are suppressed on capture controls");
+    }
     // Per-tool option strip round: merged shape button, arrow styles, per-tool
     // colors, text weight, and eraser reach.
     overlay.setToolNone();
@@ -514,15 +560,19 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     check(overlay.m_acolor == QColor("#34c759"), "each tool remembers its own color");
     overlay.selectTool(ATool::Arrow);
     overlay.pickArrowStyle(1);
-    overlay.pickArrowLineStyle(1);                // Straight dashed.
+    overlay.pickArrowLineStyle(0);
+    overlay.toggleArrowDashed();                  // Straight, dashed via its own toggle.
     const QPoint a1 = annOrigin + QPoint(60, 5), a2 = annOrigin + QPoint(60, 55);
     mouse(QEvent::MouseButtonPress, a1);
     mouse(QEvent::MouseMove, a2);
     mouse(QEvent::MouseButtonRelease, a2);
     check(overlay.m_anns.last().tool == ATool::Arrow
               && overlay.m_anns.last().arrowStyle == 1
-              && overlay.m_anns.last().lineStyle == 1,
-          "the arrow shape and line style carry into fresh arrows");
+              && overlay.m_anns.last().lineStyle == 0 && overlay.m_anns.last().dashed,
+          "the arrow shape, line style and dash toggle carry into fresh arrows");
+    overlay.toggleArrowDashed();
+    check(!overlay.m_arrowDashed && !overlay.m_anns.last().dashed,
+          "the dash toggle switches the selected arrow back to a solid shaft");
     overlay.setToolNone();
     mouse(QEvent::MouseButtonPress, a1 + QPoint(0, 25));
     mouse(QEvent::MouseButtonRelease, a1 + QPoint(0, 25));
@@ -534,14 +584,14 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
           "the options strip restyles the selected arrow");
     overlay.selectTool(ATool::Arrow);
     overlay.pickArrowStyle(0);
-    overlay.pickArrowLineStyle(2);                // Curve line style: freehand sampling.
+    overlay.pickArrowLineStyle(1);                // Curve line style: freehand sampling.
     const QPoint c1 = annOrigin + QPoint(15, 5);
     mouse(QEvent::MouseButtonPress, c1);
     mouse(QEvent::MouseMove, c1 + QPoint(20, 25));
     mouse(QEvent::MouseMove, c1 + QPoint(45, 5));
     mouse(QEvent::MouseMove, c1 + QPoint(70, 30));
     mouse(QEvent::MouseButtonRelease, c1 + QPoint(70, 30));
-    check(overlay.m_anns.last().lineStyle == 2 && overlay.m_anns.last().arrowStyle == 0
+    check(overlay.m_anns.last().lineStyle == 1 && overlay.m_anns.last().arrowStyle == 0
               && overlay.m_anns.last().stroke.size() >= 4
               && overlay.m_anns.last().a == overlay.m_anns.last().stroke.first().toPoint()
               && overlay.m_anns.last().b == overlay.m_anns.last().stroke.last().toPoint(),
@@ -550,8 +600,39 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     mouse(QEvent::MouseButtonPress, c1 + QPoint(45, 8));
     mouse(QEvent::MouseButtonRelease, c1 + QPoint(45, 8));
     check(overlay.m_selAnn >= 0 && overlay.m_anns[overlay.m_selAnn].tool == ATool::Arrow
-              && overlay.m_anns[overlay.m_selAnn].lineStyle == 2,
+              && overlay.m_anns[overlay.m_selAnn].lineStyle == 1,
           "curve arrows remain selectable along their path");
+    // Polyline: press starts, each click adds a vertex, the cursor drags a rubber band, double-click ends.
+    overlay.selectTool(ATool::Arrow);
+    overlay.pickArrowLineStyle(2);
+    const QPoint p1 = annOrigin + QPoint(10, 70);
+    mouse(QEvent::MouseButtonPress, p1);
+    mouse(QEvent::MouseButtonRelease, p1);
+    mouse(QEvent::MouseMove, p1 + QPoint(40, 0));
+    check(overlay.m_live && overlay.m_ann.stroke.size() == 2 && overlay.m_ann.stroke.last() == QPointF(p1 + QPoint(40, 0)),
+          "polyline arrows stay live after the first click and follow the cursor");
+    mouse(QEvent::MouseButtonPress, p1 + QPoint(40, 0));
+    mouse(QEvent::MouseButtonRelease, p1 + QPoint(40, 0));
+    mouse(QEvent::MouseMove, p1 + QPoint(40, -30));
+    {
+        QMouseEvent dbl(QEvent::MouseButtonDblClick, p1 + QPoint(40, -30), overlay.mapToGlobal(p1 + QPoint(40, -30)),
+                        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &dbl);
+    }
+    check(!overlay.m_live && overlay.m_anns.last().lineStyle == 2 && overlay.m_anns.last().stroke.size() == 3
+              && overlay.m_anns.last().stroke[1] == QPointF(p1 + QPoint(40, 0)),
+          "clicks add polyline vertices and a double-click commits them");
+    mouse(QEvent::MouseButtonPress, p1);
+    mouse(QEvent::MouseButtonRelease, p1);
+    mouse(QEvent::MouseMove, p1 + QPoint(30, 10));
+    {
+        QMouseEvent right(QEvent::MouseButtonPress, p1 + QPoint(30, 10), overlay.mapToGlobal(p1 + QPoint(30, 10)),
+                          Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &right);
+    }
+    check(!overlay.m_live && overlay.m_anns.last().stroke.size() == 2,
+          "a right click ends a polyline at the current point");
+    overlay.pickArrowLineStyle(0);
     // Rendering parity: hollow head interior, absolute-unit dashes, antialiased edges.
     {
         const QColor green(0x34, 0xc7, 0x59);
@@ -562,7 +643,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         ann.a = QPoint(10, 100);
         ann.b = QPoint(260, 100);
         ann.arrowStyle = 1;                       // Single hollow head, straight dashed line.
-        ann.lineStyle = 1;
+        ann.dashed = true;
         QImage canvas(280, 200, QImage::Format_ARGB32);
         canvas.fill(Qt::transparent);
         QPainter painter(&canvas);
@@ -583,7 +664,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         int inked = 0, gaps = 0;                  // Round-capped dashes scale with the pen width.
         for (int x = 10; x < 200; ++x) (dashed.pixelColor(x, 100).alpha() > 200 ? inked : gaps)++;
         check(inked > 40 && gaps > 40, "dashed shafts alternate dash segments and gaps");
-        ann.lineStyle = 0;                        // Solid head fills its triangle.
+        ann.dashed = false;                       // Solid head fills its triangle.
         QImage solid(280, 200, QImage::Format_ARGB32);
         solid.fill(Qt::transparent);
         QPainter solidPainter(&solid);
@@ -617,14 +698,15 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
             QPainter previewPainter(&preview);
             const QColor colors[] = {Qt::white, QColor("#ff3b30"), QColor("#34c759")};
             for (int style = 0; style < 5; ++style)
-                for (int line = 0; line < 4; ++line) {
+                for (int line = 0; line < 4; ++line) {   // Rows: straight, curve, polyline, straight dashed.
                     Annotation sample;
                     sample.tool = ATool::Arrow;
                     sample.color = colors[(style + line) % 3];
                     sample.pen = 5;
                     sample.arrowStyle = style;
-                    sample.lineStyle = line;
-                    if (line >= 2) {
+                    sample.lineStyle = line == 3 ? 0 : line;
+                    sample.dashed = line == 3;
+                    if (line == 1 || line == 2) {
                         sample.stroke << QPointF(20, 30) << QPointF(70, 55)
                                       << QPointF(120, 15) << QPointF(180, 40);
                         sample.a = sample.stroke.first().toPoint();
@@ -687,10 +769,18 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         overlay.m_toolBtn[int(tool)]->click();
         overlay.m_toolBtn[int(tool)]->click();
         check(overlay.m_atool == tool && overlay.m_toolOptions->isVisible()
-                  && (tool == ATool::Mosaic ? overlay.m_mosaicStrengthLabel != nullptr : overlay.m_sizeInput != nullptr),
+                  && (tool == ATool::Mosaic ? overlay.m_mosaicStrengthLabel != nullptr
+                      : tool == ATool::Text ? overlay.m_sizeInput != nullptr : overlay.m_sizeButton != nullptr),
               "repeated toolbar clicks keep the matching options and numeric control visible");
-        const bool textSize = tool == ATool::Text || tool == ATool::Number;
-        if (tool == ATool::Mosaic) {
+        const bool textSize = tool == ATool::Text;
+        if (tool != ATool::Mosaic && tool != ATool::Text) {
+            const auto *strip = static_cast<QBoxLayout *>(overlay.m_toolOptions->layout());
+            check(!overlay.m_sizeInput && strip->itemAt(0)->widget() == overlay.m_sizeButton
+                      && overlay.m_sizeButton->text().toDouble() == overlay.toolSize(),
+                  "width tools put a width button first instead of a dropdown");
+            check(overlay.m_toolOptions->width() == overlay.m_toolOptions->sizeHint().width(),
+                  "the option strip is only as wide as its contents");
+        } else if (tool == ATool::Mosaic) {
             check(overlay.m_mosaicStrengthLabel->text().toInt() == overlay.mosaicStrength()
                       && !overlay.m_sizeInput && (overlay.mosaicBrush() ? overlay.m_mosaicWidthLabel
                           && overlay.m_mosaicWidthLabel->text().toInt() == overlay.toolSize() : !overlay.m_mosaicWidthLabel),
@@ -708,7 +798,8 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         }
         for (QWidget *bar : {overlay.m_tools, overlay.m_toolOptions})
             for (QToolButton *button : bar->findChildren<QToolButton *>())
-                check(button->text().isEmpty(), "toolbar actions render icons or swatches rather than text");
+                check(button == overlay.m_sizeButton || button->text().isEmpty(),
+                      "toolbar actions render icons or swatches rather than text");
         if (!previewPath.isEmpty()) {
             QImage bars = overlay.grab(overlay.m_tools->geometry().united(overlay.m_toolOptions->geometry())).toImage();
             bars.setDevicePixelRatio(1);
@@ -745,49 +836,59 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
               && !parseAnnotationColor(QStringLiteral("#12345678")).isValid(),
           "manual colors validate channel bounds and exactly six hexadecimal digits");
     overlay.selectTool(ATool::Pen);
-    QLineEdit *sizeEdit = overlay.m_sizeInput->findChild<QLineEdit *>();
-    sizeEdit->setText(QStringLiteral("6"));
-    QKeyEvent sizeEnter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
-    QApplication::sendEvent(sizeEdit, &sizeEnter);
-    check(overlay.m_apen == 6 && overlay.m_sizeInput->currentText().toDouble() == 6 && overlay.isVisible(),
-          "typing a width and pressing Enter changes the tool without pinning the capture");
-    QWheelEvent sizeWheel(QPointF(10, 10), QPointF(sizeEdit->mapToGlobal(QPoint(10, 10))),
+    overlay.m_sizeButton->click();
+    check(overlay.m_sizePopup && overlay.m_sizePopup->isVisible() && overlay.m_sizeSlider
+              && overlay.m_sizeSlider->orientation() == Qt::Horizontal
+              && overlay.m_sizeSlider->minimum() == 1 && overlay.m_sizeSlider->maximum() == 12
+              && overlay.m_sizePopup->geometry().top() >= overlay.m_sizeButton->mapToGlobal(QPoint(0, overlay.m_sizeButton->height())).y(),
+          "clicking the width button opens a horizontal slider below it");
+    overlay.m_sizeSlider->setValue(6);
+    check(overlay.m_apen == 6 && overlay.m_sizeButton->text().toDouble() == 6 && overlay.isVisible(),
+          "dragging the slider changes the tool width without pinning the capture");
+    QWheelEvent sizeWheel(QPointF(10, 10), QPointF(overlay.m_sizeSlider->mapToGlobal(QPoint(10, 10))),
                          QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
                          Qt::ScrollUpdate, false);
-    QApplication::sendEvent(sizeEdit, &sizeWheel);
-    check(overlay.m_apen == 7 && overlay.m_sizeInput->currentText().toDouble() == 7,
-          "wheel input over the numeric field uses the same width and updates the displayed value");
+    QApplication::sendEvent(overlay.m_sizeSlider, &sizeWheel);
+    check(overlay.m_apen == 7 && overlay.m_sizeSlider->value() == 7 && overlay.m_sizeButton->text().toDouble() == 7,
+          "wheel input over the slider uses the same width and updates the displayed value");
+    overlay.m_sizePopup->close();
+    QCoreApplication::processEvents();
     const QPoint sizeStroke = annOrigin + QPoint(15, 15);
     mouse(QEvent::MouseButtonPress, sizeStroke);
     overlay.tuneWidth(1, sizeStroke);
     mouse(QEvent::MouseMove, sizeStroke + QPoint(20, 10));
     overlay.pickToolColor(ATool::Pen, QColor("#007aff"));
     check(overlay.m_tools->isVisible() && overlay.m_toolOptions->isVisible()
-              && overlay.m_sizeInput->currentText().toDouble() == 8 && overlay.m_ann.pen == 8,
+              && overlay.m_sizeButton->text().toDouble() == 8 && overlay.m_ann.pen == 8,
           "drawing keeps both bars visible and wheel changes update the live stroke and number");
     check(overlay.m_ann.color == QColor("#007aff"), "color changes apply to the in-progress stroke");
     mouse(QEvent::MouseButtonRelease, sizeStroke + QPoint(20, 10));
-    overlay.m_sizeInput->lineEdit()->setText(QStringLiteral("9"));
-    QApplication::sendEvent(overlay.m_sizeInput->lineEdit(), &sizeEnter);
-    check(overlay.m_anns.last().pen == 9 && overlay.m_sizeInput->currentText().toDouble() == 9,
-          "the numeric field retunes the selected object");
+    overlay.m_sizeButton->click();
+    overlay.m_sizeSlider->setSliderDown(true);    // One drag across several values is one undo step.
+    overlay.m_sizeSlider->setValue(10);
+    overlay.m_sizeSlider->setValue(9);
+    overlay.m_sizeSlider->setSliderDown(false);
+    check(overlay.m_anns.last().pen == 9 && overlay.m_sizeButton->text().toDouble() == 9,
+          "the slider retunes the selected object");
+    overlay.m_sizePopup->close();
+    QCoreApplication::processEvents();
     overlay.undoAnnotation();
     check(overlay.m_anns.last().pen == 8, "one undo restores the width before a numeric edit");
     overlay.redoAnnotation();
     check(overlay.m_anns.last().pen == 9, "redo reapplies the numeric width edit");
     overlay.selectTool(ATool::Eraser);
     overlay.setToolSize(99);
-    check(overlay.toolSize() == 12 && overlay.m_sizeInput->currentText().toDouble() == 12,
+    check(overlay.toolSize() == 12 && overlay.m_sizeButton->text().toDouble() == 12,
           "width input stays within the supported range");
     overlay.setToolSize(0);
-    check(overlay.toolSize() == 1 && overlay.m_sizeInput->currentText().toDouble() == 1,
+    check(overlay.toolSize() == 1 && overlay.m_sizeButton->text().toDouble() == 1,
           "width input cannot become zero or negative");
     overlay.placeToolbar();
     overlay.showToolBars();
     check(overlay.m_toolOptions->x() == overlay.m_tools->x()
               && overlay.m_toolOptions->y() == overlay.m_tools->geometry().bottom() + 1
-              && overlay.m_toolOptions->width() == overlay.m_tools->width(),
-          "the main toolbar and its options form aligned, gapless horizontal rows");
+              && overlay.m_toolOptions->width() == overlay.m_toolOptions->sizeHint().width(),
+          "the options strip hugs the toolbar's bottom-left edge at its own width");
     for (QWidget *bar : {overlay.m_tools, overlay.m_toolOptions}) {
         const QImage painted = overlay.grab(bar->geometry()).toImage();
         const qreal dpr = painted.devicePixelRatio();

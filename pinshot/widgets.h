@@ -23,7 +23,8 @@
 
 enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, Pen, Marker, Text,
                   Number, Mosaic, Eraser, Undo, Redo, ArrowBoth, ArrowLine, ArrowHollow, Palette, Bold, Italic,
-                  Minimize, Maximize, Restore, Refresh, ArrowHollowBoth, ArrowCurve, LineDashDense, LineDashSparse };
+                  Minimize, Maximize, Restore, Refresh, ArrowHollowBoth, ArrowCurve, LineDashDense, LineDashSparse,
+                  Fill, Dashed };
 
 QIcon makeIcon(Icon icon);
 

@@ -53,15 +53,24 @@ static void buildIconPath(QPainterPath &path, QPainterPath &fill, Icon icon)
         path.moveTo(3.5, 3.5); path.lineTo(12.5, 12.5);
         path.moveTo(12.5, 3.5); path.lineTo(3.5, 12.5);
         break;
-    case Icon::Rect:                                  // Annotation shapes share one 11px box.
-        path.addRoundedRect(2.5, 2.5, 11, 11, 1.5, 1.5);
+    case Icon::Rect:                                  // Plain square frame, square corners.
+        path.addRect(2.5, 3.5, 11, 9);
+        break;
+    case Icon::Fill:                                  // Solid block inside a frame: filled shape.
+        path.addRect(2.5, 3.5, 11, 9);
+        fill.addRect(4, 5, 8, 6);
+        break;
+    case Icon::Dashed:                                // Three dashes on a diagonal.
+        path.moveTo(2.5, 13.5); path.lineTo(4.5, 11.5);
+        path.moveTo(7, 9); path.lineTo(9, 7);
+        path.moveTo(11.5, 4.5); path.lineTo(13.5, 2.5);
         break;
     case Icon::Ellipse:
         path.addEllipse(QPointF(8, 8), 5.5, 5.5);
         break;
-    case Icon::Arrow:                                 // Diagonal shaft with a solid corner head.
-        path.moveTo(3, 13); path.lineTo(10, 6);
-        fill.moveTo(13.5, 2.5); fill.lineTo(13.5, 8.5); fill.lineTo(7.5, 2.5); fill.closeSubpath();
+    case Icon::Arrow:                                 // Thin diagonal shaft with a swept-back solid head.
+        path.moveTo(2.5, 13.5); path.lineTo(10, 6);
+        fill.moveTo(13.5, 2.5); fill.lineTo(12, 9); fill.lineTo(10.2, 5.8); fill.lineTo(7, 4); fill.closeSubpath();
         break;
     case Icon::ArrowBoth:                             // Solid heads on both ends.
         path.moveTo(6, 10); path.lineTo(10, 6);

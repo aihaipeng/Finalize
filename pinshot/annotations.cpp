@@ -46,6 +46,8 @@
 #include <QStylePainter>
 #include <QStyledItemDelegate>
 #include <QStyleOptionComboBox>
+#include <QStyleOptionSlider>
+#include <QScrollBar>
 #include <QFontDatabase>
 #include <QSlider>
 #include <QVBoxLayout>
@@ -131,6 +133,62 @@ protected:
     }
 };
 
+// Light horizontal slider: grey groove, theme-blue fill and ring.
+const QString lightSliderQss = QStringLiteral(
+    "QSlider{margin:0px 1px 0px 1px;}"
+    "QSlider::groove:horizontal{border:none;background:#bdb8b9;height:2px;border-radius:1px;margin:3px 0px 3px 0px;}"
+    "QSlider::handle:horizontal{background:#fff;width:7px;margin:-4px 0px -4px 0px;border-radius:4px;border:1px solid #2080f0;}"
+    "QSlider::handle:horizontal:hover{background:#2080f0;width:7px;margin:-4px 0px -4px 0px;border:1px solid #2080f0;}"
+    "QSlider::sub-page:horizontal{border-radius:1px;background:#2080f0;margin:3px 0px 3px 0px;}");
+
+// Popup scrollbar in the light language: a slim thumb at rest; on hover a wider thumb
+// over a visible track with up/down step arrows. The stylesheet only fixes the geometry
+// (12px bar, 12px step buttons) so hit testing matches what paintEvent draws.
+class FlatScrollBar : public QScrollBar
+{
+public:
+    explicit FlatScrollBar(QWidget *parent = nullptr) : QScrollBar(Qt::Vertical, parent)
+    {
+        setAttribute(Qt::WA_Hover);
+        setStyleSheet(QStringLiteral(
+            "QScrollBar:vertical{width:12px;margin:12px 0px 12px 0px;background:transparent;border:none;}"
+            "QScrollBar::handle:vertical{min-height:20px;}"
+            "QScrollBar::sub-line:vertical{height:12px;subcontrol-position:top;subcontrol-origin:margin;}"
+            "QScrollBar::add-line:vertical{height:12px;subcontrol-position:bottom;subcontrol-origin:margin;}"));
+    }
+protected:
+    bool event(QEvent *e) override
+    {
+        if (e->type() == QEvent::HoverEnter || e->type() == QEvent::HoverLeave) update();
+        return QScrollBar::event(e);
+    }
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        QStyleOptionSlider opt;
+        initStyleOption(&opt);
+        const auto part = [&](QStyle::SubControl sc) {
+            return QRectF(style()->subControlRect(QStyle::CC_ScrollBar, &opt, sc, this));
+        };
+        const bool hot = underMouse() || isSliderDown();
+        if (hot) {
+            p.fillRect(rect(), QColor(0xf0, 0xf0, 0xf0));
+            p.setBrush(QColor(0x60, 0x60, 0x60));
+            const QPointF up = part(QStyle::SC_ScrollBarSubLine).center();
+            const QPointF down = part(QStyle::SC_ScrollBarAddLine).center();
+            p.drawPolygon(QPolygonF{up + QPointF(0, -2), up + QPointF(3, 1.5), up + QPointF(-3, 1.5)});
+            p.drawPolygon(QPolygonF{down + QPointF(0, 2), down + QPointF(3, -1.5), down + QPointF(-3, -1.5)});
+        }
+        const QRectF handle = part(QStyle::SC_ScrollBarSlider);
+        const qreal w = hot ? 8 : 4;
+        p.setBrush(hot ? QColor(0xa0, 0xa0, 0xa0) : QColor(0xc2, 0xc3, 0xc9));
+        p.drawRoundedRect(QRectF(hot ? (width() - w) / 2 : width() - w - 2, handle.top() + 1, w,
+                                 qMax(0.0, handle.height() - 2)), w / 2, w / 2);
+    }
+};
+
 // Light combo: frame without the native drop-down button, plus a thin chevron.
 class FlatComboBox : public QComboBox
 {
@@ -139,6 +197,7 @@ public:
     {
         if (glyphOnly) setItemDelegate(new GlyphItemDelegate(this));
         else setItemDelegate(new FlatItemDelegate(this));
+        view()->setVerticalScrollBar(new FlatScrollBar);
     }
 protected:
     void paintEvent(QPaintEvent *) override
@@ -185,13 +244,14 @@ QRect CaptureOverlay::annotationRect(const Annotation &ann)
     }
     switch (ann.tool) {
     case ATool::Arrow:
-        if (ann.lineStyle >= 2) {                 // Curve: bounds of the sampled path plus the head.
+        if (ann.lineStyle >= 1) {                 // Curve / polyline: bounds of the path plus the head.
             const int m = ann.pen * 2 + 2;
             return ann.stroke.boundingRect().toRect().adjusted(-m, -m, m, m);
         }
         return QRect(ann.a, ann.b).normalized();
     case ATool::Pen:    return ann.stroke.boundingRect().toRect();
     case ATool::Marker: {                          // Fat translucent stroke: include its width.
+        if (ann.fill) return ann.rect;
         const int w = ann.pen * 5 / 2 + 2;
         return ann.stroke.boundingRect().toRect().adjusted(-w, -w, w, w);
     }
@@ -260,7 +320,7 @@ bool CaptureOverlay::annotationHit(const Annotation &ann, const QPoint &pos, int
         return outer <= 1.0 && inner >= 1.0;
     }
     case ATool::Arrow:
-        if (ann.lineStyle >= 2) {                 // Curve arrows hit along the smoothed path.
+        if (ann.lineStyle >= 1) {                 // Curve / polyline arrows hit along their vertices.
             if (ann.stroke.isEmpty()) return false;
             for (int i = 1; i < ann.stroke.size(); ++i)
                 if (distToSegment(QPointF(pos), ann.stroke[i - 1], ann.stroke[i]) <= lineTol + ann.pen / 2)
@@ -271,6 +331,7 @@ bool CaptureOverlay::annotationHit(const Annotation &ann, const QPoint &pos, int
         return distToSegment(QPointF(pos), ann.a, ann.b) <= lineTol + ann.pen / 2;
     case ATool::Pen:
     case ATool::Marker:
+        if (ann.fill) return ann.rect.adjusted(-tol, -tol, tol, tol).contains(pos);   // Highlight block.
         if (ann.stroke.isEmpty()) return false;
         for (int i = 1; i < ann.stroke.size(); ++i)
             if (distToSegment(QPointF(pos), ann.stroke[i - 1], ann.stroke[i])
@@ -295,6 +356,9 @@ QVector<QPoint> CaptureOverlay::annAnchors(const Annotation &ann) const
     if (ann.tool == ATool::Mosaic && ann.mosaicBrush) return {};
     if (ann.tool == ATool::Arrow) return {ann.a, ann.b};
     switch (ann.tool) {
+    case ATool::Marker:
+        if (!ann.fill) return {};
+        [[fallthrough]];
     case ATool::Rect: case ATool::Ellipse: case ATool::Mosaic:
     case ATool::Text: case ATool::Number: {
         const QRect r = ann.rect.normalized();
@@ -425,7 +489,7 @@ void CaptureOverlay::applyItemDrag(const QPoint &pos, Qt::KeyboardModifiers mods
         const QPoint local = mapToLocal(ann, pos);   // Handle math runs in item space.
         if (ann.tool == ATool::Arrow) {
             if (m_itemDrag == H_TL) ann.a = local; else ann.b = local;
-            if (ann.lineStyle >= 2 && ann.stroke.size() >= 2)   // Curve endpoints ride the path ends.
+            if (ann.lineStyle >= 1 && ann.stroke.size() >= 2)   // Path endpoints ride the path ends.
                 ann.stroke[m_itemDrag == H_TL ? 0 : ann.stroke.size() - 1] = QPointF(local);
         } else {
             const QRect r = m_pressAnn.rect.normalized();
@@ -492,7 +556,47 @@ void CaptureOverlay::normalizeNumbers()                          // Sequence num
 {
     int n = 0;
     for (Annotation &ann : m_anns)
-        if (ann.tool == ATool::Number) ann.text = QString::number(++n);
+        if (ann.tool == ATool::Number) ann.text = numberLabel(++n, ann.numberFormat);
+}
+
+QString CaptureOverlay::numberLabel(int n, int format)
+{
+    switch (format) {
+    case 1: {                                    // Roman numerals.
+        static const std::pair<int, const char *> table[] = {
+            {1000, "M"}, {900, "CM"}, {500, "D"}, {400, "CD"}, {100, "C"}, {90, "XC"},
+            {50, "L"}, {40, "XL"}, {10, "X"}, {9, "IX"}, {5, "V"}, {4, "IV"}, {1, "I"}};
+        QString out;
+        for (const auto &[value, glyph] : table)
+            for (; n >= value; n -= value) out += QLatin1String(glyph);
+        return out;
+    }
+    case 2:
+    case 3: {                                    // Spreadsheet letters: A..Z, AA, AB...
+        QString out;
+        for (; n > 0; n = (n - 1) / 26) out.prepend(QChar((format == 2 ? 'A' : 'a') + (n - 1) % 26));
+        return out;
+    }
+    case 4: {                                    // Chinese numerals up to 9999.
+        static const QString digits = QStringLiteral("零一二三四五六七八九");
+        static const QString units[] = {QString(), QStringLiteral("十"), QStringLiteral("百"), QStringLiteral("千")};
+        if (n <= 0 || n > 9999) return QString::number(n);
+        QString out;
+        bool zero = false;
+        for (int pos = 3; pos >= 0; --pos) {
+            const int scale = pos == 3 ? 1000 : pos == 2 ? 100 : pos == 1 ? 10 : 1;
+            const int d = n / scale % 10;
+            if (d == 0) { zero = !out.isEmpty(); continue; }
+            if (zero) out += digits[0];
+            zero = false;
+            if (!(d == 1 && pos == 1 && out.isEmpty())) out += digits[d];   // 十, not 一十.
+            out += units[pos];
+        }
+        return out;
+    }
+    default:
+        return QString::number(n);
+    }
 }
 
 void CaptureOverlay::eraseAt(const QPoint &pos)
@@ -593,6 +697,22 @@ void CaptureOverlay::syncTextEditorGeometry()
 
 bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
 {
+    if (ev->type() == QEvent::ToolTip && obj->isWidgetType()) {   // No hover text anywhere in the capture UI.
+        for (QWidget *w = static_cast<QWidget *>(obj); w; w = w->parentWidget())
+            if (w == this) return true;
+    }
+    if (m_sizeSlider && obj == m_sizeSlider && ev->type() == QEvent::Wheel) {
+        const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
+        if (delta) setToolSize(toolSize() + (delta > 0 ? 1 : -1));
+        ev->accept();
+        return true;
+    }
+    if (obj == m_sizeButton && ev->type() == QEvent::Wheel) {
+        const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
+        if (delta) setToolSize(toolSize() + (delta > 0 ? 1 : -1));
+        ev->accept();
+        return true;
+    }
     if ((obj == m_tools || obj == m_toolOptions)
         && (ev->type() == QEvent::Enter || ev->type() == QEvent::Leave))
         updateInspector();
@@ -982,9 +1102,70 @@ void CaptureOverlay::syncSizeInput()
         m_mosaicSlider->setValue(mosaicStrength());
         m_mosaicSlider->setToolTip(QStringLiteral("马赛克强度 %1：拖动调节，数值越大像素块越大").arg(mosaicStrength()));
     }
+    if (m_sizeButton) {                          // Dot grows with the width, value beside it.
+        const qreal dpr = devicePixelRatioF();
+        QPixmap dot(qCeil(16 * dpr), qCeil(16 * dpr));
+        dot.setDevicePixelRatio(dpr);
+        dot.fill(Qt::transparent);
+        QPainter painter(&dot);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0x32, 0x32, 0x32));
+        const qreal d = qBound(2.0, 2 + toolSize() * (optionsTool() == ATool::Number ? 0.2 : 1.0), 14.0);
+        painter.drawEllipse(QPointF(8, 8), d / 2, d / 2);
+        painter.end();
+        m_sizeButton->setIcon(QIcon(dot));
+        m_sizeButton->setText(QString::number(toolSize()));
+    }
+    if (m_sizeSlider) {
+        const QSignalBlocker lock(m_sizeSlider);
+        m_sizeSlider->setValue(qRound(toolSize()));
+    }
+    if (m_sizeValue) m_sizeValue->setText(QString::number(toolSize()));
     if (!m_sizeInput) return;
     const QSignalBlocker lock(m_sizeInput);
     m_sizeInput->setEditText(QString::number(toolSize()));
+}
+
+void CaptureOverlay::showSizePopup(QToolButton *anchor, int minimum, int maximum)
+{
+    if (m_sizePopup) { m_sizePopup->close(); return; }
+    auto *popup = new QDialog(this, Qt::Popup | Qt::FramelessWindowHint);
+    m_sizePopup = popup;
+    popup->setAttribute(Qt::WA_DeleteOnClose);
+    popup->setStyleSheet(QStringLiteral("QDialog{background:#f2f2f2;border:1px solid #2080f0;}"
+                                        "QLabel{color:#323232;font-size:12px;}"));
+    auto *row = new QHBoxLayout(popup);
+    row->setContentsMargins(8, 6, 8, 6);
+    row->setSpacing(6);
+    m_sizeSlider = new QSlider(Qt::Horizontal, popup);
+    m_sizeSlider->setObjectName(QStringLiteral("sizeSlider"));
+    m_sizeSlider->setAccessibleName(anchor->accessibleName());
+    m_sizeSlider->setRange(minimum, maximum);
+    m_sizeSlider->setPageStep(1);
+    m_sizeSlider->setFixedSize(128, 22);
+    m_sizeSlider->setFocusPolicy(Qt::NoFocus);
+    m_sizeSlider->setStyleSheet(lightSliderQss);
+    m_sizeSlider->installEventFilter(this);
+    m_sizeValue = new QLabel(popup);
+    m_sizeValue->setFixedWidth(24);
+    m_sizeValue->setAlignment(Qt::AlignCenter);
+    row->addWidget(m_sizeSlider);
+    row->addWidget(m_sizeValue);
+    m_sizeDragUndo = false;
+    syncSizeInput();
+    connect(m_sizeSlider, &QSlider::valueChanged, this, [this](int value) { setToolSize(value); });
+    connect(m_sizeSlider, &QSlider::sliderPressed, this, [this] { m_sizeDragUndo = false; });
+    connect(m_sizeSlider, &QSlider::sliderReleased, this, [this] { m_sizeDragUndo = false; });
+    connect(popup, &QDialog::finished, this, [this] { if (isVisible()) setFocus(); });
+    popup->show();
+    popup->adjustSize();
+    const QPoint below = anchor->mapToGlobal(QPoint(0, anchor->height()));
+    const QScreen *screen = QGuiApplication::screenAt(below);
+    const QRect available = (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry();
+    const int y = below.y() + popup->height() <= available.bottom() + 1 ? below.y()
+        : qMax(available.top(), anchor->mapToGlobal(QPoint()).y() - popup->height());
+    popup->move(qBound(available.left(), below.x(), available.right() + 1 - popup->width()), y);
 }
 
 void CaptureOverlay::commitSizeInput()
@@ -1027,7 +1208,9 @@ void CaptureOverlay::setToolSize(qreal value)                    // Numeric edit
     } else if (m_live) {
         m_ann.pen = m_apen = qRound(value);
     } else if (m_atool != ATool::Eraser && m_selAnn >= 0 && m_selAnn < m_anns.size()) {
-        pushUndo();
+        const bool dragging = m_sizeSlider && m_sizeSlider->isSliderDown();
+        if (!dragging || !m_sizeDragUndo) pushUndo();   // One undo step per slider drag.
+        m_sizeDragUndo = dragging;
         Annotation &ann = m_anns[m_selAnn];
         if (texty) ann.font = value; else ann.pen = qRound(value);
         if (ann.tool == ATool::Text) fitTextAnnotation(ann);
@@ -1047,12 +1230,7 @@ void CaptureOverlay::tuneWidth(int dir, const QPoint &at)
     if (tool == ATool::None) return;
     const bool texty = tool == ATool::Text || tool == ATool::Number;
     setToolSize(toolSize() + dir * (texty ? 0.5 : 1));
-    updateAnnotationCursor(at);
-    m_sizeTip->setText(texty ? QStringLiteral("字号 %1 pt").arg(toolSize())
-                           : tool == ATool::Mosaic && !mosaicBrush() ? QStringLiteral("强度 %1").arg(toolSize())
-                           : QStringLiteral("粗细 %1").arg(toolSize()));
-    tipPosition(at);
-    m_sizeTip->show();
+    updateAnnotationCursor(at);                  // The bar's value is the only feedback; no floating text.
 }
 
 void CaptureOverlay::beginAnnotation(const QPoint &pos)
@@ -1072,15 +1250,19 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
         m_ann.mosaicSeed = QRandomGenerator::global()->generate();
     }
     if (m_atool == ATool::Rect || m_atool == ATool::Ellipse) m_ann.fill = m_afill;
+    if (m_atool == ATool::Marker) m_ann.fill = m_markerFill;
     if (m_atool == ATool::Arrow) {
         m_ann.arrowStyle = m_arrowStyle;
         m_ann.lineStyle = m_arrowLineStyle;
+        m_ann.dashed = m_arrowDashed;
+        m_ann.a = m_ann.b = pos;
     }
-    if (m_atool == ATool::Pen || m_atool == ATool::Marker || m_ann.mosaicBrush
-        || (m_atool == ATool::Arrow && m_arrowLineStyle >= 2))
+    if (m_atool == ATool::Arrow && m_arrowLineStyle == 2)
+        m_ann.stroke << pos << pos;              // Polyline: fixed vertex plus a rubber-band end.
+    else if (m_atool == ATool::Pen || (m_atool == ATool::Marker && !m_ann.fill) || m_ann.mosaicBrush
+        || (m_atool == ATool::Arrow && m_arrowLineStyle == 1))
         m_ann.stroke << pos;                     // Curve arrows sample the drag like the pen.
-    else if (m_atool == ATool::Arrow) m_ann.a = m_ann.b = pos;
-    else m_ann.rect = QRect(pos, pos);
+    else if (m_atool != ATool::Arrow) m_ann.rect = QRect(pos, pos);
     syncSizeInput();                             // Keep the active options visible while drawing.
     m_inspector->hide();
     m_sizeTip->hide();
@@ -1088,14 +1270,20 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
 
 void CaptureOverlay::updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers mods)
 {
+    if (m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {   // Rubber band to the cursor.
+        m_ann.stroke.last() = pos;
+        m_ann.b = pos;
+        return;
+    }
     if (m_ann.mosaicBrush
-        || (m_atool == ATool::Arrow && m_ann.lineStyle >= 2)) {
+        || (m_atool == ATool::Arrow && m_ann.lineStyle == 1)) {
         if ((pos - m_ann.stroke.last().toPoint()).manhattanLength() >= 2) m_ann.stroke << pos;
         m_ann.a = m_ann.stroke.first().toPoint();   // Endpoint anchors follow the path ends.
         m_ann.b = m_ann.stroke.last().toPoint();
         return;
     }
-    switch (m_atool) {
+    const ATool shape = m_ann.tool == ATool::Marker && m_ann.fill ? ATool::Rect : m_atool;
+    switch (shape) {
     case ATool::Pen:
     case ATool::Marker:
         if ((pos - m_ann.stroke.last().toPoint()).manhattanLength() >= 2)
@@ -1132,11 +1320,16 @@ void CaptureOverlay::updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers m
 
 void CaptureOverlay::commitAnnotation()
 {
+    if (m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2)   // Drop a rubber band resting on the last vertex.
+        while (m_ann.stroke.size() > 2 && QLineF(m_ann.stroke.last(), m_ann.stroke[m_ann.stroke.size() - 2]).length() < 1)
+            m_ann.stroke.removeLast();
+    qreal pathLength = 0;
+    for (int i = 1; i < m_ann.stroke.size(); ++i) pathLength += QLineF(m_ann.stroke[i - 1], m_ann.stroke[i]).length();
     const bool meaningful = m_ann.mosaicBrush ? !m_ann.stroke.isEmpty()
-        : m_ann.tool == ATool::Pen || m_ann.tool == ATool::Marker
+        : m_ann.tool == ATool::Pen || (m_ann.tool == ATool::Marker && !m_ann.fill)
         ? m_ann.stroke.size() >= 2
         : m_ann.tool == ATool::Arrow
-              ? (m_ann.lineStyle >= 2 ? m_ann.stroke.size() >= 2
+              ? (m_ann.lineStyle >= 1 ? m_ann.stroke.size() >= 2 && pathLength >= 6
                                        : (m_ann.a - m_ann.b).manhattanLength() >= 6)
               : m_ann.rect.width() >= 3 && m_ann.rect.height() >= 3;
     if (meaningful) {                            // Discard accidental tiny strokes.
@@ -1201,7 +1394,7 @@ void CaptureOverlay::syncToolButtons()                           // Rect and Ell
         m_toolBtn[t]->setChecked(m_toolBtn[t] == active);
     }
     const QSignalBlocker lock(m_shapeButton);
-    m_shapeButton->setIcon(makeIcon(m_shapeEllipse ? Icon::Ellipse : Icon::Rect));
+    m_shapeButton->setIcon(makeIcon(Icon::Rect));   // The main bar stays the same whichever sub-shape is armed.
 }
 
 QColor CaptureOverlay::toolColor(ATool tool) const               // Each tool remembers its own color.
@@ -1365,14 +1558,53 @@ void CaptureOverlay::pickArrowStyle(int style)
 
 void CaptureOverlay::pickArrowLineStyle(int style)
 {
-    m_arrowLineStyle = qBound(0, style, 3);
+    m_arrowLineStyle = qBound(0, style, 2);
     if (m_selAnn >= 0 && m_selAnn < m_anns.size()
         && m_anns[m_selAnn].tool == ATool::Arrow) {
         pushUndo();
         Annotation &ann = m_anns[m_selAnn];
         ann.lineStyle = m_arrowLineStyle;
-        if (ann.lineStyle >= 2 && ann.stroke.size() < 2)   // Straight arrows gain a two-point curve path.
+        if (ann.lineStyle >= 1 && ann.stroke.size() < 2)   // Straight arrows gain a two-point path.
             ann.stroke = QPolygonF{QPointF(ann.a), QPointF(ann.b)};
+        update();
+    }
+}
+
+void CaptureOverlay::toggleArrowDashed()
+{
+    m_arrowDashed = !m_arrowDashed;
+    if (m_selAnn >= 0 && m_selAnn < m_anns.size() && m_anns[m_selAnn].tool == ATool::Arrow) {
+        pushUndo();
+        m_anns[m_selAnn].dashed = m_arrowDashed;
+        update();
+    }
+}
+
+void CaptureOverlay::toggleFill()                                // Shapes: solid fill; marker: rectangle block.
+{
+    const ATool tool = optionsTool();
+    const bool marker = tool == ATool::Marker;
+    if (!marker && tool != ATool::Rect && tool != ATool::Ellipse) return;
+    if (!m_live && m_selAnn >= 0 && m_selAnn < m_anns.size()
+        && (m_anns[m_selAnn].tool == ATool::Rect || m_anns[m_selAnn].tool == ATool::Ellipse)) {
+        pushUndo();
+        m_anns[m_selAnn].fill = m_afill = !m_anns[m_selAnn].fill;
+        update();
+    } else if (marker) m_markerFill = !m_markerFill;   // A drawn highlight keeps its own form.
+    else m_afill = !m_afill;
+    updateToolOptions();
+}
+
+void CaptureOverlay::pickNumberOption(bool format, int value)
+{
+    (format ? m_numberFormat : m_numberStyle) = value;
+    if (m_selAnn >= 0 && m_selAnn < m_anns.size() && m_anns[m_selAnn].tool == ATool::Number) {
+        pushUndo();
+        // Style is per marker; the format applies to the whole sequence so labels stay consistent.
+        for (Annotation &ann : m_anns)
+            if (ann.tool == ATool::Number && format) ann.numberFormat = value;
+        if (!format) m_anns[m_selAnn].numberStyle = value;
+        normalizeNumbers();
         update();
     }
 }
@@ -1429,6 +1661,8 @@ void CaptureOverlay::updateToolOptions()
         return;
     }
     m_sizeInput = nullptr;
+    m_sizeButton = nullptr;
+    if (m_sizePopup) m_sizePopup->close();
     m_mosaicSlider = nullptr;
     m_mosaicStrengthLabel = nullptr;
     m_mosaicWidthLabel = nullptr;
@@ -1480,9 +1714,26 @@ void CaptureOverlay::updateToolOptions()
     };
     const bool texty = tool == ATool::Text || tool == ATool::Number;
     auto addSize = [this, lay, texty, tool] {
-        const bool strength = tool == ATool::Mosaic && !mosaicBrush();
-        const int minimum = strength ? 3 : tool == ATool::Mosaic ? 4 : 1;
-        const int maximum = texty ? 1638 : tool == ATool::Mosaic ? strength ? 24 : 50 : 12;
+        if (tool != ATool::Text) {               // Width button on the left; the slider pops up below it.
+            // shortcut: number slider spans 6-96 pt; finer or larger sizes still come from the canvas wheel.
+            const int minimum = tool == ATool::Number ? 6 : 1, maximum = tool == ATool::Number ? 96 : 12;
+            m_sizeButton = new QToolButton;
+            m_sizeButton->setObjectName(QStringLiteral("sizeButton"));
+            m_sizeButton->setAccessibleName(tool == ATool::Number ? QStringLiteral("大小") : QStringLiteral("粗细"));
+            m_sizeButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+            m_sizeButton->setIconSize(QSize(16, 16));
+            m_sizeButton->setFixedSize(48, 32);
+            m_sizeButton->setFocusPolicy(Qt::NoFocus);
+            m_sizeButton->setCursor(Qt::PointingHandCursor);
+            m_sizeButton->installEventFilter(this);
+            QToolButton *button = m_sizeButton;
+            connect(button, &QToolButton::clicked, this,
+                    [this, button, minimum, maximum] { showSizePopup(button, minimum, maximum); });
+            lay->insertWidget(0, button);        // Always the first control of the strip.
+            syncSizeInput();
+            return;
+        }
+        const int minimum = 1, maximum = 1638;
         m_sizeInput = new FlatComboBox;
         m_sizeInput->setEditable(true);
         m_sizeInput->setInsertPolicy(QComboBox::NoInsert);
@@ -1522,27 +1773,42 @@ void CaptureOverlay::updateToolOptions()
                   [this] { selectTool(ATool::Rect); });
         addOption(lay, Icon::Ellipse, QStringLiteral("椭圆"), m_shapeEllipse,
                   [this] { selectTool(ATool::Ellipse); });
+        addOption(lay, Icon::Fill, QStringLiteral("填充 (F)"),
+                  !m_live && m_selAnn >= 0 && m_selAnn < m_anns.size() ? m_anns[m_selAnn].fill : m_afill,
+                  [this] { toggleFill(); });
+        lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("fillButton"));
         addSize();
         addSeparator(lay);
         addSwatches(lay, ATool::Rect);
         break;
+    case ATool::Marker:
+        addOption(lay, Icon::Fill, QStringLiteral("矩形高亮"), m_markerFill, [this] { toggleFill(); });
+        lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("fillButton"));
+        addSize();
+        addSeparator(lay);
+        addSwatches(lay, ATool::Marker);
+        break;
     case ATool::Arrow: {
         // Glyphs come from the arrow renderer itself, drawn as wide horizontal samples.
+        // Head samples use a heavier pen so the solid head reads clearly; hollow ones stay thin and crisp.
         auto glyph = [this](int style, int line) {
             const qreal dpr = devicePixelRatioF();
-            QPixmap pm(qCeil(40 * dpr), qCeil(12 * dpr));
+            QPixmap pm(qCeil(36 * dpr), qCeil(16 * dpr));
             pm.setDevicePixelRatio(dpr);
             pm.fill(Qt::transparent);
             Annotation sample;
             sample.tool = ATool::Arrow;
             sample.color = QColor(0x32, 0x32, 0x32);
-            sample.pen = 2;
+            const bool hollowHead = style == 1 || style == 3;
+            sample.pen = line > 0 || style == 4 ? 2 : hollowHead ? 1 : 3;
             sample.arrowStyle = style;
             sample.lineStyle = line;
-            sample.a = QPoint(2, 6);
-            sample.b = QPoint(38, 6);
-            if (line >= 2)
-                sample.stroke << QPointF(2, 9) << QPointF(14, 3) << QPointF(26, 9) << QPointF(38, 4);
+            sample.a = QPoint(2, 8);
+            sample.b = QPoint(34, 8);
+            if (line == 1)
+                sample.stroke << QPointF(2, 12) << QPointF(12, 4) << QPointF(22, 12) << QPointF(34, 5);
+            else if (line == 2)
+                sample.stroke << QPointF(2, 12) << QPointF(12, 4) << QPointF(22, 12) << QPointF(34, 4);
             QPainter painter(&pm);
             drawAnnotation(painter, sample, QImage());
             return QIcon(pm);
@@ -1556,14 +1822,12 @@ void CaptureOverlay::updateToolOptions()
                 combo->addItem(iconAt(k), textAt(k));
             combo->setCurrentIndex(current);
             combo->setFocusPolicy(Qt::NoFocus);
-            combo->setFixedSize(46, 24);
-            combo->setIconSize(QSize(24, 12));
+            combo->setFixedSize(58, 24);
+            combo->setIconSize(QSize(36, 16));
             combo->setAccessibleName(textAt(current));
-            combo->setToolTip(textAt(current));
             connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, combo, pick](int k) {
                 pick(k);
                 combo->setAccessibleName(combo->itemText(k));
-                combo->setToolTip(combo->itemText(k));
                 setFocus();
             });
             l->addWidget(combo);
@@ -1576,13 +1840,18 @@ void CaptureOverlay::updateToolOptions()
                      return QString::fromUtf8(names[k]);
                  },
                  [this](int k) { pickArrowStyle(k); });
-        addCombo(lay, m_arrowLineStyle, 4,             // Path and dashing only.
+        const bool editing = !m_live && m_selAnn >= 0 && m_selAnn < m_anns.size()
+                             && m_anns[m_selAnn].tool == ATool::Arrow;
+        addCombo(lay, m_arrowLineStyle, 3,             // Path only; dashing is its own toggle.
                  [&](int k) { return glyph(4, k); },
                  [](int k) {
-                     const char *const names[] = {"直线", "直线-虚线", "曲线", "曲线-虚线"};
+                     const char *const names[] = {"直线", "曲线", "折线（单击加拐点，双击或右键结束）"};
                      return QString::fromUtf8(names[k]);
                  },
                  [this](int k) { pickArrowLineStyle(k); });
+        addOption(lay, Icon::Dashed, QStringLiteral("虚线"), editing ? m_anns[m_selAnn].dashed : m_arrowDashed,
+                  [this] { toggleArrowDashed(); });
+        lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("dashedButton"));
         addSize();
         addSeparator(lay);
         addSwatches(lay, ATool::Arrow);
@@ -1659,12 +1928,7 @@ void CaptureOverlay::updateToolOptions()
         m_mosaicSlider->setPageStep(1);
         m_mosaicSlider->setFixedSize(128, 22);
         m_mosaicSlider->setFocusPolicy(Qt::NoFocus);
-        m_mosaicSlider->setStyleSheet(QStringLiteral(     // Light slider: grey groove, theme-blue fill and ring.
-            "QSlider{margin:0px 1px 0px 1px;}"
-            "QSlider::groove:horizontal{border:none;background:#bdb8b9;height:2px;border-radius:1px;margin:3px 0px 3px 0px;}"
-            "QSlider::handle:horizontal{background:#fff;width:7px;margin:-4px 0px -4px 0px;border-radius:4px;border:1px solid #2080f0;}"
-            "QSlider::handle:horizontal:hover{background:#2080f0;width:7px;margin:-4px 0px -4px 0px;border:1px solid #2080f0;}"
-            "QSlider::sub-page:horizontal{border-radius:1px;background:#2080f0;margin:3px 0px 3px 0px;}"));
+        m_mosaicSlider->setStyleSheet(lightSliderQss);
         m_mosaicSlider->installEventFilter(this);
         syncSizeInput();
         connect(m_mosaicSlider, &QSlider::valueChanged, this, &CaptureOverlay::setMosaicStrength);
@@ -1684,6 +1948,33 @@ void CaptureOverlay::updateToolOptions()
     }
     case ATool::Eraser: {
         addSize();
+        break;
+    }
+    case ATool::Number: {
+        const bool editing = !m_live && m_selAnn >= 0 && m_selAnn < m_anns.size()
+                             && m_anns[m_selAnn].tool == ATool::Number;
+        auto addList = [this, lay](const QString &name, const QStringList &items, int current, bool format) {
+            auto *combo = new FlatComboBox;
+            combo->setObjectName(format ? QStringLiteral("numberFormat") : QStringLiteral("numberStyle"));
+            combo->addItems(items);
+            combo->setCurrentIndex(current);
+            combo->setAccessibleName(name);
+            combo->setFocusPolicy(Qt::NoFocus);
+            combo->setFixedSize(format ? 84 : 64, 24);
+            connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, format](int k) {
+                pickNumberOption(format, k);
+                setFocus();
+            });
+            lay->addWidget(combo);
+        };
+        addSize();
+        addList(QStringLiteral("序号样式"), {QStringLiteral("实心"), QStringLiteral("空心"), QStringLiteral("仅序号")},
+                editing ? m_anns[m_selAnn].numberStyle : m_numberStyle, false);
+        addList(QStringLiteral("序号格式"), {QStringLiteral("1 2 3"), QStringLiteral("I II III"), QStringLiteral("A B C"),
+                                          QStringLiteral("a b c"), QStringLiteral("一 二 三")},
+                editing ? m_anns[m_selAnn].numberFormat : m_numberFormat, true);
+        addSeparator(lay);
+        addSwatches(lay, ATool::Number);
         break;
     }
     default:
@@ -1839,11 +2130,7 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
     switch (ann.tool) {
     case ATool::Rect:
     case ATool::Ellipse:
-        if (ann.fill) {                          // Fill mode: translucent wash plus outline.
-            QColor wash = ann.color;
-            wash.setAlpha(70);
-            p.setBrush(wash);
-        }
+        if (ann.fill) p.setBrush(ann.color);     // Fill mode: solid shape in the stroke color.
         p.setPen(pen);
         if (ann.tool == ATool::Rect) p.drawRect(ann.rect);
         else p.drawEllipse(ann.rect);
@@ -1855,6 +2142,7 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
     case ATool::Marker: {                        // Translucent fat stroke, marker style.
         QColor wash = ann.color;
         wash.setAlpha(110);
+        if (ann.fill) { p.fillRect(ann.rect, wash); break; }   // Rectangle highlight block.
         QPen washPen(wash, ann.pen * 5);
         washPen.setCapStyle(Qt::RoundCap);
         washPen.setJoinStyle(Qt::RoundJoin);
@@ -1876,12 +2164,25 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         if (ann.text.isEmpty()) break;
         QFont font = textFont(ann);
         font.setBold(true);
-        p.setPen(Qt::NoPen);
-        p.setBrush(ann.color);
-        p.drawEllipse(ann.rect);
-        p.setPen(ann.color.lightness() > 165 ? Qt::black : Qt::white);
+        const qreal room = ann.rect.width() * 0.8;    // Long labels (VIII, 十一) shrink to fit the disc.
+        const qreal advance = QFontMetricsF(font).horizontalAdvance(ann.text);
+        if (ann.numberStyle != 2 && advance > room && advance > 0)
+            font.setPointSizeF(qMax(1.0, font.pointSizeF() * room / advance));
+        if (ann.numberStyle == 0) {                   // Filled disc, contrasting digits.
+            p.setPen(Qt::NoPen);
+            p.setBrush(ann.color);
+            p.drawEllipse(ann.rect);
+            p.setPen(ann.color.lightness() > 165 ? Qt::black : Qt::white);
+        } else {
+            if (ann.numberStyle == 1) {               // Ring at a weight that follows the size.
+                const qreal ring = qMax(1.5, ann.rect.width() / 14.0);
+                p.setPen(QPen(ann.color, ring));
+                p.drawEllipse(QRectF(ann.rect).adjusted(ring / 2, ring / 2, -ring / 2, -ring / 2));
+            }
+            p.setPen(ann.color);
+        }
         p.setFont(font);
-        p.drawText(ann.rect, Qt::AlignCenter, ann.text);
+        p.drawText(ann.rect, Qt::AlignCenter | Qt::TextDontClip, ann.text);
         break;
     }
     case ATool::Arrow: {
@@ -1890,7 +2191,7 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         const bool hollow = ann.arrowStyle == 1 || ann.arrowStyle == 3;
         const bool startHead = ann.arrowStyle == 2 || ann.arrowStyle == 3;
         const bool tipHead = ann.arrowStyle <= 3;
-        const bool curve = ann.lineStyle >= 2, dashed = ann.lineStyle & 1;
+        const bool curve = ann.lineStyle == 1, polyline = ann.lineStyle == 2, dashed = ann.dashed;
         QPen shaft(ann.color, w);
         shaft.setJoinStyle(Qt::RoundJoin);
         shaft.setCapStyle(Qt::RoundCap);
@@ -1902,9 +2203,13 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         QPainterPath path;
         QPointF dirEnd(1, 0);
         qreal length = 0;
-        if (curve) {                                    // Curve: smoothed sampling of the drag.
+        if (curve || polyline) {                        // Curve: smoothed drag; polyline: clicked vertices.
             if (ann.stroke.size() < 2) break;
-            path = smoothStrokePath(ann.stroke);
+            if (curve) path = smoothStrokePath(ann.stroke);
+            else {
+                path.moveTo(ann.stroke.first());
+                for (int i = 1; i < ann.stroke.size(); ++i) path.lineTo(ann.stroke[i]);
+            }
             dirEnd = QPointF(ann.stroke.last() - ann.stroke[ann.stroke.size() - 2]);
             const qreal len = qSqrt(dirEnd.x() * dirEnd.x() + dirEnd.y() * dirEnd.y());
             if (len > 0.001) dirEnd /= len;
@@ -1934,27 +2239,45 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
             auto half = [&](qreal s) {
                 return startHead ? sh : sh * (0.15 + 0.85 * (s - s0) / qMax(1.0, s1 - s0));
             };
-            const int steps = curve ? 40 : 1;
-            QPolygonF outline;
+            // Samples along the tail: polylines use their own vertices with mitred normals so
+            // corners stay crisp; curves are sampled densely.
+            QVector<Frame> rail;
+            QVector<qreal> railS;
+            const int steps = curve ? 60 : 1;
             for (int i = 0; i <= steps; ++i) {
                 const qreal s = s0 + (s1 - s0) * i / steps;
-                const Frame f = frame(s);
-                outline << f.p + f.n * half(s);
+                rail << frame(s);
+                railS << s;
             }
+            if (polyline) {
+                qreal along = 0;
+                for (int i = 1; i < ann.stroke.size() - 1; ++i) {
+                    along += QLineF(ann.stroke[i - 1], ann.stroke[i]).length();
+                    if (along <= s0 || along >= s1) continue;
+                    auto unit = [](QPointF d) { const qreal n = qSqrt(QPointF::dotProduct(d, d)); return n > 0.001 ? d / n : d; };
+                    const QPointF din = unit(ann.stroke[i] - ann.stroke[i - 1]);
+                    const QPointF dout = unit(ann.stroke[i + 1] - ann.stroke[i]);
+                    const QPointF nin(-din.y(), din.x()), nout(-dout.y(), dout.x());
+                    QPointF miter = unit(nin + nout);
+                    const qreal cosHalf = QPointF::dotProduct(miter, nin);
+                    miter /= qMax(0.25, cosHalf);           // Limit spikes on very sharp turns.
+                    rail.insert(rail.size() - 1, Frame{ann.stroke[i], dout, miter});
+                    railS.insert(railS.size() - 1, along);
+                }
+            }
+            QPolygonF outline;
+            for (int i = 0; i < rail.size(); ++i) outline << rail[i].p + rail[i].n * half(railS[i]);
             // Head barbs sit on the path frame at the head base, so curved ends do not self-cross.
             const Frame endBase = frame(length - hl);
             const QPointF tip = frame(length).p;
             outline << endBase.p + endBase.n * hh << tip << endBase.p - endBase.n * hh;
-            for (int i = steps; i >= 0; --i) {
-                const qreal s = s0 + (s1 - s0) * i / steps;
-                const Frame f = frame(s);
-                outline << f.p - f.n * half(s);
-            }
+            for (int i = rail.size() - 1; i >= 0; --i) outline << rail[i].p - rail[i].n * half(railS[i]);
             if (startHead) {
                 const Frame startBase = frame(hl);
                 outline << startBase.p - startBase.n * hh << frame(0).p << startBase.p + startBase.n * hh;
             }
             QPen edge = shaft;                         // Sharp tip and barbs, as in the reference capture.
+            edge.setStyle(Qt::SolidLine);              // A dashed closed outline reads as noise; hollow stays solid.
             edge.setJoinStyle(Qt::MiterJoin);
             p.setPen(edge);
             p.setBrush(Qt::NoBrush);
@@ -1967,6 +2290,11 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         if (length > 0 && length - wanted < 2 * w)
             headLen *= qMax(0.0, length - 2 * w) / qMax(1e-6, wanted);
         QPointF dirStart = -dirEnd;
+        if (polyline) {                                 // Each head follows its own end segment.
+            const QPointF d = ann.stroke.first() - ann.stroke[1];
+            const qreal n = qSqrt(QPointF::dotProduct(d, d));
+            if (n > 0.001) dirStart = d / n;
+        }
         if (curve && headLen > 0.5) {
             // Curved heads aim along the chord from their base to the tip, so the trimmed shaft meets the base square.
             auto chord = [&](qreal from, qreal to, const QPointF &fallback) {
@@ -1990,8 +2318,16 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
             const qreal from = path.percentAtLength(trimStart);
             const qreal to = path.percentAtLength(length - trimEnd);
             trimmed.moveTo(path.pointAtPercent(from));
-            for (qreal t = from + 0.01; t < to; t += 0.01)     // 1% walk, as the reference does.
-                trimmed.lineTo(path.pointAtPercent(qMin(t, to)));
+            if (polyline) {                                 // Keep the clicked corners sharp.
+                qreal along = 0;
+                for (int i = 1; i < ann.stroke.size() - 1; ++i) {
+                    along += QLineF(ann.stroke[i - 1], ann.stroke[i]).length();
+                    if (along > trimStart && along < length - trimEnd) trimmed.lineTo(ann.stroke[i]);
+                }
+            } else {
+                for (qreal t = from + 0.01; t < to; t += 0.01)     // 1% walk, as the reference does.
+                    trimmed.lineTo(path.pointAtPercent(qMin(t, to)));
+            }
             trimmed.lineTo(path.pointAtPercent(to));
             path = trimmed;
         }
@@ -2017,8 +2353,8 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
                 p.setBrush(Qt::NoBrush);
             }
         };
-        if (tipHead) paintHead(curve ? ann.stroke.last() : QPointF(ann.b), dirEnd);
-        if (startHead) paintHead(curve ? ann.stroke.first() : QPointF(ann.a), dirStart);
+        if (tipHead) paintHead(curve || polyline ? ann.stroke.last() : QPointF(ann.b), dirEnd);
+        if (startHead) paintHead(curve || polyline ? ann.stroke.first() : QPointF(ann.a), dirStart);
         break;
     }
     case ATool::Mosaic: {                        // Redact lower layers through the object's mask.

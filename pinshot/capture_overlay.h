@@ -92,11 +92,14 @@ private:
         qreal font = 15;                             // Text / Number point size (1/72 inch).
         QString family = QStringLiteral("Microsoft YaHei UI");
         int arrowStyle = 0;                          // Heads only: 0 single, 1 single hollow, 2 double, 3 double hollow, 4 none.
-        int lineStyle = 0;                           // Shaft only: 0 straight, 1 straight dashed, 2 curve, 3 curve dashed.
+        int lineStyle = 0;                           // Shaft path: 0 straight, 1 curve, 2 polyline (clicked vertices).
+        bool dashed = false;                         // Arrow shaft dashing, independent of the path.
+        int numberStyle = 0;                         // 0 filled disc, 1 ring, 2 bare label.
+        int numberFormat = 0;                        // 0 "1 2 3", 1 "I II III", 2 "A B C", 3 "a b c", 4 Chinese numerals.
         bool bold = false;                           // Text weight / slant.
         bool italic = false;
         qreal rot = 0;                               // Rotation around the box center (degrees).
-        bool fill = false;                           // Rect / Ellipse translucent fill mode.
+        bool fill = false;                           // Rect / Ellipse solid fill; Marker rectangle highlight.
     };
     static QRect annotationRect(const Annotation &ann);
     // Rotation helpers: item geometry stays in local space, the angle only transforms paint and hit tests.
@@ -168,6 +171,11 @@ private:
     void showColorPalette(ATool family, QToolButton *anchor);
     void pickArrowStyle(int style);
     void pickArrowLineStyle(int style);
+    void toggleArrowDashed();
+    void toggleFill();
+    void pickNumberOption(bool format, int value);
+    static QString numberLabel(int n, int format);
+    void showSizePopup(QToolButton *anchor, int minimum, int maximum);
     void setTextBold(bool on);
     void setTextItalic(bool on);
     void setTextFamily(const QFont &font);
@@ -289,7 +297,12 @@ private:
     QToolButton *m_shapeButton = nullptr;            // Merged rect / ellipse tool button.
     QVector<QToolButton *> m_toolBtn;                // Tool button per ATool id (shape shared).
     QWidget *m_toolOptions = nullptr;                // Per-tool option strip under the toolbar.
-    QComboBox *m_sizeInput = nullptr;                 // Editable width / point-size presets.
+    QComboBox *m_sizeInput = nullptr;                 // Editable text point-size presets.
+    QToolButton *m_sizeButton = nullptr;             // Width button; opens the slider popup.
+    QPointer<QDialog> m_sizePopup;
+    QPointer<QSlider> m_sizeSlider;
+    QPointer<QLabel> m_sizeValue;
+    bool m_sizeDragUndo = false;
     QSlider *m_mosaicSlider = nullptr;
     QLabel *m_mosaicStrengthLabel = nullptr;
     QLabel *m_mosaicWidthLabel = nullptr;
@@ -303,7 +316,10 @@ private:
     ATool m_colorDialogTool = ATool::None;
     bool m_shapeEllipse = false;                     // Current sub-shape of the shape button.
     int m_arrowStyle = 0;                            // Head shape, see Annotation::arrowStyle.
-    int m_arrowLineStyle = 0;                        // Shaft path and dash, see Annotation::lineStyle.
+    int m_arrowLineStyle = 0;                        // Shaft path, see Annotation::lineStyle.
+    bool m_arrowDashed = false;
+    int m_numberStyle = 0, m_numberFormat = 0;       // See Annotation::numberStyle / numberFormat.
+    bool m_markerFill = false;                       // Marker drags a translucent rectangle.
     bool m_abold = false, m_aitalic = false;         // Text tool defaults.
     bool m_editBold = false, m_editItalic = false;   // Live editor weight / slant.
     QColor m_colorShape = "#ff3b30", m_colorArrow = "#ff3b30", m_colorPen = "#ff3b30",

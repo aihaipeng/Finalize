@@ -97,6 +97,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     m_sizeTip->hide();
 
     // The overlay paints matching solid backgrounds for both toolbar containers.
+    qApp->installEventFilter(this);                  // Swallows hover tooltips of every capture control.
     m_tools = new QWidget(this);
     m_tools->installEventFilter(this);
     m_tools->setCursor(Qt::ArrowCursor);
@@ -310,6 +311,12 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
     }
     if (e->button() != Qt::LeftButton)
         return;
+    if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {   // Polyline: each click fixes a vertex.
+        m_ann.stroke.last() = e->pos();
+        m_ann.stroke << e->pos();
+        update();
+        return;
+    }
     setFocus();                                   // Any click restores keyboard handling.
     m_pressPos = e->pos();
     m_dragStarted = false;
@@ -375,6 +382,8 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
             ann.tool = ATool::Number;
             ann.color = m_acolor;
             ann.font = m_afont;
+            ann.numberStyle = m_numberStyle;
+            ann.numberFormat = m_numberFormat;
             const int s = numberDiameter(ann);
             ann.rect = QRect(e->pos() - QPoint(s / 2, s / 2), QSize(s, s));
             m_anns.append(ann);
@@ -440,15 +449,7 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
         const QRect dirty = annotationRect(m_ann);
         updateAnnotation(pos, e->modifiers());
         update(dirty.united(annotationRect(m_ann)).adjusted(-24, -24, 24, 24));
-        if (m_ann.rect.isValid() && !m_ann.mosaicBrush && m_ann.tool != ATool::Pen
-            && m_ann.tool != ATool::Marker && m_ann.tool != ATool::Arrow) {
-            m_sizeTip->setText(QString("%1 × %2").arg(m_ann.rect.width()).arg(m_ann.rect.height()));
-            m_sizeTip->adjustSize();
-            m_sizeTip->move(m_ann.rect.topLeft() - QPoint(0, m_sizeTip->height() + 4));
-            m_sizeTip->show();
-        } else {
-            m_sizeTip->hide();
-        }
+        m_sizeTip->hide();                      // Drawing shows no floating text.
         return;
     }
     if (m_erasing) {                             // The eraser removes whole annotations.
@@ -505,6 +506,15 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
 
 void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
 {
+    if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {
+        // A drag on the first press lays the first segment; otherwise vertices come from clicks.
+        if (m_ann.stroke.size() == 2
+            && (e->pos() - m_ann.stroke.first().toPoint()).manhattanLength() >= QApplication::startDragDistance()) {
+            m_ann.stroke.last() = e->pos();
+            m_ann.stroke << e->pos();
+        }
+        return;
+    }
     if (m_live) {                               // Commit the annotation; the tool stays active.
         m_live = false;
         commitAnnotation();
@@ -589,6 +599,11 @@ void CaptureOverlay::closeEvent(QCloseEvent *e)
 void CaptureOverlay::mouseDoubleClickEvent(QMouseEvent *e)
 {
     if (editorActive()) return;                  // A text double-click never pins the capture.
+    if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {   // Double-click ends a polyline.
+        m_live = false;
+        commitAnnotation();
+        return;
+    }
     if (m_mode == Adjusting && (m_atool == ATool::None || m_atool == ATool::Text)) {
         const int hit = annotationAt(e->pos());  // Double-click re-opens a text annotation.
         if (hit >= 0 && m_anns[hit].tool == ATool::Text) {
@@ -688,18 +703,9 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
     case Qt::Key_F:                              // Fill mode for shapes and the selection.
         if (e->modifiers() == Qt::NoModifier && !e->isAutoRepeat()
             && !m_live && !editorActive() && m_mode == Adjusting) {
-            if (m_selAnn >= 0 && m_selAnn < m_anns.size()
-                && (m_anns[m_selAnn].tool == ATool::Rect
-                    || m_anns[m_selAnn].tool == ATool::Ellipse)) {
-                pushUndo();
-                m_anns[m_selAnn].fill = !m_anns[m_selAnn].fill;
-                update();
-            } else if (m_atool == ATool::Rect || m_atool == ATool::Ellipse) {
-                m_afill = !m_afill;
-                m_sizeTip->setText(m_afill ? QStringLiteral("填充") : QStringLiteral("描边"));
-                tipPosition(mapFromGlobal(QCursor::pos()));
-                m_sizeTip->show();
-            }
+            const ATool tool = optionsTool();
+            if (tool == ATool::Rect || tool == ATool::Ellipse || tool == ATool::Marker)
+                toggleFill();                    // Same toggle as the strip's fill button.
         }
         break;
     case Qt::Key_Delete:
@@ -1228,7 +1234,7 @@ void CaptureOverlay::placeToolbar()
     const int y = selBottom + 6 + height <= avail.bottom() + 1 ? selBottom + 6
         : m_sel.top() - 6 - height >= avail.top() ? m_sel.top() - 6 - height
         : qMax(avail.top(), avail.bottom() + 1 - height - 8);
-    m_tools->setGeometry(x, y, width, main.height());
+    m_tools->setGeometry(x + width - main.width(), y, main.width(), main.height());
     positionToolOptions();
     const QRect glass = m_toolOptions->isVisible()
         ? m_tools->geometry().united(m_toolOptions->geometry()) : m_tools->geometry();
@@ -1239,7 +1245,9 @@ void CaptureOverlay::positionToolOptions()                      // Option strip 
 {
     if (!m_toolOptions->isVisible() && optionsTool() == ATool::None) return;
     const QRect bar = m_tools->geometry();
-    m_toolOptions->setGeometry(bar.left(), bar.bottom() + 1, bar.width(), m_toolOptions->sizeHint().height());
+    const QSize hint = m_toolOptions->sizeHint();       // Strip width follows its own contents.
+    m_toolOptions->setGeometry(qMax(0, qMin(bar.left(), bar.right() + 1 - hint.width())), bar.bottom() + 1,
+                               hint.width(), hint.height());
 }
 
 void CaptureOverlay::hideToolBars()
