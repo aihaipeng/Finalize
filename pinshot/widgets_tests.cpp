@@ -24,7 +24,7 @@ int ColorWheel::testRendering()
     const QRectF circle = wheel.wheelRect();
     const QColor center = image.pixelColor(qRound(circle.center().x() * dpr), qRound(circle.center().y() * dpr));
     const QColor rim = image.pixelColor(qRound((circle.right() - 6) * dpr), qRound(circle.center().y() * dpr));
-    if (image.width() != qRound(wheel.width() * dpr) || image.pixelColor(0, 0) != QColor(29, 31, 35)
+    if (image.width() != qRound(wheel.width() * dpr) || image.pixelColor(0, 0) != QColor(0xf2, 0xf2, 0xf2)
         || center.red() < 250 || center.green() < 250 || center.blue() < 250
         || rim.red() < 250 || rim.green() >= 32 || rim.blue() >= 32) {
         std::fprintf(stderr, "FAIL: circular color rendering at DPR %.2f\n", double(dpr));

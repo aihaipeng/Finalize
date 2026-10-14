@@ -18,6 +18,8 @@
 #include <QSize>
 #include <QString>
 #include <QColor>
+#include <QPainter>
+#include <QDir>
 #include <QApplication>
 #include <QScreen>
 #include <QMouseEvent>
@@ -174,8 +176,109 @@ int CaptureOverlay::testSelection()
     check(overlay.m_sel.isEmpty() && overlay.m_mode==Selecting,"clearing the selection still permits a new capture");
     overlay.close();
     QCursor::setPos(savedCursor);
+    failures += testSelectionBorders();
     if (!failures) std::printf("PASS: eight-direction outside adjustment, cursor/region keys, screen toggle and crop output\n");
     return failures ? 1 : 0;
+}
+
+int CaptureOverlay::testSelectionBorders()
+{
+    int failures = 0;
+    const auto check = [&failures](bool ok, const char *message) {
+        if (!ok) { ++failures; std::fprintf(stderr, "FAIL: %s\n", message); }
+    };
+    for (qreal dpr : {1.0, 1.5, 2.0}) {
+        QImage dot(qRound(40 * dpr), qRound(40 * dpr), QImage::Format_ARGB32);
+        dot.setDevicePixelRatio(dpr);
+        dot.fill(Qt::transparent);
+        QPainter painter(&dot);
+        paintHandle(painter, QPointF(20, 20));
+        painter.end();
+        check(dot.pixelColor(qRound(20 * dpr), qRound(20 * dpr)) == QColor(0x20, 0x80, 0xf0)
+                  && dot.pixelColor(qRound(16 * dpr), qRound(16 * dpr)).alpha() == 0
+                  && dot.pixelColor(qRound(26 * dpr), qRound(20 * dpr)).alpha() == 0,
+              "handles are theme-blue dots with a light ring and transparent corners at every DPR");
+    }
+    QVector<ScreenFrame> frames = freezeScreens();
+    check(!frames.isEmpty(), "border fixture captures screen geometry");
+    if (frames.isEmpty()) return failures;
+    for (ScreenFrame &frame : frames) frame.image.fill(QColor(120, 130, 140));
+    CaptureOverlay overlay(frames, {}, DetectionOptions(), false);
+    overlay.m_mode = Adjusting;
+    overlay.m_sel = overlay.rect().adjusted(20, 20, -20, -20);
+    overlay.m_hover = {};
+    overlay.m_inspector->hide();
+    overlay.m_sizeTip->hide();
+    overlay.hideToolBars();
+    overlay.m_mosaicBrush = false;
+    const qreal dpr = overlay.devicePixelRatioF();
+    const auto render = [&] {
+        QImage image(qRound(overlay.width() * dpr), qRound(overlay.height() * dpr), QImage::Format_RGB32);
+        image.setDevicePixelRatio(dpr);
+        overlay.render(&image);
+        return image;
+    };
+    const QString prefix = QStringLiteral("debug/publish-checks/ui-borders-%1-").arg(dpr);
+    const bool previews = QDir(QStringLiteral("debug/publish-checks")).exists();
+    for (int t = int(ATool::Rect); t <= int(ATool::Eraser); ++t) {
+        const ATool tool = ATool(t);
+        Annotation ann;
+        ann.tool = tool == ATool::Eraser ? ATool::Rect : tool;
+        ann.rect = QRect(80, 80, 180, 100);
+        ann.a = ann.rect.topLeft(); ann.b = ann.rect.bottomRight();
+        ann.stroke = QPolygonF{QPointF(90, 100), QPointF(240, 140)};
+        ann.text = QStringLiteral("Text");
+        ann.color = QColor("#ff3b30");
+        if (tool == ATool::Text) fitTextAnnotation(ann);
+        overlay.m_anns = {ann};
+        overlay.m_atool = tool;
+        overlay.m_selAnn = -1;
+        const QImage plain = render();
+        const QImage output = overlay.cropped().toImage();
+        overlay.m_selAnn = 0;
+        const QImage active = render();
+        const bool editable = tool == ATool::Text || tool == ATool::Mosaic;
+        check(editable ? active != plain : active == plain,
+              "only directly editable text and mosaic show controls while a drawing tool is active");
+        if (previews) active.save(prefix + QString::number(t) + QStringLiteral("-drawing.png"));
+        overlay.m_atool = ATool::None;
+        const QImage selected = render();
+        check(selected != plain, "explicit object selection reveals editing controls for every annotation tool");
+        check(overlay.cropped().toImage() == output, "editing borders and nodes never enter exported pixels");
+        if (previews) selected.save(prefix + QString::number(t) + QStringLiteral("-editing.png"));
+        if (tool == ATool::Arrow) {
+            const QPoint probe = annotationRect(ann).topLeft() + QPoint(40, -3);
+            check(selected.pixelColor(qRound(probe.x() * dpr), qRound(probe.y() * dpr))
+                      == plain.pixelColor(qRound(probe.x() * dpr), qRound(probe.y() * dpr)),
+                  "arrow editing has endpoint nodes without an unnecessary rectangular border");
+        }
+        for (const QPoint &anchor : overlay.annAnchors(ann))
+            check(overlay.annHandleAt(ann, mapFromLocal(ann, anchor)) != H_None,
+                  "smaller visual circles retain the original resize hit targets");
+        overlay.m_atool = tool;
+        overlay.m_spaceHeld = true;
+        check(render() != plain, "space-based object editing retains its editing feedback");
+        overlay.m_spaceHeld = false;
+        if (tool == ATool::Mosaic) {
+            overlay.m_anns[0].mosaicBrush = true;
+            overlay.m_mosaicBrush = true;
+            overlay.m_selAnn = -1;
+            const QImage brush = render();
+            overlay.m_selAnn = 0;
+            check(render() == brush, "mosaic brush strokes never acquire editing frames");
+            overlay.m_mosaicBrush = false;
+        }
+    }
+    overlay.m_anns.clear(); overlay.m_selAnn = -1;
+    const QImage selection = render();
+    for (const QRect &target : handleRects(overlay.m_sel)) {
+        const QPoint center = target.center() + QPoint(1, 1);
+        check(selection.pixelColor(qRound(center.x() * dpr), qRound(center.y() * dpr)) == QColor(0x20, 0x80, 0xf0)
+                  && overlay.hitHandle(center) != H_None,
+              "all eight capture resize handles are theme-blue dots and remain draggable");
+    }
+    if (!failures) std::puts("PASS: per-tool editing borders, circular nodes, hit targets and clean exports");
+    return failures;
 }
 
 int CaptureOverlay::testOutput()

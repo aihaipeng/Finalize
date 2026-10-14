@@ -513,23 +513,155 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     overlay.selectTool(ATool::Marker);
     check(overlay.m_acolor == QColor("#34c759"), "each tool remembers its own color");
     overlay.selectTool(ATool::Arrow);
-    overlay.pickArrowStyle(3);
+    overlay.pickArrowStyle(1);
+    overlay.pickArrowLineStyle(1);                // Straight dashed.
     const QPoint a1 = annOrigin + QPoint(60, 5), a2 = annOrigin + QPoint(60, 55);
     mouse(QEvent::MouseButtonPress, a1);
     mouse(QEvent::MouseMove, a2);
     mouse(QEvent::MouseButtonRelease, a2);
     check(overlay.m_anns.last().tool == ATool::Arrow
-              && overlay.m_anns.last().arrowStyle == 3,
-          "the arrow style carries into fresh arrows");
+              && overlay.m_anns.last().arrowStyle == 1
+              && overlay.m_anns.last().lineStyle == 1,
+          "the arrow shape and line style carry into fresh arrows");
     overlay.setToolNone();
     mouse(QEvent::MouseButtonPress, a1 + QPoint(0, 25));
     mouse(QEvent::MouseButtonRelease, a1 + QPoint(0, 25));
     check(overlay.m_selAnn == overlay.m_anns.size() - 1
               && overlay.m_anns[overlay.m_selAnn].tool == ATool::Arrow,
           "the arrow stays selectable");
-    overlay.pickArrowStyle(1);
-    check(overlay.m_anns[overlay.m_selAnn].arrowStyle == 1,
+    overlay.pickArrowStyle(2);
+    check(overlay.m_anns[overlay.m_selAnn].arrowStyle == 2,
           "the options strip restyles the selected arrow");
+    overlay.selectTool(ATool::Arrow);
+    overlay.pickArrowStyle(0);
+    overlay.pickArrowLineStyle(2);                // Curve line style: freehand sampling.
+    const QPoint c1 = annOrigin + QPoint(15, 5);
+    mouse(QEvent::MouseButtonPress, c1);
+    mouse(QEvent::MouseMove, c1 + QPoint(20, 25));
+    mouse(QEvent::MouseMove, c1 + QPoint(45, 5));
+    mouse(QEvent::MouseMove, c1 + QPoint(70, 30));
+    mouse(QEvent::MouseButtonRelease, c1 + QPoint(70, 30));
+    check(overlay.m_anns.last().lineStyle == 2 && overlay.m_anns.last().arrowStyle == 0
+              && overlay.m_anns.last().stroke.size() >= 4
+              && overlay.m_anns.last().a == overlay.m_anns.last().stroke.first().toPoint()
+              && overlay.m_anns.last().b == overlay.m_anns.last().stroke.last().toPoint(),
+          "curve arrows smooth the sampled drag and anchor its endpoints");
+    overlay.setToolNone();
+    mouse(QEvent::MouseButtonPress, c1 + QPoint(45, 8));
+    mouse(QEvent::MouseButtonRelease, c1 + QPoint(45, 8));
+    check(overlay.m_selAnn >= 0 && overlay.m_anns[overlay.m_selAnn].tool == ATool::Arrow
+              && overlay.m_anns[overlay.m_selAnn].lineStyle == 2,
+          "curve arrows remain selectable along their path");
+    // Rendering parity: hollow head interior, absolute-unit dashes, antialiased edges.
+    {
+        const QColor green(0x34, 0xc7, 0x59);
+        Annotation ann;
+        ann.tool = ATool::Arrow;
+        ann.color = green;
+        ann.pen = 6;
+        ann.a = QPoint(10, 100);
+        ann.b = QPoint(260, 100);
+        ann.arrowStyle = 1;                       // Single hollow head, straight dashed line.
+        ann.lineStyle = 1;
+        QImage canvas(280, 200, QImage::Format_ARGB32);
+        canvas.fill(Qt::transparent);
+        QPainter painter(&canvas);
+        overlay.drawAnnotation(painter, ann, QImage());
+        painter.end();
+        // One outline (pen 6, head 48 long, 21 half wide): 25px behind the tip the head edge sits
+        // ~10.9px off axis; mid-tail the tapered edge sits ~4.6px off axis.
+        check(canvas.pixelColor(235, 100).alpha() < 30 && canvas.pixelColor(120, 100).alpha() < 30,
+              "hollow arrows keep an empty interior through shaft and head");
+        check(canvas.pixelColor(235, 89).alpha() > 150 && canvas.pixelColor(120, 95).alpha() > 150,
+              "hollow arrow outlines carry ink at pen thickness");
+        ann.arrowStyle = 0;                       // Solid head, dashed straight shaft.
+        QImage dashed(280, 200, QImage::Format_ARGB32);
+        dashed.fill(Qt::transparent);
+        QPainter dashPainter(&dashed);
+        overlay.drawAnnotation(dashPainter, ann, QImage());
+        dashPainter.end();
+        int inked = 0, gaps = 0;                  // Round-capped dashes scale with the pen width.
+        for (int x = 10; x < 200; ++x) (dashed.pixelColor(x, 100).alpha() > 200 ? inked : gaps)++;
+        check(inked > 40 && gaps > 40, "dashed shafts alternate dash segments and gaps");
+        ann.lineStyle = 0;                        // Solid head fills its triangle.
+        QImage solid(280, 200, QImage::Format_ARGB32);
+        solid.fill(Qt::transparent);
+        QPainter solidPainter(&solid);
+        overlay.drawAnnotation(solidPainter, ann, QImage());
+        solidPainter.end();
+        check(solid.pixelColor(250, 100).alpha() > 200,
+              "solid arrows fill their heads");
+        ann.arrowStyle = 4;                       // Diagonal bare line: AA probe off its edge.
+        ann.a = QPoint(10, 150);
+        ann.b = QPoint(200, 80);
+        QImage diagonal(280, 200, QImage::Format_ARGB32);
+        diagonal.fill(Qt::transparent);
+        QPainter diagPainter(&diagonal);
+        overlay.drawAnnotation(diagPainter, ann, QImage());
+        diagPainter.end();
+        const QLineF center(ann.a, ann.b);
+        const QPointF unit = (center.p2() - center.p1()) / center.length();
+        const QPointF edgePoint = center.pointAt(0.5)
+            + QPointF(-unit.y(), unit.x()) * (ann.pen / 2.0 + 0.5);
+        int blended = 0;
+        for (int dy = -2; dy <= 2; ++dy)
+            for (int dx = -2; dx <= 2; ++dx) {
+                const int alpha = diagonal.pixelColor(edgePoint.toPoint() + QPoint(dx, dy)).alpha();
+                if (alpha > 0 && alpha < 255) ++blended;
+            }
+        check(blended > 0,
+              "antialiased arrow edges blend into the background");
+        if (!previewPath.isEmpty()) {           // Visual preview of the shape and line styles.
+            QImage preview(580, 500, QImage::Format_ARGB32);
+            preview.fill(QColor(30, 34, 38));
+            QPainter previewPainter(&preview);
+            const QColor colors[] = {Qt::white, QColor("#ff3b30"), QColor("#34c759")};
+            for (int style = 0; style < 5; ++style)
+                for (int line = 0; line < 4; ++line) {
+                    Annotation sample;
+                    sample.tool = ATool::Arrow;
+                    sample.color = colors[(style + line) % 3];
+                    sample.pen = 5;
+                    sample.arrowStyle = style;
+                    sample.lineStyle = line;
+                    if (line >= 2) {
+                        sample.stroke << QPointF(20, 30) << QPointF(70, 55)
+                                      << QPointF(120, 15) << QPointF(180, 40);
+                        sample.a = sample.stroke.first().toPoint();
+                        sample.b = sample.stroke.last().toPoint();
+                    } else {
+                        sample.a = QPoint(20, 25);
+                        sample.b = QPoint(180, 25);
+                    }
+                    previewPainter.save();
+                    previewPainter.translate((style % 3) * 195, (style / 3) * 250 + line * 60);
+                    overlay.drawAnnotation(previewPainter, sample, QImage());
+                    previewPainter.restore();
+                }
+            previewPainter.end();
+            preview.save(previewPath + QStringLiteral(".arrow-shapes.png"));
+        }
+    }
+    {   // Pen strokes render antialiased diagonals.
+        const QColor green(0x34, 0xc7, 0x59);
+        Annotation ink;
+        ink.tool = ATool::Pen;
+        ink.color = green;
+        ink.pen = 4;
+        ink.stroke << QPointF(10, 10) << QPointF(120, 90);
+        QImage canvas(140, 110, QImage::Format_ARGB32);
+        canvas.fill(Qt::transparent);
+        QPainter painter(&canvas);
+        overlay.drawAnnotation(painter, ink, QImage());
+        painter.end();
+        int blended = 0;
+        for (int y = 0; y < canvas.height(); ++y)
+            for (int x = 0; x < canvas.width(); ++x) {
+                const int alpha = canvas.pixelColor(x, y).alpha();
+                if (alpha > 0 && alpha < 255) ++blended;
+            }
+        check(blended > 20, "pen strokes antialias instead of staircasing");
+    }
     overlay.setTextBold(true);
     overlay.setTextItalic(true);
     overlay.selectTool(ATool::Text);
@@ -564,7 +696,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
                           && overlay.m_mosaicWidthLabel->text().toInt() == overlay.toolSize() : !overlay.m_mosaicWidthLabel),
                   "mosaic exposes independent mode-specific width and strength controls");
         } else {
-        check(overlay.m_sizeInput->width() == (textSize ? 62 : 40)
+        check(overlay.m_sizeInput->width() == (textSize ? 62 : 46)
                   && overlay.m_sizeInput->lineEdit()->alignment() == Qt::AlignCenter,
               "numeric controls use a compact fixed width with centered values");
         check(overlay.m_sizeInput->lineEdit()->contentsRect().width()
@@ -659,28 +791,38 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     for (QWidget *bar : {overlay.m_tools, overlay.m_toolOptions}) {
         const QImage painted = overlay.grab(bar->geometry()).toImage();
         const qreal dpr = painted.devicePixelRatio();
-        const QColor background = painted.pixelColor(qRound(10 * dpr), qRound((bar->height() - 2) * dpr));
-        if (background != QColor(29, 31, 35))
-            std::fprintf(stderr, "bar background %d,%d,%d size=%dx%d dpr=%.2f main=%d\n",
-                         background.red(), background.green(), background.blue(),
+        const QColor background = painted.pixelColor(qRound((bar->width() - 3) * dpr), qRound((bar->height() - 2) * dpr));
+        const QColor frame = painted.pixelColor(qRound(10 * dpr), 0);
+        if (background != QColor(0xf2, 0xf2, 0xf2) || frame != QColor(0x20, 0x80, 0xf0))
+            std::fprintf(stderr, "bar background %d,%d,%d frame %s size=%dx%d dpr=%.2f main=%d\n",
+                         background.red(), background.green(), background.blue(), qPrintable(frame.name()),
                          bar->width(), bar->height(), double(dpr), bar == overlay.m_tools);
-        check(background == QColor(29, 31, 35),
-              "main and option bars render the exact solid background color");
+        check(background == QColor(0xf2, 0xf2, 0xf2) && frame == QColor(0x20, 0x80, 0xf0),
+              "main and option bars render a light fill inside a theme-blue frame");
     }
     for (QWidget *widget : overlay.m_toolButtons) {
         const QIcon icon = static_cast<QToolButton *>(widget)->icon();
-        for (QIcon::Mode mode : {QIcon::Normal, QIcon::Disabled}) {
-            const QImage pixels = icon.pixmap(QSize(16, 16), mode).toImage();
-            bool white = true, visible = false;
+        for (const auto &expect : {qMakePair(QIcon::Normal, QColor(0x32, 0x32, 0x32)),
+                                   qMakePair(QIcon::Disabled, QColor(0x7b, 0x7b, 0x7b))}) {
+            const QImage pixels = icon.pixmap(QSize(16, 16), expect.first).toImage();
+            bool exact = true, visible = false;
             for (int y = 0; y < pixels.height(); ++y)
                 for (int x = 0; x < pixels.width(); ++x) {
                     const QColor color = pixels.pixelColor(x, y);
-                    if (!color.alpha()) continue;
+                    if (color.alpha() < 128) continue;    // Thin curves never reach full coverage.
                     visible = true;
-                    if (color.red() != 255 || color.green() != 255 || color.blue() != 255) white = false;
+                    if (qAbs(color.red() - expect.second.red()) > 3 || qAbs(color.green() - expect.second.green()) > 3
+                        || qAbs(color.blue() - expect.second.blue()) > 3) exact = false;
                 }
-            check(visible && white, "toolbar icons stay white in normal and disabled states");
+            if (!visible || !exact)
+                std::fprintf(stderr, "icon %s mode=%d visible=%d size=%dx%d\n",
+                             qPrintable(widget->toolTip()), int(expect.first), int(visible),
+                             pixels.width(), pixels.height());
+            check(visible && exact, "toolbar icons are dark glyphs, grey when disabled");
         }
+        check(icon.pixmap(QSize(16, 16), QIcon::Normal, QIcon::On).toImage()
+                  != icon.pixmap(QSize(16, 16), QIcon::Normal, QIcon::Off).toImage(),
+              "checked tools switch to white glyphs on the theme fill");
     }
     overlay.m_anns.clear();
     overlay.m_undoStack.clear();

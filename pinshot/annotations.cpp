@@ -43,6 +43,9 @@
 #include <QtMath>
 #include <QToolButton>
 #include <QComboBox>
+#include <QStylePainter>
+#include <QStyledItemDelegate>
+#include <QStyleOptionComboBox>
 #include <QFontDatabase>
 #include <QSlider>
 #include <QVBoxLayout>
@@ -60,6 +63,120 @@
 #include <array>
 #include <functional>
 
+namespace {
+// Chord-weighted Catmull-Rom (tension 1/2) through the sampled points, matching the
+// reference generator's curve mode: interior vertices become bezier control pairs.
+QPainterPath smoothStrokePath(const QPolygonF &pts)
+{
+    QPainterPath path;
+    if (pts.isEmpty()) return path;
+    const int n = pts.size();
+    path.moveTo(pts.first());
+    if (n == 2) { path.lineTo(pts.last()); return path; }
+    const int last = n - 1;
+    QVector<QPair<QPointF, QPointF>> ctrl(last);         // [i] = {incoming c1, outgoing c2}
+    for (int i = 1; i < last; ++i) {
+        const qreal prev = QLineF(pts[i - 1], pts[i]).length();
+        const qreal next = QLineF(pts[i], pts[i + 1]).length();
+        const qreal total = prev + next;
+        const QPointF span = total > 0 ? (pts[i + 1] - pts[i - 1]) * 0.5 / total : QPointF();
+        ctrl[i] = {pts[i] - span * prev, pts[i] + span * next};
+    }
+    path.quadTo(ctrl[1].first, pts[1]);
+    for (int i = 2; i < last; ++i) path.cubicTo(ctrl[i - 1].second, ctrl[i].first, pts[i]);
+    path.quadTo(ctrl[last - 1].second, pts[last]);
+    return path;
+}
+
+// Reference head geometry: tip on the endpoint, base pulled back 3 widths, half width 1.5.
+QPolygonF arrowHeadPoly(const QPointF &tip, const QPointF &dir, qreal len, qreal half)
+{
+    const QPointF norm(-dir.y(), dir.x());
+    QPolygonF head;
+    head << tip << (tip - dir * len + norm * half) << (tip - dir * len - norm * half);
+    return head;
+}
+
+// Popup rows: a flat light-blue wash under the hovered row, no style selection marker.
+class FlatItemDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override
+    {
+        QStyleOptionViewItem plain = option;
+        if (option.state & (QStyle::State_MouseOver | QStyle::State_Selected))
+            painter->fillRect(option.rect, QColor(0xe5, 0xf1, 0xfb));
+        plain.state &= ~(QStyle::State_MouseOver | QStyle::State_Selected | QStyle::State_HasFocus);
+        QStyledItemDelegate::paint(painter, plain, index);
+    }
+};
+
+// Popup rows show only the glyph; names stay in tooltips and accessible text.
+class GlyphItemDelegate : public FlatItemDelegate
+{
+public:
+    using FlatItemDelegate::FlatItemDelegate;
+protected:
+    void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const override
+    {
+        QStyledItemDelegate::initStyleOption(option, index);
+        option->text.clear();
+        option->decorationAlignment = Qt::AlignCenter;
+        option->displayAlignment = Qt::AlignCenter;
+    }
+    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override
+    {
+        return QSize(QStyledItemDelegate::sizeHint(option, index).width(), 24);
+    }
+};
+
+// Light combo: frame without the native drop-down button, plus a thin chevron.
+class FlatComboBox : public QComboBox
+{
+public:
+    explicit FlatComboBox(bool glyphOnly = false) : m_glyphOnly(glyphOnly)
+    {
+        if (glyphOnly) setItemDelegate(new GlyphItemDelegate(this));
+        else setItemDelegate(new FlatItemDelegate(this));
+    }
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QStylePainter painter(this);
+        QStyleOptionComboBox option;
+        initStyleOption(&option);
+        if (m_glyphOnly) option.currentText.clear();
+        const QRect arrow = style()->subControlRect(QStyle::CC_ComboBox, &option,
+                                                    QStyle::SC_ComboBoxArrow, this);
+        option.subControls &= ~QStyle::SC_ComboBoxArrow;
+        painter.drawComplexControl(QStyle::CC_ComboBox, option);
+        painter.drawControl(QStyle::CE_ComboBoxLabel, option);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(QColor(0x80, 0x80, 0x80), 1));
+        const QPointF c = QRectF(arrow).center();
+        painter.drawPolyline(QPolygonF{c + QPointF(-3, -1.5), c + QPointF(0, 1.5), c + QPointF(3, -1.5)});
+    }
+private:
+    bool m_glyphOnly;
+};
+
+// The native text item draws a dashed placeholder box for an empty focused document;
+// the overlay paints its own thin frame, so that decoration is masked here.
+class EditorTextItem : public QGraphicsTextItem
+{
+public:
+    using QGraphicsTextItem::QGraphicsTextItem;
+protected:
+    void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget) override
+    {
+        QStyleOptionGraphicsItem clean = *option;
+        clean.state &= ~(QStyle::State_Selected | QStyle::State_HasFocus);
+        QGraphicsTextItem::paint(painter, &clean, widget);
+    }
+};
+}
+
 QRect CaptureOverlay::annotationRect(const Annotation &ann)
 {
     if (ann.tool == ATool::Mosaic && ann.mosaicBrush) {
@@ -67,7 +184,12 @@ QRect CaptureOverlay::annotationRect(const Annotation &ann)
         return ann.stroke.boundingRect().toAlignedRect().adjusted(-w, -w, w, w);
     }
     switch (ann.tool) {
-    case ATool::Arrow:  return QRect(ann.a, ann.b).normalized();
+    case ATool::Arrow:
+        if (ann.lineStyle >= 2) {                 // Curve: bounds of the sampled path plus the head.
+            const int m = ann.pen * 2 + 2;
+            return ann.stroke.boundingRect().toRect().adjusted(-m, -m, m, m);
+        }
+        return QRect(ann.a, ann.b).normalized();
     case ATool::Pen:    return ann.stroke.boundingRect().toRect();
     case ATool::Marker: {                          // Fat translucent stroke: include its width.
         const int w = ann.pen * 5 / 2 + 2;
@@ -138,6 +260,14 @@ bool CaptureOverlay::annotationHit(const Annotation &ann, const QPoint &pos, int
         return outer <= 1.0 && inner >= 1.0;
     }
     case ATool::Arrow:
+        if (ann.lineStyle >= 2) {                 // Curve arrows hit along the smoothed path.
+            if (ann.stroke.isEmpty()) return false;
+            for (int i = 1; i < ann.stroke.size(); ++i)
+                if (distToSegment(QPointF(pos), ann.stroke[i - 1], ann.stroke[i]) <= lineTol + ann.pen / 2)
+                    return true;
+            return distToSegment(QPointF(pos), ann.stroke.first(), ann.stroke.first())
+                <= lineTol + ann.pen / 2;
+        }
         return distToSegment(QPointF(pos), ann.a, ann.b) <= lineTol + ann.pen / 2;
     case ATool::Pen:
     case ATool::Marker:
@@ -203,6 +333,16 @@ QPoint CaptureOverlay::rotateAnchor(const Annotation &ann)  // Rotate stalk sits
     return mapFromLocal(ann, QPoint(r.center().x(), r.bottom() + 22));
 }
 
+void CaptureOverlay::paintHandle(QPainter &p, const QPointF &center)
+{
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(0xf7, 0xf8, 0xfa), 1));   // Theme-blue dot inside a thin light ring.
+    p.setBrush(QColor(0x20, 0x80, 0xf0));
+    p.drawEllipse(center, 4, 4);                 // Hit ranges stay unchanged.
+    p.restore();
+}
+
 void CaptureOverlay::paintMosaicBorder(QPainter &p, const Annotation &ann, bool selected) const
 {
     p.save();
@@ -216,9 +356,9 @@ void CaptureOverlay::paintMosaicBorder(QPainter &p, const Annotation &ann, bool 
     const QRectF bounds = QRectF(ann.rect).adjusted(0, 0, -1, -1);
     p.drawRect(bounds);
     if (selected) {
-        p.setPen(QPen(Qt::white, 0));
+        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
         for (const QPoint &anchor : annAnchors(ann))
-            p.drawRect(QRect(anchor - QPoint(3, 3), QSize(6, 6)));
+            paintHandle(p, anchor);
     }
     p.restore();
 }
@@ -285,6 +425,8 @@ void CaptureOverlay::applyItemDrag(const QPoint &pos, Qt::KeyboardModifiers mods
         const QPoint local = mapToLocal(ann, pos);   // Handle math runs in item space.
         if (ann.tool == ATool::Arrow) {
             if (m_itemDrag == H_TL) ann.a = local; else ann.b = local;
+            if (ann.lineStyle >= 2 && ann.stroke.size() >= 2)   // Curve endpoints ride the path ends.
+                ann.stroke[m_itemDrag == H_TL ? 0 : ann.stroke.size() - 1] = QPointF(local);
         } else {
             const QRect r = m_pressAnn.rect.normalized();
             if (ann.tool == ATool::Mosaic && (m_itemDrag == H_L || m_itemDrag == H_R
@@ -592,7 +734,7 @@ void CaptureOverlay::beginTextEdit(const QPoint &pos, int existing)
         m_textView->setGeometry(rect());
         m_textView->setSceneRect(QRectF(rect()));
         m_textView->hide();
-        m_editor = new QGraphicsTextItem;
+        m_editor = new EditorTextItem;
         scene->addItem(m_editor);
         m_editor->setTextInteractionFlags(Qt::TextEditorInteraction);
         m_editor->setTextWidth(-1);
@@ -930,8 +1072,13 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
         m_ann.mosaicSeed = QRandomGenerator::global()->generate();
     }
     if (m_atool == ATool::Rect || m_atool == ATool::Ellipse) m_ann.fill = m_afill;
-    if (m_atool == ATool::Arrow) m_ann.arrowStyle = m_arrowStyle;
-    if (m_atool == ATool::Pen || m_atool == ATool::Marker || m_ann.mosaicBrush) m_ann.stroke << pos;
+    if (m_atool == ATool::Arrow) {
+        m_ann.arrowStyle = m_arrowStyle;
+        m_ann.lineStyle = m_arrowLineStyle;
+    }
+    if (m_atool == ATool::Pen || m_atool == ATool::Marker || m_ann.mosaicBrush
+        || (m_atool == ATool::Arrow && m_arrowLineStyle >= 2))
+        m_ann.stroke << pos;                     // Curve arrows sample the drag like the pen.
     else if (m_atool == ATool::Arrow) m_ann.a = m_ann.b = pos;
     else m_ann.rect = QRect(pos, pos);
     syncSizeInput();                             // Keep the active options visible while drawing.
@@ -941,8 +1088,11 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
 
 void CaptureOverlay::updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers mods)
 {
-    if (m_ann.mosaicBrush) {
+    if (m_ann.mosaicBrush
+        || (m_atool == ATool::Arrow && m_ann.lineStyle >= 2)) {
         if ((pos - m_ann.stroke.last().toPoint()).manhattanLength() >= 2) m_ann.stroke << pos;
+        m_ann.a = m_ann.stroke.first().toPoint();   // Endpoint anchors follow the path ends.
+        m_ann.b = m_ann.stroke.last().toPoint();
         return;
     }
     switch (m_atool) {
@@ -986,7 +1136,8 @@ void CaptureOverlay::commitAnnotation()
         : m_ann.tool == ATool::Pen || m_ann.tool == ATool::Marker
         ? m_ann.stroke.size() >= 2
         : m_ann.tool == ATool::Arrow
-              ? (m_ann.a - m_ann.b).manhattanLength() >= 6
+              ? (m_ann.lineStyle >= 2 ? m_ann.stroke.size() >= 2
+                                       : (m_ann.a - m_ann.b).manhattanLength() >= 6)
               : m_ann.rect.width() >= 3 && m_ann.rect.height() >= 3;
     if (meaningful) {                            // Discard accidental tiny strokes.
         pushUndo();
@@ -1097,11 +1248,11 @@ void CaptureOverlay::pickToolColor(ATool family, const QColor &color, QLineEdit 
         const QSignalBlocker sliderLock(m_colorBrightness);
         m_colorBrightness->setValue(m_colorWheel->brightness());
         m_colorBrightness->setStyleSheet(QStringLiteral(
-            "QSlider::groove:vertical{width:12px;border:1px solid #626468;"
+            "QSlider::groove:vertical{width:12px;border:1px solid #858585;"
             "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 %1,stop:1 #000000);}"
-            "QSlider::handle:vertical{background:#fff;border:1px solid #626468;height:8px;margin:0 -3px;}")
+            "QSlider::handle:vertical{background:#fff;border:1px solid #2080f0;height:8px;margin:0 -3px;}")
             .arg(m_colorWheel->brightColor().name()));
-        m_colorPreview->setStyleSheet(QStringLiteral("background:%1;border:1px solid #929498;border-radius:3px;").arg(color.name()));
+        m_colorPreview->setStyleSheet(QStringLiteral("background:%1;border:1px solid #222222;").arg(color.name()));
         for (QLineEdit *field : {m_rgbInput.data(), m_hexInput.data()}) {
             if (!field || field == source) continue;
             const QSignalBlocker fieldLock(field);
@@ -1138,9 +1289,9 @@ void CaptureOverlay::showColorPalette(ATool family, QToolButton *anchor)
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setWindowTitle(QStringLiteral("调色板"));
     dialog->setStyleSheet(QStringLiteral(
-        "QDialog{background:rgb(29,31,35);border:1px solid #626468;}"
-        "QLineEdit{color:#fff;background:rgb(29,31,35);border:1px solid #626468;"
-        "padding:3px;font-size:12px;selection-background-color:#007aff;}"));
+        "QDialog{background:#f2f2f2;border:1px solid #2080f0;}"
+        "QLineEdit{color:#323232;background:#ffffff;border:1px solid #d2d2d2;"
+        "padding:3px;font-size:12px;selection-background-color:#2080f0;selection-color:#ffffff;}"));
     auto *layout = new QVBoxLayout(dialog);
     layout->setContentsMargins(12, 12, 12, 12);
     layout->setSpacing(8);
@@ -1203,11 +1354,25 @@ void CaptureOverlay::showColorPalette(ATool family, QToolButton *anchor)
 
 void CaptureOverlay::pickArrowStyle(int style)
 {
-    m_arrowStyle = style;
+    m_arrowStyle = qBound(0, style, 4);
     if (m_selAnn >= 0 && m_selAnn < m_anns.size()
         && m_anns[m_selAnn].tool == ATool::Arrow) {
         pushUndo();
-        m_anns[m_selAnn].arrowStyle = style;
+        m_anns[m_selAnn].arrowStyle = m_arrowStyle;
+        update();
+    }
+}
+
+void CaptureOverlay::pickArrowLineStyle(int style)
+{
+    m_arrowLineStyle = qBound(0, style, 3);
+    if (m_selAnn >= 0 && m_selAnn < m_anns.size()
+        && m_anns[m_selAnn].tool == ATool::Arrow) {
+        pushUndo();
+        Annotation &ann = m_anns[m_selAnn];
+        ann.lineStyle = m_arrowLineStyle;
+        if (ann.lineStyle >= 2 && ann.stroke.size() < 2)   // Straight arrows gain a two-point curve path.
+            ann.stroke = QPolygonF{QPointF(ann.a), QPointF(ann.b)};
         update();
     }
 }
@@ -1274,35 +1439,32 @@ void CaptureOverlay::updateToolOptions()
     const QList<QWidget *> stale = m_toolOptions->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly);
     for (QWidget *w : stale) delete w;
     auto *lay = new QHBoxLayout(m_toolOptions);
-    lay->setContentsMargins(4, 2, 4, 2);
+    lay->setContentsMargins(1, 1, 1, 1);
     lay->setSpacing(2);
     lay->setAlignment(Qt::AlignLeft);
     auto addOption = [this](QHBoxLayout *l, Icon icon, const QString &tip, bool on,
                             const std::function<void()> &apply) {
         auto *b = iconButton(icon, tip);
+        b->setFixedSize(32, 32);
         b->setFocusPolicy(Qt::NoFocus);
         b->setCheckable(true);
         b->setChecked(on);
         connect(b, &QToolButton::clicked, this, [this, apply, on] { apply(); Q_UNUSED(on); });
         l->addWidget(b);
     };
-    auto addSeparator = [](QHBoxLayout *l) {
-        auto *line = new QFrame;
-        line->setFrameShape(QFrame::VLine);
-        line->setFixedHeight(20);
-        l->addWidget(line);
-    };
+    auto addSeparator = [](QHBoxLayout *l) { l->addWidget(barSeparator()); };
     auto addSwatches = [this](QHBoxLayout *l, ATool family) {
         static const QColor swatches[] = {"#ff3b30", "#ff9500", "#ffcc00", "#34c759",
                                           "#007aff", "#af52de", "#ffffff", "#1c1c1e"};
         for (const QColor &color : swatches) {
             auto *swatch = new QToolButton;
             swatch->setObjectName(QStringLiteral("presetColor"));
-            swatch->setFixedSize(18, 18);
+            swatch->setFixedSize(11, 11);              // 9px chip inside a 1px grey frame.
             swatch->setFocusPolicy(Qt::NoFocus);
             swatch->setCursor(Qt::PointingHandCursor);
             swatch->setToolTip(color.name());
-            swatch->setStyleSheet(QString("QToolButton{background:%1;border:1px solid #929498;}")
+            swatch->setStyleSheet(QString("QToolButton{background:%1;border:1px solid #717171;padding:0px;}"
+                                          "QToolButton:hover{border-color:#2080f0;}")
                                       .arg(color.name()));
             connect(swatch, &QToolButton::clicked, this,
                     [this, family, color] { pickToolColor(family, color); });
@@ -1321,7 +1483,7 @@ void CaptureOverlay::updateToolOptions()
         const bool strength = tool == ATool::Mosaic && !mosaicBrush();
         const int minimum = strength ? 3 : tool == ATool::Mosaic ? 4 : 1;
         const int maximum = texty ? 1638 : tool == ATool::Mosaic ? strength ? 24 : 50 : 12;
-        m_sizeInput = new QComboBox;
+        m_sizeInput = new FlatComboBox;
         m_sizeInput->setEditable(true);
         m_sizeInput->setInsertPolicy(QComboBox::NoInsert);
         m_sizeInput->setCompleter(nullptr);
@@ -1339,8 +1501,7 @@ void CaptureOverlay::updateToolOptions()
         m_sizeInput->setToolTip(texty ? QStringLiteral("标准字号 (pt)：小四=12，五号=10.5")
                                     : QStringLiteral("输入、下拉选择或滚轮调节粗细"));
         m_sizeInput->setFocusPolicy(Qt::ClickFocus);
-        m_sizeInput->setFixedWidth(texty ? 62 : 40);
-        m_sizeInput->setStyleSheet(QStringLiteral("QComboBox{padding:1px 2px;}QComboBox::drop-down{width:12px;}"));
+        m_sizeInput->setFixedSize(texty ? 62 : 46, 24);
         m_sizeInput->lineEdit()->setAlignment(Qt::AlignCenter);
         m_sizeInput->setAccessibleName(texty ? QStringLiteral("字号") : QStringLiteral("粗细"));
         m_sizeInput->installEventFilter(this);
@@ -1366,13 +1527,62 @@ void CaptureOverlay::updateToolOptions()
         addSwatches(lay, ATool::Rect);
         break;
     case ATool::Arrow: {
-        struct { Icon icon; const char *tip; } const styles[] = {
-            {Icon::Arrow, "单向"}, {Icon::ArrowBoth, "双向"},
-            {Icon::ArrowLine, "无箭头"}, {Icon::ArrowHollow, "镂空"},
+        // Glyphs come from the arrow renderer itself, drawn as wide horizontal samples.
+        auto glyph = [this](int style, int line) {
+            const qreal dpr = devicePixelRatioF();
+            QPixmap pm(qCeil(40 * dpr), qCeil(12 * dpr));
+            pm.setDevicePixelRatio(dpr);
+            pm.fill(Qt::transparent);
+            Annotation sample;
+            sample.tool = ATool::Arrow;
+            sample.color = QColor(0x32, 0x32, 0x32);
+            sample.pen = 2;
+            sample.arrowStyle = style;
+            sample.lineStyle = line;
+            sample.a = QPoint(2, 6);
+            sample.b = QPoint(38, 6);
+            if (line >= 2)
+                sample.stroke << QPointF(2, 9) << QPointF(14, 3) << QPointF(26, 9) << QPointF(38, 4);
+            QPainter painter(&pm);
+            drawAnnotation(painter, sample, QImage());
+            return QIcon(pm);
         };
-        for (int k = 0; k < 4; ++k)
-            addOption(lay, styles[k].icon, QString::fromUtf8(styles[k].tip),
-                      m_arrowStyle == k, [this, k] { pickArrowStyle(k); });
+        auto addCombo = [this](QHBoxLayout *l, int current, int count,
+                               const std::function<QIcon(int)> &iconAt,
+                               const std::function<QString(int)> &textAt,
+                               const std::function<void(int)> &pick) {
+            auto *combo = new FlatComboBox(true);
+            for (int k = 0; k < count; ++k)
+                combo->addItem(iconAt(k), textAt(k));
+            combo->setCurrentIndex(current);
+            combo->setFocusPolicy(Qt::NoFocus);
+            combo->setFixedSize(46, 24);
+            combo->setIconSize(QSize(24, 12));
+            combo->setAccessibleName(textAt(current));
+            combo->setToolTip(textAt(current));
+            connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, combo, pick](int k) {
+                pick(k);
+                combo->setAccessibleName(combo->itemText(k));
+                combo->setToolTip(combo->itemText(k));
+                setFocus();
+            });
+            l->addWidget(combo);
+        };
+        addCombo(lay, m_arrowStyle, 5,                 // Heads only.
+                 [&](int k) { return glyph(k, 0); },
+                 [](int k) {
+                     const char *const names[] = {"单向箭头", "单向镂空箭头", "双向箭头",
+                                                  "双向镂空箭头", "无箭头"};
+                     return QString::fromUtf8(names[k]);
+                 },
+                 [this](int k) { pickArrowStyle(k); });
+        addCombo(lay, m_arrowLineStyle, 4,             // Path and dashing only.
+                 [&](int k) { return glyph(4, k); },
+                 [](int k) {
+                     const char *const names[] = {"直线", "直线-虚线", "曲线", "曲线-虚线"};
+                     return QString::fromUtf8(names[k]);
+                 },
+                 [this](int k) { pickArrowLineStyle(k); });
         addSize();
         addSeparator(lay);
         addSwatches(lay, ATool::Arrow);
@@ -1394,12 +1604,12 @@ void CaptureOverlay::updateToolOptions()
         connect(italic, &QToolButton::toggled, this, &CaptureOverlay::setTextItalic);
         lay->addWidget(bold);
         lay->addWidget(italic);
-        auto *font = new FontComboBox;
+        auto *font = new FlatComboBox;               // Closed state names the family, as a standard combo.
         font->setObjectName(QStringLiteral("annotationFont"));
         font->setEditable(false);
         font->addItems(QFontDatabase().families());
         font->setFocusPolicy(Qt::NoFocus);
-        font->setFixedWidth(40);
+        font->setFixedSize(140, 24);
         font->view()->setMinimumWidth(200);
         font->setAccessibleName(QStringLiteral("字体"));
         font->setCurrentText(editorActive() ? m_editFamily
@@ -1449,10 +1659,12 @@ void CaptureOverlay::updateToolOptions()
         m_mosaicSlider->setPageStep(1);
         m_mosaicSlider->setFixedSize(128, 22);
         m_mosaicSlider->setFocusPolicy(Qt::NoFocus);
-        m_mosaicSlider->setStyleSheet(QStringLiteral(
-            "QSlider::groove:horizontal{height:4px;background:#626468;border-radius:2px;}"
-            "QSlider::sub-page:horizontal{background:#fff;border-radius:2px;}"
-            "QSlider::handle:horizontal{width:10px;margin:-4px 0;background:#fff;border-radius:5px;}"));
+        m_mosaicSlider->setStyleSheet(QStringLiteral(     // Light slider: grey groove, theme-blue fill and ring.
+            "QSlider{margin:0px 1px 0px 1px;}"
+            "QSlider::groove:horizontal{border:none;background:#bdb8b9;height:2px;border-radius:1px;margin:3px 0px 3px 0px;}"
+            "QSlider::handle:horizontal{background:#fff;width:7px;margin:-4px 0px -4px 0px;border-radius:4px;border:1px solid #2080f0;}"
+            "QSlider::handle:horizontal:hover{background:#2080f0;width:7px;margin:-4px 0px -4px 0px;border:1px solid #2080f0;}"
+            "QSlider::sub-page:horizontal{border-radius:1px;background:#2080f0;margin:3px 0px 3px 0px;}"));
         m_mosaicSlider->installEventFilter(this);
         syncSizeInput();
         connect(m_mosaicSlider, &QSlider::valueChanged, this, &CaptureOverlay::setMosaicStrength);
@@ -1618,6 +1830,7 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
     pen.setCapStyle(Qt::RoundCap);
     pen.setJoinStyle(Qt::RoundJoin);
     p.setBrush(Qt::NoBrush);
+    p.setRenderHint(QPainter::Antialiasing);      // Strokes and heads render smooth on screen and export.
     p.save();
     if (!qFuzzyIsNull(ann.rot) && ann.tool != ATool::Mosaic) { // Effects rotate their mask, not their source.
         const QTransform t = annTransform(ann);
@@ -1672,36 +1885,140 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         break;
     }
     case ATool::Arrow: {
-        p.setPen(pen);
-        const QLineF shaft(ann.a, ann.b);
-        if (shaft.length() < 1) break;
-        if (ann.arrowStyle == 2) {               // Plain line, no heads.
-            p.drawLine(shaft);
+        const qreal w = ann.pen;
+        // Style picks heads only; line style picks the path (straight/curve) and dashing.
+        const bool hollow = ann.arrowStyle == 1 || ann.arrowStyle == 3;
+        const bool startHead = ann.arrowStyle == 2 || ann.arrowStyle == 3;
+        const bool tipHead = ann.arrowStyle <= 3;
+        const bool curve = ann.lineStyle >= 2, dashed = ann.lineStyle & 1;
+        QPen shaft(ann.color, w);
+        shaft.setJoinStyle(Qt::RoundJoin);
+        shaft.setCapStyle(Qt::RoundCap);
+        // Dashes scale with the width; round caps make each visible dash ~2.2w with ~1.4w gaps.
+        if (dashed) shaft.setDashPattern({1.2, 2.4});
+        p.setPen(shaft);
+
+        // Path plus end tangents for the chosen shape.
+        QPainterPath path;
+        QPointF dirEnd(1, 0);
+        qreal length = 0;
+        if (curve) {                                    // Curve: smoothed sampling of the drag.
+            if (ann.stroke.size() < 2) break;
+            path = smoothStrokePath(ann.stroke);
+            dirEnd = QPointF(ann.stroke.last() - ann.stroke[ann.stroke.size() - 2]);
+            const qreal len = qSqrt(dirEnd.x() * dirEnd.x() + dirEnd.y() * dirEnd.y());
+            if (len > 0.001) dirEnd /= len;
+            length = path.length();
+        } else {
+            const QLineF shaftLine(ann.a, ann.b);
+            length = shaftLine.length();
+            if (length < 1) break;
+            dirEnd = (shaftLine.p2() - shaftLine.p1()) / length;
+            path.moveTo(shaftLine.p1());
+            path.lineTo(shaftLine.p2());
+        }
+        if (hollow) {
+            // Whole arrow as one outline: a tail that tapers into swept-back heads, stroked at the pen width.
+            // Proportions measured from the user's reference capture: head ~8w long, ~3.5w half
+            // wide, tail ~1.3w half wide, the shaft meeting the head 3/4 of the way back.
+            const qreal hl = qMin(8 * w, length * (startHead ? 0.4 : 0.7));
+            const qreal hh = hl * 3.5 / 8, sh = hl * 1.3 / 8, notch = hl * 0.75;
+            struct Frame { QPointF p, d, n; };
+            auto frame = [&](qreal s) {
+                const qreal t = path.percentAtLength(qBound(0.0, s, length));
+                const qreal ang = qDegreesToRadians(path.angleAtPercent(t));
+                const QPointF d(qCos(ang), -qSin(ang));
+                return Frame{path.pointAtPercent(t), d, QPointF(-d.y(), d.x())};
+            };
+            const qreal s0 = startHead ? notch : 0, s1 = length - notch;
+            auto half = [&](qreal s) {
+                return startHead ? sh : sh * (0.15 + 0.85 * (s - s0) / qMax(1.0, s1 - s0));
+            };
+            const int steps = curve ? 40 : 1;
+            QPolygonF outline;
+            for (int i = 0; i <= steps; ++i) {
+                const qreal s = s0 + (s1 - s0) * i / steps;
+                const Frame f = frame(s);
+                outline << f.p + f.n * half(s);
+            }
+            // Head barbs sit on the path frame at the head base, so curved ends do not self-cross.
+            const Frame endBase = frame(length - hl);
+            const QPointF tip = frame(length).p;
+            outline << endBase.p + endBase.n * hh << tip << endBase.p - endBase.n * hh;
+            for (int i = steps; i >= 0; --i) {
+                const qreal s = s0 + (s1 - s0) * i / steps;
+                const Frame f = frame(s);
+                outline << f.p - f.n * half(s);
+            }
+            if (startHead) {
+                const Frame startBase = frame(hl);
+                outline << startBase.p - startBase.n * hh << frame(0).p << startBase.p + startBase.n * hh;
+            }
+            QPen edge = shaft;                         // Sharp tip and barbs, as in the reference capture.
+            edge.setJoinStyle(Qt::MiterJoin);
+            p.setPen(edge);
+            p.setBrush(Qt::NoBrush);
+            p.drawPolygon(outline);
             break;
         }
-        const qreal head = qMax(qreal(ann.pen * 2 + 8), qreal(11));
-        const QPointF dir = (shaft.p2() - shaft.p1()) / shaft.length();
-        const QPointF norm(-dir.y(), dir.x());
-        QLineF line = shaft;
-        line.setLength(qMax(qreal(1), shaft.length() - head * 0.55));
-        if (ann.arrowStyle == 1) {               // Double: pull the shaft back twice.
-            QLineF mid(line.p1() + dir * head * 0.55, line.p2() - dir * head * 0.55);
-            if (mid.length() < 1) break;
-            p.drawLine(mid);
-        } else {
-            p.drawLine(line);
+        // Heads shrink when the shaft cannot fit them (reference short-line scaling).
+        qreal headLen = 3 * w;
+        const qreal wanted = (startHead ? headLen : 0) + (tipHead ? headLen : 0);
+        if (length > 0 && length - wanted < 2 * w)
+            headLen *= qMax(0.0, length - 2 * w) / qMax(1e-6, wanted);
+        QPointF dirStart = -dirEnd;
+        if (curve && headLen > 0.5) {
+            // Curved heads aim along the chord from their base to the tip, so the trimmed shaft meets the base square.
+            auto chord = [&](qreal from, qreal to, const QPointF &fallback) {
+                const QPointF d = path.pointAtPercent(path.percentAtLength(to))
+                                  - path.pointAtPercent(path.percentAtLength(from));
+                const qreal n = qSqrt(QPointF::dotProduct(d, d));
+                return n > 0.001 ? d / n : fallback;
+            };
+            dirEnd = chord(length - headLen, length, dirEnd);
+            dirStart = chord(headLen, 0, dirStart);
         }
-        if (ann.arrowStyle != 3) p.setBrush(ann.color);   // Hollow keeps the outline only.
-        QPolygonF tip;
-        tip << shaft.p2() << shaft.p2() - dir * head + norm * head * 0.45
-            << shaft.p2() - dir * head - norm * head * 0.45;
-        p.drawPolygon(tip);
-        if (ann.arrowStyle == 1) {               // Second head at the start.
-            QPolygonF tail;
-            tail << shaft.p1() << shaft.p1() + dir * head + norm * head * 0.45
-                 << shaft.p1() + dir * head - norm * head * 0.45;
-            p.drawPolygon(tail);
+
+        // Trim the shaft so it stops at each head base instead of poking through.
+        // Hollow heads pull back w/2 more so the round cap cannot poke into the open head.
+        // Solid heads stop the shaft at the barb notch; the head fill covers its round cap.
+        const qreal capRoom = hollow ? w / 2 : -0.35 * headLen;
+        const qreal trimStart = startHead ? headLen + capRoom : 0;
+        const qreal trimEnd = tipHead ? headLen + capRoom : 0;
+        if (length > trimStart + trimEnd) {
+            QPainterPath trimmed;
+            const qreal from = path.percentAtLength(trimStart);
+            const qreal to = path.percentAtLength(length - trimEnd);
+            trimmed.moveTo(path.pointAtPercent(from));
+            for (qreal t = from + 0.01; t < to; t += 0.01)     // 1% walk, as the reference does.
+                trimmed.lineTo(path.pointAtPercent(qMin(t, to)));
+            trimmed.lineTo(path.pointAtPercent(to));
+            path = trimmed;
         }
+        if (!path.isEmpty()) p.drawPath(path);
+
+        auto paintHead = [&](const QPointF &tip, const QPointF &dir) {
+            const QPolygonF head = arrowHeadPoly(tip, dir, headLen, headLen / 2);
+            if (hollow) {                              // Solid outline at shaft thickness, even on dashed lines.
+                QPen outline = shaft;
+                outline.setStyle(Qt::SolidLine);
+                outline.setJoinStyle(Qt::MiterJoin);
+                p.setPen(outline);
+                p.drawPolygon(head);
+                p.setPen(shaft);
+            } else {
+                // Barbs sweep back past the shaft joint (notch 35% of the head length, per the user's capture).
+                QPolygonF barbed = head;
+                barbed.insert(2, tip - dir * headLen * 0.65);
+                p.setPen(Qt::NoPen);
+                p.setBrush(ann.color);
+                p.drawPolygon(barbed);
+                p.setPen(shaft);
+                p.setBrush(Qt::NoBrush);
+            }
+        };
+        if (tipHead) paintHead(curve ? ann.stroke.last() : QPointF(ann.b), dirEnd);
+        if (startHead) paintHead(curve ? ann.stroke.first() : QPointF(ann.a), dirStart);
         break;
     }
     case ATool::Mosaic: {                        // Redact lower layers through the object's mask.

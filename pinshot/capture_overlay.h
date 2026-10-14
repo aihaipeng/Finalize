@@ -91,7 +91,8 @@ private:
         QString text;                                // Text / Number content.
         qreal font = 15;                             // Text / Number point size (1/72 inch).
         QString family = QStringLiteral("Microsoft YaHei UI");
-        int arrowStyle = 0;                          // 0 single, 1 double, 2 none, 3 hollow.
+        int arrowStyle = 0;                          // Heads only: 0 single, 1 single hollow, 2 double, 3 double hollow, 4 none.
+        int lineStyle = 0;                           // Shaft only: 0 straight, 1 straight dashed, 2 curve, 3 curve dashed.
         bool bold = false;                           // Text weight / slant.
         bool italic = false;
         qreal rot = 0;                               // Rotation around the box center (degrees).
@@ -112,6 +113,8 @@ private:
     Handle annHandleAt(const Annotation &ann, const QPoint &pos) const;
     static QPoint rotateAnchor(const Annotation &ann);
     void paintMosaicBorder(QPainter &p, const Annotation &ann, bool selected) const;
+    static void paintHandle(QPainter &p, const QPointF &center);
+    static int testSelectionBorders();
     static QCursor mosaicBrushCursor(qreal width, qreal dpr);
     void updateAnnotationCursor(const QPoint &pos);
     static void translateAnnotation(Annotation &ann, const QPoint &d);
@@ -164,6 +167,7 @@ private:
     static QColor parseAnnotationColor(const QString &text);
     void showColorPalette(ATool family, QToolButton *anchor);
     void pickArrowStyle(int style);
+    void pickArrowLineStyle(int style);
     void setTextBold(bool on);
     void setTextItalic(bool on);
     void setTextFamily(const QFont &font);
@@ -298,7 +302,8 @@ private:
     QPointer<QLineEdit> m_rgbInput, m_hexInput;
     ATool m_colorDialogTool = ATool::None;
     bool m_shapeEllipse = false;                     // Current sub-shape of the shape button.
-    int m_arrowStyle = 0;                            // 0 single, 1 double, 2 none, 3 hollow.
+    int m_arrowStyle = 0;                            // Head shape, see Annotation::arrowStyle.
+    int m_arrowLineStyle = 0;                        // Shaft path and dash, see Annotation::lineStyle.
     bool m_abold = false, m_aitalic = false;         // Text tool defaults.
     bool m_editBold = false, m_editItalic = false;   // Live editor weight / slant.
     QColor m_colorShape = "#ff3b30", m_colorArrow = "#ff3b30", m_colorPen = "#ff3b30",

@@ -247,10 +247,10 @@ QImage LongCapture::toImage() const
 void LongCapture::buildUi()
 {
     const QString barQss =
-        "QWidget{background:rgb(29,31,35);border-radius:4px;}"
-        "QLabel{color:#fff;font-size:13px;padding:0 8px;}"
-        "QToolButton{background:transparent;border:none;border-radius:3px;padding:4px;}"
-        "QToolButton:hover{background:#454545;}";
+        "QWidget{background:#f2f2f2;border:none;}"
+        "QLabel{color:#323232;font-size:13px;padding:0 8px;}"
+        "QToolButton{background:transparent;border:none;border-radius:0px;padding:4px;}"
+        "QToolButton:hover{background-color:#d4d4d4;}";
     m_bar = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     m_bar->setStyleSheet(barQss);
     auto *lay = new QHBoxLayout(m_bar);
@@ -283,7 +283,7 @@ void LongCapture::buildUi()
     m_bar->show();
 
     m_preview = new QLabel(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
-    m_preview->setStyleSheet("background:#1d1d1d;");
+    m_preview->setStyleSheet("background:#f2f2f2;border:1px solid #2080f0;");
     m_preview->setAlignment(Qt::AlignCenter);
     const int ph = int(av.height() * 0.6);
     const int pw = 200;
@@ -302,7 +302,7 @@ void LongCapture::buildUi()
     // Input-transparent 2 px blue border outside the selection; scrolling passes through.
     m_frame = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint
                                     | Qt::WindowTransparentForInput);
-    m_frame->setStyleSheet("background:#1e90ff;");
+    m_frame->setStyleSheet("background:#2080f0;");
     m_frame->setGeometry(m_region.adjusted(-2, -2, 2, 2));
     const QRect fr = m_frame->rect();
     m_frame->setMask(QRegion(fr) - QRegion(fr.adjusted(2, 2, -2, -2)));

@@ -93,16 +93,21 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
 
     m_sizeTip = new QLabel(this);
     m_sizeTip->setStyleSheet(
-        "background:#2d2d2d;color:#fff;padding:2px 6px;border-radius:3px;font-size:12px;");
+        "background:#f2f2f2;color:#323232;padding:2px 6px;border:1px solid #2080f0;font-size:12px;");
     m_sizeTip->hide();
 
     // The overlay paints matching solid backgrounds for both toolbar containers.
     m_tools = new QWidget(this);
     m_tools->installEventFilter(this);
     m_tools->setCursor(Qt::ArrowCursor);
-    m_tools->setStyleSheet(
-        "QToolButton{color:#fff;background:transparent;border:none;border-radius:3px;padding:4px;}"
-        "QToolButton:hover,QToolButton:checked{background:rgba(255,255,255,38);}");
+    // Light bar language: flat 32px buttons, grey hover, theme-blue checked fill, 1px separators.
+    const QString barQss = QStringLiteral(
+        "QToolButton{color:#323232;background:transparent;border:none;border-radius:0px;padding:4px;}"
+        "QToolButton:hover{background-color:#d4d4d4;}"
+        "QToolButton:checked{background-color:#2080f0;}"
+        "QToolButton:pressed{padding:6px 2px 2px 6px;}"
+        "QFrame#barSeparator{background-color:rgba(50,50,50,144);margin:0px 2px;border:none;}");
+    m_tools->setStyleSheet(barQss);
     auto *save = iconButton(Icon::Save, QStringLiteral("保存到文件 (Ctrl+S)"));
     auto *copy = iconButton(Icon::Copy, QStringLiteral("复制到剪贴板 (Ctrl+C)"));
     auto *pin = iconButton(Icon::Pin, QStringLiteral("贴在屏幕上 (Enter / 双击)"));
@@ -159,24 +164,27 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         });
         m_toolBtn[int(tool)] = button;
     }
-    m_toolButtons = {undo, redo, m_shapeButton};
-    for (int t = int(ATool::Arrow); t < m_toolBtn.size(); ++t) m_toolButtons.append(m_toolBtn[t]);
-    m_toolButtons.append(save); m_toolButtons.append(copy);
-    m_toolButtons.append(pin); m_toolButtons.append(scroll);
-    m_toolButtons.append(ocr);
+    // Drawing tools | undo, redo | capture actions ending with pin, save, copy.
+    m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
+                     m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
+                     m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)],
+                     undo, redo, scroll, ocr, pin, save, copy};
     for (QWidget *button : m_toolButtons) button->setFocusPolicy(Qt::NoFocus);
 
     m_toolOptions = new QWidget(this);
     m_toolOptions->installEventFilter(this);
     m_toolOptions->setCursor(Qt::ArrowCursor);
-    m_toolOptions->setStyleSheet(QStringLiteral(
-        "QToolButton{color:#fff;background:transparent;border:none;border-radius:3px;padding:3px;}"
-        "QToolButton:hover,QToolButton:checked{background:rgba(255,255,255,38);}"
-        "QLabel{color:#fff;font-size:12px;border:none;}"
-        "QComboBox{color:#fff;background:rgb(29,31,35);border:1px solid #626468;"
+    m_toolOptions->setStyleSheet(barQss + QStringLiteral(
+        "QLabel{color:#323232;font-size:12px;border:none;}"
+        "QComboBox{color:#323232;background:#fdfdfd;border:1px solid #d2d2d2;border-bottom-color:#bcbcbc;"
         "padding:1px 3px;font-size:12px;}"
-        "QComboBox QAbstractItemView{color:#fff;background:rgb(29,31,35);selection-background-color:#007aff;}"
-        "QLineEdit{color:#fff;background:transparent;border:none;selection-background-color:#007aff;}"));
+        "QComboBox:hover{border-color:#a0a0a0;}"
+        "QComboBox::drop-down{border:none;width:14px;background:transparent;}"
+        "QComboBox::down-arrow{image:none;width:0px;height:0px;}"
+        "QComboBox QAbstractItemView{outline:0px;color:#323232;background:#ffffff;border:1px solid #828790;"
+        "selection-background-color:#e5f1fb;selection-color:#323232;}"
+        "QLineEdit{color:#323232;background:transparent;border:none;"
+        "selection-background-color:#2080f0;selection-color:#ffffff;}"));
     m_toolOptions->hide();
     buildToolLayout();
     m_tools->adjustSize();
@@ -216,8 +224,8 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
     mask.addRect(rect());
     mask.addRect(hole);
     p.fillPath(mask, QColor(0, 0, 0, 120));
-    p.setPen(QPen(QColor("#1e90ff"), 1));
-    p.drawRect(hole);
+    p.setPen(QPen(QColor("#2080f0"), 1));
+    p.drawRect(QRectF(hole).adjusted(0.5, 0.5, -0.5, -0.5));
     const QColor snapColor(0, 229, 255);        // Magnetic-snap indicator lines.
     if (m_snapX >= 0) {
         p.setPen(QPen(snapColor, 1));
@@ -233,7 +241,11 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         paintMosaicBorder(p, m_ann, false);
     if (m_mode == Adjusting && !m_live
         && (editorActive() || (m_selAnn >= 0 && m_selAnn < m_anns.size()
-                              && !m_anns[m_selAnn].mosaicBrush))) {
+                              && !m_anns[m_selAnn].mosaicBrush
+                              && (m_atool == ATool::None || m_spaceHeld
+                                  || (m_atool == ATool::Text && m_anns[m_selAnn].tool == ATool::Text)
+                                  || (m_atool == ATool::Mosaic && !m_mosaicBrush
+                                      && m_anns[m_selAnn].tool == ATool::Mosaic))))) {
         const Annotation ann = editorActive() ? editorAnnotation() : m_anns[m_selAnn];
         if (ann.tool == ATool::Mosaic) {
             paintMosaicBorder(p, ann, true);
@@ -241,32 +253,42 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         p.save();
         if (!qFuzzyIsNull(ann.rot)) p.setTransform(annTransform(ann), true);
         const QRect box = annotationRect(ann);
-        p.setPen(QPen(QColor(30, 144, 255), 1, Qt::DashLine));
-        p.setBrush(Qt::NoBrush);
-        p.drawRect(box.adjusted(-3, -3, 3, 3));
-        p.setBrush(Qt::white);
+        if (ann.tool == ATool::Text) {
+            // Reference text frame: one hairline white rect at the bounds, nothing dashed.
+            QPen frame(Qt::white, 0);
+            p.setPen(frame);
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(QRectF(box).adjusted(0, 0, 0.5, 0.5));
+        } else {
+            QPen border(QColor("#2080f0"), 1);
+            border.setDashPattern({4, 3});
+            p.setPen(border);
+            p.setBrush(Qt::NoBrush);
+            if (ann.tool != ATool::Arrow) p.drawRect(box.adjusted(-3, -3, 3, 3));
+        }
         for (const QPoint &anchor : annAnchors(ann))
-            p.drawRect(QRect(anchor - QPoint(4, 4), QSize(8, 8)));
+            paintHandle(p, anchor);
         if (ann.tool != ATool::Mosaic) {          // Mosaic regions move and resize without rotation.
             const QPoint base(box.center().x(), box.bottom() + 2);
             const QPoint knob(box.center().x(), box.bottom() + 22);
+            p.setPen(QPen(QColor("#2080f0"), 1));
             p.drawLine(base, knob);
-            p.drawEllipse(QRect(knob - QPoint(5, 5), QSize(10, 10)));
+            paintHandle(p, knob);
         }
         p.restore();
         }
     }
     if (m_mode == Adjusting && !m_sel.isNull() && m_hover.isNull())  // Eight resize handles.
-        for (const QRect &h : handleRects(m_sel)) {
-            p.fillRect(h, Qt::white);
-            p.drawRect(h);
-        }
-    for (QWidget *glass : {m_tools, m_toolOptions}) {
+        for (const QRect &h : handleRects(m_sel))
+            paintHandle(p, h.center() + QPoint(1, 1));
+    for (QWidget *glass : {m_tools, m_toolOptions}) {   // Light fill inside a 1px theme-blue frame.
         if (!glass->isVisible()) continue;
         const QRect bar = glass->geometry();
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(29, 31, 35));
+        p.setBrush(QColor(0x20, 0x80, 0xf0));
         p.drawRect(bar);
+        p.setBrush(QColor(0xf2, 0xf2, 0xf2));
+        p.drawRect(bar.adjusted(1, 1, -1, -1));
     }
 }
 
@@ -1182,9 +1204,13 @@ void CaptureOverlay::buildToolLayout()
 {
     if (m_tools->layout()) return;
     auto *lay = new QHBoxLayout(m_tools);
-    lay->setContentsMargins(4, 4, 4, 4);
-    lay->setSpacing(2);
-    for (QWidget *button : m_toolButtons) lay->addWidget(button);
+    lay->setContentsMargins(1, 1, 1, 1);
+    lay->setSpacing(0);
+    for (int i = 0; i < m_toolButtons.size(); ++i) {
+        if (i == 8 || i == 10) lay->addWidget(barSeparator());   // Tools | undo, redo | outputs.
+        static_cast<QToolButton *>(m_toolButtons[i])->setFixedSize(32, 32);
+        lay->addWidget(m_toolButtons[i]);
+    }
     m_tools->adjustSize();
 }
 

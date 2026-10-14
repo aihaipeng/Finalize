@@ -18,165 +18,193 @@
 #include <QToolButton>
 #include <QStylePainter>
 #include <QStyleOptionComboBox>
+#include <QFrame>
 #include <qt_windows.h>
 
-void buildIconPath(QPainterPath &path, Icon icon)
+// One 16px grid, glyphs inside a 2.5..13.5 box, straight strokes on half pixels so they
+// stay crisp at 100%; `fill` holds the few solid accents.
+static void buildIconPath(QPainterPath &path, QPainterPath &fill, Icon icon)
 {
     switch (icon) {
-    case Icon::Save:                                  // Floppy disk with label slot.
-        path.moveTo(16, 3); path.lineTo(5, 3); path.lineTo(3, 5); path.lineTo(3, 19);
-        path.lineTo(5, 21); path.lineTo(19, 21); path.lineTo(21, 19); path.lineTo(21, 8);
-        path.lineTo(16, 3);
-        path.moveTo(7, 21); path.lineTo(7, 13); path.lineTo(17, 13); path.lineTo(17, 21);
-        path.moveTo(7, 3); path.lineTo(7, 8); path.lineTo(15, 8); path.lineTo(15, 3);
+    case Icon::Save:                                  // Floppy disk with shutter and label.
+        path.moveTo(2.5, 2.5); path.lineTo(11, 2.5); path.lineTo(13.5, 5); path.lineTo(13.5, 13.5);
+        path.lineTo(2.5, 13.5); path.closeSubpath();
+        path.moveTo(5.5, 2.5); path.lineTo(5.5, 5.5); path.lineTo(10.5, 5.5); path.lineTo(10.5, 2.5);
+        path.moveTo(4.5, 13.5); path.lineTo(4.5, 9.5); path.lineTo(11.5, 9.5); path.lineTo(11.5, 13.5);
         break;
-    case Icon::Copy:                                  // Two stacked sheets.
-        path.addRoundedRect(9, 9, 12, 12, 2, 2);
-        path.moveTo(6, 15); path.lineTo(5, 15); path.quadTo(3, 15, 3, 13); path.lineTo(3, 5);
-        path.quadTo(3, 3, 5, 3); path.lineTo(13, 3); path.quadTo(15, 3, 15, 5); path.lineTo(15, 6);
+    case Icon::Copy:                                  // Front sheet over a partly hidden back sheet.
+        path.addRoundedRect(5.5, 5.5, 8, 8, 1.5, 1.5);
+        path.moveTo(10.5, 4); path.lineTo(10.5, 3.5); path.quadTo(10.5, 2.5, 9.5, 2.5);
+        path.lineTo(3.5, 2.5); path.quadTo(2.5, 2.5, 2.5, 3.5); path.lineTo(2.5, 9.5);
+        path.quadTo(2.5, 10.5, 3.5, 10.5); path.lineTo(4, 10.5);
         break;
-    case Icon::Pin:                                   // Thumbtack: head plus needle.
-        path.addRoundedRect(7, 3, 10, 9, 3, 3);
-        path.moveTo(12, 12); path.lineTo(12, 21);
+    case Icon::Pin:                                   // Thumbtack: cap, flared body, needle.
+        path.moveTo(5, 2.5); path.lineTo(11, 2.5);
+        path.moveTo(6.5, 2.5); path.lineTo(6.5, 6.5); path.lineTo(4.5, 9.5); path.lineTo(11.5, 9.5);
+        path.lineTo(9.5, 6.5); path.lineTo(9.5, 2.5);
+        path.moveTo(8, 9.5); path.lineTo(8, 13.5);
         break;
-    case Icon::LongShot:                              // Chevrons pointing down: scrolling capture.
-        path.moveTo(7, 6); path.lineTo(12, 11); path.lineTo(17, 6);
-        path.moveTo(7, 13); path.lineTo(12, 18); path.lineTo(17, 13);
+    case Icon::LongShot:                              // Page top with a downward arrow: scrolling capture.
+        path.moveTo(2.5, 5.5); path.lineTo(2.5, 2.5); path.lineTo(13.5, 2.5); path.lineTo(13.5, 5.5);
+        path.moveTo(8, 5.5); path.lineTo(8, 13);
+        path.moveTo(5, 10); path.lineTo(8, 13); path.lineTo(11, 10);
         break;
     case Icon::Cancel:                                // Cross.
-        path.moveTo(6, 6); path.lineTo(18, 18);
-        path.moveTo(18, 6); path.lineTo(6, 18);
+        path.moveTo(3.5, 3.5); path.lineTo(12.5, 12.5);
+        path.moveTo(12.5, 3.5); path.lineTo(3.5, 12.5);
         break;
-    case Icon::Rect:                                  // Annotation shapes.
-        path.addRect(4, 4, 16, 16);
+    case Icon::Rect:                                  // Annotation shapes share one 11px box.
+        path.addRoundedRect(2.5, 2.5, 11, 11, 1.5, 1.5);
         break;
     case Icon::Ellipse:
-        path.addEllipse(4, 4, 16, 16);
+        path.addEllipse(QPointF(8, 8), 5.5, 5.5);
         break;
-    case Icon::Arrow:                                 // Diagonal with arrowhead.
-        path.moveTo(7, 17); path.lineTo(17, 7);
-        path.moveTo(8, 7); path.lineTo(17, 7); path.lineTo(17, 16);
+    case Icon::Arrow:                                 // Diagonal shaft with a solid corner head.
+        path.moveTo(3, 13); path.lineTo(10, 6);
+        fill.moveTo(13.5, 2.5); fill.lineTo(13.5, 8.5); fill.lineTo(7.5, 2.5); fill.closeSubpath();
         break;
-    case Icon::ArrowBoth:                             // Arrowheads on both ends.
-        path.moveTo(8, 16); path.lineTo(16, 8);
-        path.moveTo(8, 16); path.lineTo(8, 11); path.moveTo(8, 16); path.lineTo(13, 16);
-        path.moveTo(16, 8); path.lineTo(11, 8); path.moveTo(16, 8); path.lineTo(16, 13);
+    case Icon::ArrowBoth:                             // Solid heads on both ends.
+        path.moveTo(6, 10); path.lineTo(10, 6);
+        fill.moveTo(13.5, 2.5); fill.lineTo(13.5, 7.5); fill.lineTo(8.5, 2.5); fill.closeSubpath();
+        fill.moveTo(2.5, 13.5); fill.lineTo(2.5, 8.5); fill.lineTo(7.5, 13.5); fill.closeSubpath();
         break;
     case Icon::ArrowLine:                             // Plain line, no heads.
-        path.moveTo(5, 17); path.lineTo(17, 5);
+        path.moveTo(3, 13); path.lineTo(13, 3);
         break;
-    case Icon::ArrowHollow:                           // Open V head, unfilled.
-        path.moveTo(7, 17); path.lineTo(17, 7);
-        path.moveTo(8, 7); path.lineTo(17, 7); path.lineTo(17, 16);
-        path.lineTo(8, 7);
+    case Icon::ArrowHollow:                           // Outline head, open inside.
+        path.moveTo(3, 13); path.lineTo(9, 7);
+        path.moveTo(13, 3); path.lineTo(13, 8.5); path.lineTo(7.5, 3); path.closeSubpath();
         break;
-    case Icon::Pen:                                   // Diagonal pencil with nib.
-        path.moveTo(17, 3); path.lineTo(21, 7); path.lineTo(8, 20); path.lineTo(3, 21);
-        path.lineTo(4, 16); path.closeSubpath();
+    case Icon::ArrowHollowBoth:                       // Outline heads on both ends.
+        path.moveTo(6.5, 9.5); path.lineTo(9.5, 6.5);
+        path.moveTo(13, 3); path.lineTo(13, 8); path.lineTo(8, 3); path.closeSubpath();
+        path.moveTo(3, 13); path.lineTo(3, 8); path.lineTo(8, 13); path.closeSubpath();
         break;
-    case Icon::Mosaic:                                // Filled checkerboard inside a square outline.
-        path.addRect(4, 4, 8, 8);
-        path.addRect(12, 12, 8, 8);
+    case Icon::ArrowCurve:                            // Curved shaft with a solid head.
+        path.moveTo(2.5, 13); path.quadTo(3.5, 5, 9.5, 5);
+        fill.moveTo(14, 5); fill.lineTo(9, 2); fill.lineTo(9, 8); fill.closeSubpath();
         break;
-    case Icon::Marker:                                // Highlighter: slanted body plus tip.
-        path.moveTo(9, 11); path.lineTo(3, 17); path.lineTo(3, 20);
-        path.lineTo(12, 20); path.lineTo(15, 17);
-        path.moveTo(14, 4); path.lineTo(22, 12); path.lineTo(17, 17);
-        path.lineTo(9, 9); path.closeSubpath();
+    case Icon::LineDashDense:                         // Dashed line, short period.
+        for (qreal x = 2; x < 14; x += 3) { path.moveTo(x, 8); path.lineTo(x + 1.5, 8); }
+        break;
+    case Icon::LineDashSparse:                        // Dashed line, long period.
+        path.moveTo(2, 8); path.lineTo(6, 8);
+        path.moveTo(10, 8); path.lineTo(14, 8);
+        break;
+    case Icon::Pen:                                   // Slim pencil: body, ferrule line, nib.
+        path.moveTo(11, 2.5); path.lineTo(13.5, 5); path.lineTo(5, 13.5); path.lineTo(2.5, 13.5);
+        path.lineTo(2.5, 11); path.closeSubpath();
+        path.moveTo(9.5, 4); path.lineTo(12, 6.5);
+        break;
+    case Icon::Mosaic:                                // Checkerboard: two solid cells in an outline.
+        path.addRect(2.5, 2.5, 11, 11);
+        fill.addRect(3, 3, 5, 5);
+        fill.addRect(8, 8, 5, 5);
+        break;
+    case Icon::Marker:                                // Highlighter: wide body, chisel tip, ink base.
+        path.moveTo(9, 2.5); path.lineTo(13.5, 7); path.lineTo(8.5, 12); path.lineTo(4, 7.5);
+        path.closeSubpath();
+        path.moveTo(5.5, 9); path.lineTo(3.5, 11); path.lineTo(5, 12.5); path.lineTo(7, 10.5);
+        fill.addRect(2.5, 13, 11, 1);
         break;
     case Icon::Text:                                  // Letter T.
-        path.moveTo(5, 6); path.lineTo(5, 4); path.lineTo(19, 4); path.lineTo(19, 6);
-        path.moveTo(12, 4); path.lineTo(12, 20);
-        path.moveTo(9, 20); path.lineTo(15, 20);
+        path.moveTo(3.5, 4.5); path.lineTo(3.5, 2.5); path.lineTo(12.5, 2.5); path.lineTo(12.5, 4.5);
+        path.moveTo(8, 2.5); path.lineTo(8, 13.5);
+        path.moveTo(6, 13.5); path.lineTo(10, 13.5);
         break;
     case Icon::Bold:
-        path.moveTo(7, 4); path.lineTo(7, 20); path.lineTo(14, 20);
-        path.cubicTo(21, 20, 21, 12, 14, 12); path.lineTo(7, 12);
-        path.moveTo(7, 4); path.lineTo(13, 4); path.cubicTo(20, 4, 20, 12, 13, 12);
+        path.moveTo(4.5, 2.5); path.lineTo(9, 2.5); path.cubicTo(12.5, 2.5, 12.5, 7.5, 9, 7.5);
+        path.lineTo(4.5, 7.5);
+        path.moveTo(4.5, 2.5); path.lineTo(4.5, 13.5); path.lineTo(9.5, 13.5);
+        path.cubicTo(13.5, 13.5, 13.5, 7.5, 9.5, 7.5);
         break;
     case Icon::Minimize:
-        path.moveTo(5, 12); path.lineTo(19, 12);
+        path.moveTo(3, 8.5); path.lineTo(13, 8.5);
         break;
     case Icon::Maximize:
-        path.addRect(5, 5, 14, 14);
+        path.addRect(3.5, 3.5, 9, 9);
         break;
     case Icon::Restore:
-        path.addRect(5, 8, 11, 11);
-        path.moveTo(8, 5); path.lineTo(19, 5); path.lineTo(19, 16);
+        path.addRect(3.5, 5.5, 7, 7);
+        path.moveTo(5.5, 3.5); path.lineTo(12.5, 3.5); path.lineTo(12.5, 10.5);
         break;
-    case Icon::Refresh:
-        path.moveTo(19, 9); path.cubicTo(18, 5, 14, 3, 10, 4);
-        path.cubicTo(5, 5, 3, 9, 4, 14); path.cubicTo(5, 19, 11, 22, 16, 19);
-        path.lineTo(19, 16); path.moveTo(19, 4); path.lineTo(19, 9); path.lineTo(14, 9);
+    case Icon::Refresh:                               // Open ring with an arrowhead at its end.
+        path.moveTo(13, 8); path.arcTo(QRectF(3, 3, 10, 10), 0, 300);
+        path.moveTo(13.5, 3.5); path.lineTo(13.5, 7.5); path.lineTo(9.5, 7.5);
         break;
-    case Icon::Ocr:
-        path.moveTo(8, 4); path.lineTo(4, 4); path.lineTo(4, 8);
-        path.moveTo(16, 4); path.lineTo(20, 4); path.lineTo(20, 8);
-        path.moveTo(4, 16); path.lineTo(4, 20); path.lineTo(8, 20);
-        path.moveTo(20, 16); path.lineTo(20, 20); path.lineTo(16, 20);
-        path.moveTo(8, 8); path.lineTo(16, 8);
-        path.moveTo(12, 8); path.lineTo(12, 17);
+    case Icon::Ocr:                                   // Scan corners around a letter T.
+        path.moveTo(2.5, 5.5); path.lineTo(2.5, 2.5); path.lineTo(5.5, 2.5);
+        path.moveTo(10.5, 2.5); path.lineTo(13.5, 2.5); path.lineTo(13.5, 5.5);
+        path.moveTo(2.5, 10.5); path.lineTo(2.5, 13.5); path.lineTo(5.5, 13.5);
+        path.moveTo(13.5, 10.5); path.lineTo(13.5, 13.5); path.lineTo(10.5, 13.5);
+        path.moveTo(5.5, 5.5); path.lineTo(10.5, 5.5);
+        path.moveTo(8, 5.5); path.lineTo(8, 10.5);
         break;
     case Icon::Italic:
-        path.moveTo(10, 4); path.lineTo(18, 4);
-        path.moveTo(14, 4); path.lineTo(10, 20);
-        path.moveTo(6, 20); path.lineTo(14, 20);
+        path.moveTo(7, 2.5); path.lineTo(12, 2.5);
+        path.moveTo(4, 13.5); path.lineTo(9, 13.5);
+        path.moveTo(9.5, 2.5); path.lineTo(6.5, 13.5);
         break;
     case Icon::Number:                                // Circled digit one.
-        path.addEllipse(2, 2, 20, 20);
-        path.moveTo(13, 7); path.lineTo(10, 9);
-        path.moveTo(13, 7); path.lineTo(13, 17);
+        path.addEllipse(QPointF(8, 8), 5.5, 5.5);
+        path.moveTo(6.5, 6.5); path.lineTo(8.5, 5); path.lineTo(8.5, 11);
         break;
-    case Icon::Eraser:                                // Slanted eraser block.
-        path.moveTo(7, 21); path.lineTo(2.7, 16.7); path.lineTo(2.7, 13.3);
-        path.lineTo(12.3, 3.7); path.lineTo(15.7, 3.7); path.lineTo(21.3, 9.3);
-        path.lineTo(21.3, 12.7); path.lineTo(13, 21); path.closeSubpath();
-        path.moveTo(22, 21); path.lineTo(7, 21);
-        path.moveTo(5, 11); path.lineTo(14, 20);
+    case Icon::Eraser:                                // Slanted block with a dividing band, on a base line.
+        path.moveTo(9, 2.5); path.lineTo(13.5, 7); path.lineTo(8, 12.5); path.lineTo(5.5, 12.5);
+        path.lineTo(2.5, 9.5); path.closeSubpath();
+        path.moveTo(5.5, 6); path.lineTo(10, 10.5);
+        path.moveTo(8, 13.5); path.lineTo(13.5, 13.5);
+        fill.moveTo(9, 2.5); fill.lineTo(13.5, 7); fill.lineTo(10, 10.5); fill.lineTo(5.5, 6);
+        fill.closeSubpath();
         break;
     case Icon::Undo:                                  // Hooked arrow turning back.
-        path.moveTo(9, 14); path.lineTo(4, 9); path.lineTo(9, 4);
-        path.moveTo(4, 9); path.lineTo(15, 9); path.quadTo(20, 9, 20, 14); path.lineTo(20, 20);
+        path.moveTo(6, 3.5); path.lineTo(3, 6.5); path.lineTo(6, 9.5);
+        path.moveTo(3, 6.5); path.lineTo(10, 6.5); path.quadTo(13.5, 6.5, 13.5, 10);
+        path.quadTo(13.5, 13.5, 10, 13.5); path.lineTo(7, 13.5);
         break;
     case Icon::Redo:                                  // Hooked arrow turning forward.
-        path.moveTo(15, 14); path.lineTo(20, 9); path.lineTo(15, 4);
-        path.moveTo(20, 9); path.lineTo(9, 9); path.quadTo(4, 9, 4, 14); path.lineTo(4, 20);
+        path.moveTo(10, 3.5); path.lineTo(13, 6.5); path.lineTo(10, 9.5);
+        path.moveTo(13, 6.5); path.lineTo(6, 6.5); path.quadTo(2.5, 6.5, 2.5, 10);
+        path.quadTo(2.5, 13.5, 6, 13.5); path.lineTo(9, 13.5);
         break;
-    case Icon::Palette:
-        path.moveTo(12, 3);
-        path.cubicTo(7, 3, 3, 7, 3, 12); path.cubicTo(3, 17, 7, 21, 12, 21);
-        path.cubicTo(15, 21, 15, 18, 13.5, 17); path.cubicTo(12, 15, 14, 13, 16, 14);
-        path.cubicTo(19, 15, 21, 14, 21, 11); path.cubicTo(21, 6, 17, 3, 12, 3);
+    case Icon::Palette:                               // Paint palette with a thumb notch and colour wells.
+        path.moveTo(8, 2.5);
+        path.cubicTo(4.5, 2.5, 2.5, 5, 2.5, 8); path.cubicTo(2.5, 11.5, 5, 13.5, 8, 13.5);
+        path.cubicTo(9.5, 13.5, 9.5, 11.5, 8.8, 11); path.cubicTo(8, 10, 9, 9, 10.5, 9.5);
+        path.cubicTo(12.5, 10, 13.5, 9, 13.5, 7.5); path.cubicTo(13.5, 4.5, 11, 2.5, 8, 2.5);
         path.closeSubpath();
-        for (const QPointF &dot : {QPointF(7, 10), QPointF(10, 6.5), QPointF(15, 7), QPointF(6.5, 14)})
-            path.addEllipse(dot, 0.55, 0.55);
+        for (const QPointF &dot : {QPointF(5, 7), QPointF(7, 4.8), QPointF(10, 5), QPointF(5, 10)})
+            fill.addEllipse(dot, 0.9, 0.9);
         break;
     }
 }
 
 QIcon makeIcon(Icon icon)
 {
-    QPainterPath path;
-    buildIconPath(path, icon);
+    QPainterPath path, fill;
+    buildIconPath(path, fill, icon);
     QIcon result;
+    // Light bar language: dark glyphs, grey when disabled, white on the checked theme fill.
+    const struct { QColor color; QIcon::State state; QList<QIcon::Mode> modes; } variants[] = {
+        {QColor(0x32, 0x32, 0x32), QIcon::Off, {QIcon::Normal, QIcon::Active, QIcon::Selected}},
+        {QColor(0x7b, 0x7b, 0x7b), QIcon::Off, {QIcon::Disabled}},
+        {QColor(0x7b, 0x7b, 0x7b), QIcon::On, {QIcon::Disabled}},
+        {QColor(Qt::white), QIcon::On, {QIcon::Normal, QIcon::Active, QIcon::Selected}},
+    };
+    for (const auto &variant : variants)
     for (int px : {16, 24, 32}) {                     // 1x / 1.5x / 2x variants of one logical size.
         QPixmap pm(px, px);
         pm.setDevicePixelRatio(px / 16.0);
         pm.fill(Qt::transparent);
         QPainter p(&pm);
         p.setRenderHint(QPainter::Antialiasing);
-        p.scale(16.0 / 24.0, 16.0 / 24.0);
-        QPen pen(Qt::white, 1.75 * 24.0 / 16.0);   // Renders 1.75px at the 16px size.
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
+        QPen pen(variant.color, 1);                   // One uniform 1px line weight across the set.
+        pen.setCapStyle(Qt::SquareCap);
+        pen.setJoinStyle(Qt::MiterJoin);
         p.setPen(pen);
-        if (icon == Icon::Mosaic) {
-            p.fillPath(path, Qt::white);
-            p.drawRect(QRectF(4, 4, 16, 16));
-        }
-        else p.drawPath(path);
-        for (QIcon::Mode mode : {QIcon::Normal, QIcon::Disabled, QIcon::Active, QIcon::Selected})
-            for (QIcon::State state : {QIcon::Off, QIcon::On}) result.addPixmap(pm, mode, state);
+        p.fillPath(fill, variant.color);
+        p.drawPath(path);
+        for (QIcon::Mode mode : variant.modes) result.addPixmap(pm, mode, variant.state);
     }
     return result;
 }
@@ -193,18 +221,12 @@ QToolButton *iconButton(Icon icon, const QString &tip)
     return button;
 }
 
-FontComboBox::FontComboBox() : m_icon(makeIcon(Icon::Text)) {}
-
-void FontComboBox::paintEvent(QPaintEvent *)
+QWidget *barSeparator()
 {
-    QStylePainter painter(this);
-    QStyleOptionComboBox option;
-    initStyleOption(&option);
-    option.currentText.clear();
-    option.currentIcon = m_icon;
-    option.iconSize = QSize(16, 16);
-    painter.drawComplexControl(QStyle::CC_ComboBox, option);
-    painter.drawControl(QStyle::CE_ComboBoxLabel, option);
+    auto *line = new QFrame;
+    line->setObjectName(QStringLiteral("barSeparator"));
+    line->setFixedSize(5, 14);                         // 1px line plus 2px margins each side.
+    return line;
 }
 
 ColorWheel::ColorWheel(const QColor &color, QWidget *parent) : QWidget(parent)
@@ -272,10 +294,10 @@ void ColorWheel::paintEvent(QPaintEvent *)
         }
     }
     QPainter p(this);
-    p.fillRect(rect(), QColor(29, 31, 35));
+    p.fillRect(rect(), QColor(0xf2, 0xf2, 0xf2));
     p.setRenderHint(QPainter::Antialiasing);
     p.drawImage(circle, m_disc);
-    p.setPen(QPen(QColor("#626468"), 1));
+    p.setPen(QPen(QColor("#858585"), 1));
     p.setBrush(QColor(0, 0, 0, qRound((1 - m_value) * 255)));
     p.drawEllipse(circle);
     const qreal angle = m_hue * 2 * M_PI;

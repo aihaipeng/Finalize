@@ -319,8 +319,15 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
         const QRect rectanglePreview = annotationRect(overlay.m_anns.first()).adjusted(-30, -30, 30, 30);
         const QImage selectedRectangle = overlay.grab(rectanglePreview).toImage();
         overlay.m_selAnn = -1;
-        check(overlay.grab(rectanglePreview).toImage() != selectedRectangle,
-              "rectangle mosaic selection controls remain available");
+        check(overlay.grab(rectanglePreview).toImage() == selectedRectangle,
+              "brush mode hides rectangle controls that cannot be operated in that mode");
+        overlay.m_atool = ATool::None;
+        overlay.m_selAnn = 0;
+        const QImage editingRectangle = overlay.grab(rectanglePreview).toImage();
+        overlay.m_selAnn = -1;
+        check(overlay.grab(rectanglePreview).toImage() != editingRectangle,
+              "rectangle mosaic selection controls remain available during explicit editing");
+        overlay.m_atool = ATool::Mosaic;
         overlay.m_selAnn = -1;
         overlay.undoAnnotation();
         check(overlay.cropped().toImage() == beforeBrush, "one undo removes the entire brush stroke");
@@ -518,6 +525,38 @@ int CaptureOverlay::testTextAnnotation()
           "the editable font control accepts fractional point sizes without pinning the capture");
     overlay.beginTextEdit(origin + QPoint(20, 20));
     QApplication::processEvents();
+    {   // Editing shows one hairline frame: no blue dashed box, no native placeholder dashes.
+        overlay.hideToolBars();
+        QImage edit(overlay.size(), QImage::Format_ARGB32);
+        overlay.render(&edit);
+        overlay.showToolBars();
+        const QColor bg(30, 40, 50);
+        const QRect box = overlay.m_editor->mapRectToScene(overlay.m_editor->boundingRect())
+                              .toAlignedRect();
+        const QPoint corners[] = {box.topLeft(), box.topRight(), box.bottomLeft(), box.bottomRight()};
+        const auto nearCorner = [&](int x, int y) {
+            for (const QPoint &c : corners)
+                if (qAbs(x - c.x()) + qAbs(y - c.y()) <= 7) return true;   // Anchor dots (4.5px radius).
+            return false;
+        };
+        const QRect frameBand = box.adjusted(-1, -1, 1, 1);
+        int outside = 0, frame = 0, interior = 0;
+        const QRect scan = box.adjusted(-5, -5, 5, 5) & edit.rect();
+        for (int y = scan.top(); y <= scan.bottom(); ++y)
+            for (int x = scan.left(); x <= scan.right(); ++x) {
+                if (edit.pixelColor(x, y) == bg) continue;
+                if (y > box.bottom() && qAbs(x - box.center().x()) <= 2) continue;   // Rotation stalk.
+                const bool onFrame = nearCorner(x, y)
+                    || (frameBand.contains(x, y)
+                        && (qAbs(x - box.left()) <= 1 || qAbs(x - box.right()) <= 1
+                            || qAbs(y - box.top()) <= 1 || qAbs(y - box.bottom()) <= 1));
+                if (onFrame) ++frame;
+                else if (!box.contains(x, y)) ++outside;
+                else if (x > box.left() + 8) ++interior;  // Beyond the blinking cursor column.
+            }
+        check(outside == 0 && interior == 0 && frame > 40,
+              "text editing draws a single hairline frame with anchor dots and no extra dashed boxes");
+    }
     check(overlay.m_editor->font().pointSizeF() == 10.5 && overlay.m_editor->font().pixelSize() == -1
               && qAbs(QFontInfo(overlay.m_editor->font()).pixelSize() - 10.5 * overlay.logicalDpiY() / 72.0) <= 1,
           "font sizes use standard points and the screen DPI, not pixels mislabeled as points");
@@ -554,13 +593,11 @@ int CaptureOverlay::testTextAnnotation()
     QComboBox *fontFamily = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("annotationFont"));
     check(fontFamily && fontFamily->focusPolicy() == Qt::NoFocus,
           "the text options include a font-family selector without stealing input focus");
-    const QImage fontIcon = fontFamily->grab().toImage();
     fontFamily->setCurrentText(QStringLiteral("Arial"));
     check(fontFamily->currentText() == QStringLiteral("Arial") && fontFamily->findText(QStringLiteral("Arial")) >= 0
-              && dynamic_cast<FontComboBox *>(fontFamily) && fontFamily->width() == 40
-              && fontFamily->view()->minimumWidth() >= 200
-              && fontFamily->grab().toImage() == fontIcon && fontFamily->toolTip().contains(QStringLiteral("Arial")),
-          "the closed font selector stays icon-only while its popup and tooltip retain the selected family");
+              && fontFamily->width() == 140 && fontFamily->view()->minimumWidth() >= 200
+              && fontFamily->toolTip().contains(QStringLiteral("Arial")),
+          "the font selector names the selected family in its closed state and tooltip");
     fontEdit = overlay.m_sizeInput->findChild<QLineEdit *>();
     fontEdit->setFocus();
     fontEdit->setText(QStringLiteral("12"));
@@ -792,16 +829,16 @@ int CaptureOverlay::testTextAnnotation()
                                                         qRound(circle.center().y() * wheelDpr));
     const QColor rimPixel = renderedWheel.pixelColor(qRound((circle.right() - 6) * wheelDpr),
                                                      qRound(circle.center().y() * wheelDpr));
-    if (renderedWheel.pixelColor(0, 0) != QColor(29, 31, 35)
+    if (renderedWheel.pixelColor(0, 0) != QColor(0xf2, 0xf2, 0xf2)
         || centerPixel.red() < 250 || centerPixel.green() < 250 || centerPixel.blue() < 250
         || rimPixel.red() < 250 || rimPixel.green() >= 32 || rimPixel.blue() >= 32)
         std::fprintf(stderr, "wheel pixels corner=%s center=%s rim=%s dpr=%.2f\n",
                      qPrintable(renderedWheel.pixelColor(0, 0).name()), qPrintable(centerPixel.name()),
                      qPrintable(rimPixel.name()), double(wheelDpr));
-    check(renderedWheel.pixelColor(0, 0) == QColor(29, 31, 35)
+    check(renderedWheel.pixelColor(0, 0) == QColor(0xf2, 0xf2, 0xf2)
               && centerPixel.red() >= 250 && centerPixel.green() >= 250 && centerPixel.blue() >= 250
               && rimPixel.red() >= 250 && rimPixel.green() < 32 && rimPixel.blue() < 32,
-          "the rendered wheel has a neutral center, a red rim, and dark corners at the active DPI");
+          "the rendered wheel has a neutral center, a red rim, and light corners at the active DPI");
     for (int i = 0; i < previousColors.size(); ++i)
         check(overlay.m_anns[i].color == previousColors[i],
               "palette changes leave earlier text, arrows, and marker strokes unchanged");

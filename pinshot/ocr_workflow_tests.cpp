@@ -245,11 +245,11 @@ int CaptureOverlay::testOcr(const QString &previewPath)
         const double first=luminance(a),second=luminance(b);
         return (qMax(first,second)+0.05)/(qMin(first,second)+0.05);
     };
-    check(contrast(QColor("#edf0f5"),QColor("#17191d"))>=4.5
-              && contrast(QColor("#aeb7c4"),QColor("#25282e"))>=4.5
-              && contrast(QColor("#edf0f5"),QColor("#304d75"))>=4.5
-              && contrast(QColor("#687384"),QColor("#25282e"))>=3
-              && contrast(QColor("#8db9ff"),QColor("#25282e"))>=3,
+    check(contrast(QColor("#323232"),QColor("#fdfdfd"))>=4.5
+              && contrast(QColor("#5b5b5b"),QColor("#ffffff"))>=4.5
+              && contrast(QColor("#323232"),QColor("#a3d6ff"))>=4.5
+              && contrast(QColor("#858585"),QColor("#ffffff"))>=3
+              && contrast(QColor("#2080f0"),QColor("#ffffff"))>=3,
           "OCR text, metadata, accent buttons, control outlines and focus cues meet their contrast budgets");
     const QList<QWidget *> tabOrder{dialog->findChild<QToolButton *>(QStringLiteral("ocrPin")),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrMinimize")),dialog->findChild<QToolButton *>(QStringLiteral("ocrMaximize")),

@@ -51,7 +51,7 @@ void PinWindow::paintEvent(QPaintEvent *)
     QPainter p(this);
     p.drawPixmap(0, 0, m_pix.scaled(size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
     if (m_borderOn) {                             // Highlight border, toggled through the context menu.
-        p.setPen(QPen(QColor("#1e90ff"), 2));
+        p.setPen(QPen(QColor("#2080f0"), 2));
         p.drawRect(rect().adjusted(1, 1, -1, -1));
     } else {
         p.setPen(QPen(QColor(0, 0, 0, 90), 1));

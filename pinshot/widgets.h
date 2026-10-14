@@ -23,24 +23,14 @@
 
 enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, Pen, Marker, Text,
                   Number, Mosaic, Eraser, Undo, Redo, ArrowBoth, ArrowLine, ArrowHollow, Palette, Bold, Italic,
-                  Minimize, Maximize, Restore, Refresh };
-
-void buildIconPath(QPainterPath &path, Icon icon);
+                  Minimize, Maximize, Restore, Refresh, ArrowHollowBoth, ArrowCurve, LineDashDense, LineDashSparse };
 
 QIcon makeIcon(Icon icon);
 
 QToolButton *iconButton(Icon icon, const QString &tip);
 
-// The closed font selector shows only its icon; the popup retains readable family names.
-class FontComboBox : public QComboBox
-{
-public:
-    FontComboBox();
-protected:
-    void paintEvent(QPaintEvent *) override;
-private:
-    const QIcon m_icon;
-};
+// 1px vertical divider between toolbar groups, styled by the bar stylesheet.
+QWidget *barSeparator();
 
 // ---------- Compact hue/saturation wheel; brightness is controlled by a slider. ----------
 class ColorWheel : public QWidget

@@ -62,7 +62,7 @@ OcrImageView::OcrImageView(const QImage &image, QWidget *parent) : QGraphicsView
     scene->setSceneRect(QRectF(QPointF(), native.size()));
     setDragMode(QGraphicsView::ScrollHandDrag);
     setRenderHint(QPainter::SmoothPixmapTransform);
-    setBackgroundBrush(QColor(23,25,29));
+    setBackgroundBrush(QColor(0xfd,0xfd,0xfd));
     setAccessibleName(QStringLiteral("截图对照：滚轮缩放，拖动查看"));
 }
 
@@ -97,11 +97,11 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect)
     QFont interfaceFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
     interfaceFont.setPointSizeF(qMax(10.5,interfaceFont.pointSizeF()));
     setFont(interfaceFont);
-    const QString surface = QStringLiteral("#1d1f23"), panel = QStringLiteral("#25282e"),
-                  canvas = QStringLiteral("#17191d"), foreground = QStringLiteral("#edf0f5"),
-                  muted = QStringLiteral("#aeb7c4"), outline = QStringLiteral("#687384"),
-                  accent = QStringLiteral("#8db9ff"), selected = QStringLiteral("#304d75"),
-                  error = QStringLiteral("#b53646");
+    const QString surface = QStringLiteral("#f2f2f2"), panel = QStringLiteral("#ffffff"),
+                  canvas = QStringLiteral("#fdfdfd"), foreground = QStringLiteral("#323232"),
+                  muted = QStringLiteral("#5b5b5b"), outline = QStringLiteral("#858585"),
+                  accent = QStringLiteral("#2080f0"), selected = QStringLiteral("#a3d6ff"),
+                  error = QStringLiteral("#e81123");
     setStyleSheet(QStringLiteral(
         "QDialog{background:%1;color:%4;border:1px solid %2;}"
         "QLabel{color:%5;background:transparent;} QLabel#ocrTitle{color:%4;}"

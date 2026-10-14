@@ -51,7 +51,7 @@ bool PixelInspector::setSample(const ScreenFrame &frame, const QPoint &globalPix
         mask.addRect(QRectF(origin, m_patch.size()));
         mask.addRect(selectionPixels);
         p.fillPath(mask, QColor(0, 0, 0, 120));
-        p.setPen(QPen(QColor("#1e90ff"), 1));
+        p.setPen(QPen(QColor("#2080f0"), 1));
         p.drawRect(selectionPixels.adjusted(0, 0, -1, -1));
     }
     update();
