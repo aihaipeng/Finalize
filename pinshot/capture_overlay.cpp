@@ -305,8 +305,8 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
         stopItemDrag();
         if (m_live) { m_live = false; commitAnnotation(); }
         else if (wasEditing) return;
-        else if (m_atool != ATool::None) setToolNone();
         else if (m_selAnn >= 0) { m_selAnn = -1; updateToolOptions(); update(); }
+        else if (m_atool != ATool::None) return;   // An armed tool stays; reclicking its button disarms it.
         else if (m_mode == Adjusting) { resetSelection(); } else { close(); }
         return;
     }
@@ -508,11 +508,12 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
 void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
 {
     if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {
-        // A drag on the first press lays the first segment; otherwise vertices come from clicks.
+        // A drag on the first press draws one arrow; otherwise vertices come from clicks.
         if (m_ann.stroke.size() == 2
             && (e->pos() - m_ann.stroke.first().toPoint()).manhattanLength() >= QApplication::startDragDistance()) {
-            m_ann.stroke.last() = e->pos();
-            m_ann.stroke << e->pos();
+            m_ann.stroke << m_ann.stroke.last();   // Keep the dragged end; commit drops the rubber band.
+            m_live = false;
+            commitAnnotation();
         }
         return;
     }
@@ -600,11 +601,7 @@ void CaptureOverlay::closeEvent(QCloseEvent *e)
 void CaptureOverlay::mouseDoubleClickEvent(QMouseEvent *e)
 {
     if (editorActive()) return;                  // A text double-click never pins the capture.
-    if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {   // Double-click ends a polyline.
-        m_live = false;
-        commitAnnotation();
-        return;
-    }
+    if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) return;   // Its first press already placed the vertex.
     if (m_mode == Adjusting && (m_atool == ATool::None || m_atool == ATool::Text)) {
         const int hit = annotationAt(e->pos());  // Double-click re-opens a text annotation.
         if (hit >= 0 && m_anns[hit].tool == ATool::Text) {
@@ -683,6 +680,7 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
     }
     switch (e->key()) {
     case Qt::Key_Escape:
+        if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) break;   // Only a right click ends it.
         if (m_live) { m_live = false; endAnnotationDrag(); }
         else if (editorActive()) commitTextEdit();
         else if (m_atool != ATool::None) setToolNone();

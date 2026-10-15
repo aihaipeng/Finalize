@@ -665,37 +665,98 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     check(overlay.m_selAnn >= 0 && overlay.m_anns[overlay.m_selAnn].tool == ATool::Arrow
               && overlay.m_anns[overlay.m_selAnn].lineStyle == 1,
           "curve arrows remain selectable along their path");
-    // Polyline: press starts, each click adds a vertex, the cursor drags a rubber band, double-click ends.
+    // Straight arrows by clicks: A, then B, each click turns the end into a bend; a right click ends
+    // at the last clicked point, dropping the rubber band. Esc and double-click do not end it.
     overlay.selectTool(ATool::Arrow);
-    overlay.pickArrowLineStyle(2);
+    overlay.pickArrowLineStyle(0);
+    check(overlay.m_toolOptions->findChildren<QComboBox *>().size() == 2
+              && overlay.m_toolOptions->findChildren<QComboBox *>().last()->count() == 2,
+          "the line style offers straight and curve only");
+    auto rightAt = [&overlay](const QPoint &at) {
+        QMouseEvent right(QEvent::MouseButtonPress, at, overlay.mapToGlobal(at),
+                          Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &right);
+    };
     const QPoint p1 = annOrigin + QPoint(10, 70);
+    const int beforeClicks = overlay.m_anns.size();
     mouse(QEvent::MouseButtonPress, p1);
     mouse(QEvent::MouseButtonRelease, p1);
     mouse(QEvent::MouseMove, p1 + QPoint(40, 0));
     check(overlay.m_live && overlay.m_ann.stroke.size() == 2 && overlay.m_ann.stroke.last() == QPointF(p1 + QPoint(40, 0)),
-          "polyline arrows stay live after the first click and follow the cursor");
+          "a first click starts a straight arrow that follows the cursor");
     mouse(QEvent::MouseButtonPress, p1 + QPoint(40, 0));
     mouse(QEvent::MouseButtonRelease, p1 + QPoint(40, 0));
-    mouse(QEvent::MouseMove, p1 + QPoint(40, -30));
     {
-        QMouseEvent dbl(QEvent::MouseButtonDblClick, p1 + QPoint(40, -30), overlay.mapToGlobal(p1 + QPoint(40, -30)),
+        QMouseEvent dbl(QEvent::MouseButtonDblClick, p1 + QPoint(40, 0), overlay.mapToGlobal(p1 + QPoint(40, 0)),
                         Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(&overlay, &dbl);
     }
-    check(!overlay.m_live && overlay.m_anns.last().lineStyle == 2 && overlay.m_anns.last().stroke.size() == 3
-              && overlay.m_anns.last().stroke[1] == QPointF(p1 + QPoint(40, 0)),
-          "clicks add polyline vertices and a double-click commits them");
-    mouse(QEvent::MouseButtonPress, p1);
-    mouse(QEvent::MouseButtonRelease, p1);
-    mouse(QEvent::MouseMove, p1 + QPoint(30, 10));
-    {
-        QMouseEvent right(QEvent::MouseButtonPress, p1 + QPoint(30, 10), overlay.mapToGlobal(p1 + QPoint(30, 10)),
-                          Qt::RightButton, Qt::RightButton, Qt::NoModifier);
-        QApplication::sendEvent(&overlay, &right);
-    }
-    check(!overlay.m_live && overlay.m_anns.last().stroke.size() == 2,
-          "a right click ends a polyline at the current point");
-    overlay.pickArrowLineStyle(0);
+    QKeyEvent escLive(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(&overlay, &escLive);
+    mouse(QEvent::MouseMove, p1 + QPoint(40, -30));
+    check(overlay.m_live && overlay.m_ann.stroke.size() == 3 && overlay.m_atool == ATool::Arrow,
+          "B becomes a bend; double-click and Esc keep the arrow going");
+    const QColor liveColor = overlay.m_ann.color;
+    overlay.pickToolColor(QColor("#3f48cc"));
+    check(overlay.m_ann.color == liveColor, "a color pick mid-draw leaves the live arrow alone");
+    mouse(QEvent::MouseButtonPress, p1 + QPoint(70, -30));
+    mouse(QEvent::MouseButtonRelease, p1 + QPoint(70, -30));
+    mouse(QEvent::MouseMove, p1 + QPoint(90, 10));
+    rightAt(p1 + QPoint(90, 10));
+    check(!overlay.m_live && overlay.m_anns.size() == beforeClicks + 1 && overlay.m_anns.last().lineStyle == 2
+              && overlay.m_anns.last().stroke
+                     == QPolygonF({QPointF(p1), QPointF(p1 + QPoint(40, 0)), QPointF(p1 + QPoint(70, -30))})
+              && overlay.m_anns.last().b == p1 + QPoint(70, -30) && overlay.m_atool == ATool::Arrow
+              && overlay.m_selAnn == overlay.m_anns.size() - 1,
+          "a right click ends at the last clicked point and keeps the tool");
+    check(overlay.m_acolor == liveColor && overlay.m_colorBoard->currentColor() == liveColor,
+          "the mid-draw pick reverts with the commit");
+    const QColor olderColor = overlay.m_anns[beforeClicks - 1].color;
+    overlay.pickToolColor(QColor("#ff7f27"));
+    check(overlay.m_anns.last().color == QColor("#ff7f27") && overlay.m_anns[beforeClicks - 1].color == olderColor,
+          "a pick after drawing recolors only the latest arrow");
+    // The selection spans only 90px vertically; keep these clicks inside it.
+    mouse(QEvent::MouseButtonPress, p1 + QPoint(0, -50));
+    mouse(QEvent::MouseButtonRelease, p1 + QPoint(0, -50));
+    mouse(QEvent::MouseButtonPress, p1 + QPoint(50, -50));
+    mouse(QEvent::MouseButtonRelease, p1 + QPoint(50, -50));
+    mouse(QEvent::MouseMove, p1 + QPoint(60, -40));
+    rightAt(p1 + QPoint(60, -40));
+    check(overlay.m_anns.size() == beforeClicks + 2 && overlay.m_anns.last().lineStyle == 0
+              && overlay.m_anns.last().stroke.isEmpty() && overlay.m_anns.last().a == p1 + QPoint(0, -50)
+              && overlay.m_anns.last().b == p1 + QPoint(50, -50) && overlay.m_anns.last().color == QColor("#ff7f27"),
+          "A then B is a plain straight arrow in the new color");
+    mouse(QEvent::MouseButtonPress, p1 + QPoint(0, -60));
+    mouse(QEvent::MouseButtonRelease, p1 + QPoint(0, -60));
+    mouse(QEvent::MouseMove, p1 + QPoint(40, -55));
+    rightAt(p1 + QPoint(40, -55));
+    check(!overlay.m_live && overlay.m_anns.size() == beforeClicks + 2,
+          "a right click right after A draws nothing");
+    // Ending then right-clicking twice: the first deselects, later ones keep the tool and capture;
+    // a pick afterwards only changes the current color for the next arrow.
+    mouse(QEvent::MouseButtonPress, p1 + QPoint(0, -60));
+    mouse(QEvent::MouseButtonRelease, p1 + QPoint(0, -60));
+    mouse(QEvent::MouseButtonPress, p1 + QPoint(40, -60));
+    mouse(QEvent::MouseButtonRelease, p1 + QPoint(40, -60));
+    rightAt(p1 + QPoint(40, -60));
+    const int ended = overlay.m_anns.size() - 1;
+    check(overlay.m_selAnn == ended, "the ended arrow is selected");
+    rightAt(p1 + QPoint(40, -60));
+    check(overlay.m_selAnn == -1 && overlay.m_atool == ATool::Arrow, "the first right click only deselects");
+    rightAt(p1 + QPoint(40, -60));
+    check(overlay.m_selAnn == -1 && overlay.m_atool == ATool::Arrow && overlay.isVisible(),
+          "further right clicks keep the tool and the capture");
+    const QColor endedColor = overlay.m_anns[ended].color;
+    overlay.pickToolColor(QColor("#a349a4"));
+    check(overlay.m_anns[ended].color == endedColor && overlay.m_acolor == QColor("#a349a4"),
+          "a pick after deselecting leaves drawn arrows alone");
+    mouse(QEvent::MouseButtonPress, p1 + QPoint(0, -70));
+    mouse(QEvent::MouseButtonRelease, p1 + QPoint(0, -70));
+    mouse(QEvent::MouseButtonPress, p1 + QPoint(40, -70));
+    mouse(QEvent::MouseButtonRelease, p1 + QPoint(40, -70));
+    rightAt(p1 + QPoint(40, -70));
+    check(overlay.m_anns.size() == ended + 2 && overlay.m_anns.last().color == QColor("#a349a4"),
+          "the next arrow starts with the new color");
     // Rendering parity: hollow head interior, absolute-unit dashes, antialiased edges.
     {
         const QColor green(0x34, 0xc7, 0x59);

@@ -1250,8 +1250,10 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
         m_ann.dashed = m_arrowDashed;
         m_ann.a = m_ann.b = pos;
     }
-    if (m_atool == ATool::Arrow && m_arrowLineStyle == 2)
-        m_ann.stroke << pos << pos;              // Polyline: fixed vertex plus a rubber-band end.
+    if (m_atool == ATool::Arrow && m_arrowLineStyle == 0) {
+        m_ann.lineStyle = 2;                     // Straight arrows build clicked vertices; two collapse to a/b.
+        m_ann.stroke << pos << pos;              // Fixed vertex plus a rubber-band end.
+    }
     else if (m_atool == ATool::Pen || (m_atool == ATool::Marker && !m_ann.fill) || m_ann.mosaicBrush
         || (m_atool == ATool::Arrow && m_arrowLineStyle == 1))
         m_ann.stroke << pos;                     // Curve arrows sample the drag like the pen.
@@ -1264,8 +1266,15 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
 void CaptureOverlay::updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers mods)
 {
     if (m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {   // Rubber band to the cursor.
-        m_ann.stroke.last() = pos;
-        m_ann.b = pos;
+        const QPointF from = m_ann.stroke[m_ann.stroke.size() - 2];
+        QPointF b = pos;
+        const QLineF line(from, b);
+        if (mods & Qt::ShiftModifier && line.length() > 1) {   // Snap the segment to 45-degree steps.
+            const qreal angle = qRound(qAtan2(-(b.y() - from.y()), b.x() - from.x()) / (M_PI / 4)) * (M_PI / 4);
+            b = QPointF(from.x() + qCos(angle) * line.length(), from.y() - qSin(angle) * line.length());
+        }
+        m_ann.stroke.last() = b;
+        m_ann.b = b.toPoint();
         return;
     }
     if (m_ann.mosaicBrush
@@ -1282,21 +1291,6 @@ void CaptureOverlay::updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers m
         if ((pos - m_ann.stroke.last().toPoint()).manhattanLength() >= 2)
             m_ann.stroke << pos;                 // Decimate near-duplicate samples.
         break;
-    case ATool::Arrow: {
-        QPointF b = pos;
-        if (mods & Qt::ShiftModifier) {          // Snap the direction to 45-degree steps.
-            const QLineF line(QPointF(m_ann.a), QPointF(pos));
-            if (line.length() > 1) {
-                const qreal angle = qRound(qAtan2(-(pos.y() - m_ann.a.y()),
-                                                    pos.x() - m_ann.a.x())
-                                           / (M_PI / 4)) * (M_PI / 4);
-                b = QPointF(m_ann.a.x() + qCos(angle) * line.length(),
-                            m_ann.a.y() - qSin(angle) * line.length());
-            }
-        }
-        m_ann.b = b.toPoint();
-        break;
-    }
     default: {
         QPoint end = pos;
         if (mods & Qt::ShiftModifier) {          // Shift keeps squares and circles true.
@@ -1313,9 +1307,21 @@ void CaptureOverlay::updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers m
 
 void CaptureOverlay::commitAnnotation()
 {
-    if (m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2)   // Drop a rubber band resting on the last vertex.
-        while (m_ann.stroke.size() > 2 && QLineF(m_ann.stroke.last(), m_ann.stroke[m_ann.stroke.size() - 2]).length() < 1)
-            m_ann.stroke.removeLast();
+    if (m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {   // End at the last clicked vertex.
+        if (!m_ann.stroke.isEmpty()) m_ann.stroke.removeLast();   // The rubber band.
+        QPolygonF vertices;
+        for (const QPointF &p : std::as_const(m_ann.stroke))
+            if (vertices.isEmpty() || QLineF(vertices.last(), p).length() >= 1) vertices << p;
+        m_ann.stroke = vertices;
+        if (!vertices.isEmpty()) {
+            m_ann.a = vertices.first().toPoint();
+            m_ann.b = vertices.last().toPoint();
+        }
+        if (vertices.size() <= 2) {              // A single segment is a plain straight arrow.
+            m_ann.lineStyle = 0;
+            m_ann.stroke.clear();
+        }
+    }
     qreal pathLength = 0;
     for (int i = 1; i < m_ann.stroke.size(); ++i) pathLength += QLineF(m_ann.stroke[i - 1], m_ann.stroke[i]).length();
     const bool meaningful = m_ann.mosaicBrush ? !m_ann.stroke.isEmpty()
@@ -1330,6 +1336,10 @@ void CaptureOverlay::commitAnnotation()
         m_anns.append(m_ann);
         normalizeNumbers();
         m_selAnn = m_ann.mosaicBrush ? -1 : m_anns.size() - 1;  // Completed mosaic strokes are not re-editable.
+    }
+    if (m_ann.color != m_acolor) {               // A pick made mid-draw does not outlive the drawing.
+        m_acolor = m_ann.color;
+        if (m_colorBoard) m_colorBoard->setCurrentColor(m_acolor);
     }
     endAnnotationDrag();
 }
@@ -1353,6 +1363,7 @@ void CaptureOverlay::endAnnotationDrag()                         // Restore what
 
 void CaptureOverlay::setToolNone()
 {
+    if (m_live) { m_live = false; commitAnnotation(); }   // A clicked arrow can still be open.
     stopItemDrag();
     commitTextEdit();
     m_atool = ATool::None;
@@ -1365,6 +1376,7 @@ void CaptureOverlay::setToolNone()
 
 void CaptureOverlay::selectTool(ATool tool)                      // Shared by toolbar toggles and keyboard.
 {
+    if (m_live) { m_live = false; commitAnnotation(); }
     stopItemDrag();
     commitTextEdit();
     m_atool = tool;
@@ -1398,8 +1410,10 @@ void CaptureOverlay::pickToolColor(const QColor &color, bool undoable)
         m_editColor = color;
         applyEditorFont();
     } else if (m_live) {
-        m_ann.color = color;
-        update();
+        if (!(m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2)) {   // A clicked arrow keeps its start color.
+            m_ann.color = color;
+            update();
+        }
     } else if (m_selAnn >= 0 && m_selAnn < m_anns.size() && m_anns[m_selAnn].tool != ATool::Mosaic
                && m_anns[m_selAnn].color != color) {
         if (undoable) pushUndo();
@@ -1430,7 +1444,6 @@ void CaptureOverlay::showColorPalette()
             m_acolor = oldColor;
             if (m_colorBoard) m_colorBoard->setCurrentColor(oldColor);
             if (editorActive()) { m_editColor = oldColor; applyEditorFont(); }
-            else if (m_live) m_ann.color = oldColor;
         }
         update();
         if (!isVisible()) return;
@@ -1462,12 +1475,13 @@ void CaptureOverlay::pickArrowStyle(int style)
 
 void CaptureOverlay::pickArrowLineStyle(int style)
 {
-    m_arrowLineStyle = qBound(0, style, 2);
+    m_arrowLineStyle = qBound(0, style, 1);
     if (m_selAnn >= 0 && m_selAnn < m_anns.size()
         && m_anns[m_selAnn].tool == ATool::Arrow) {
         pushUndo();
         Annotation &ann = m_anns[m_selAnn];
-        ann.lineStyle = m_arrowLineStyle;
+        if (m_arrowLineStyle == 1 || ann.lineStyle != 2)   // Clicked vertices already are straight segments.
+            ann.lineStyle = m_arrowLineStyle;
         if (ann.lineStyle >= 1 && ann.stroke.size() < 2)   // Straight arrows gain a two-point path.
             ann.stroke = QPolygonF{QPointF(ann.a), QPointF(ann.b)};
         update();
@@ -1692,8 +1706,6 @@ void CaptureOverlay::updateToolOptions()
             sample.b = QPoint(34, 8);
             if (line == 1)
                 sample.stroke << QPointF(2, 12) << QPointF(12, 4) << QPointF(22, 12) << QPointF(34, 5);
-            else if (line == 2)
-                sample.stroke << QPointF(2, 12) << QPointF(12, 4) << QPointF(22, 12) << QPointF(34, 4);
             QPainter painter(&pm);
             drawAnnotation(painter, sample, QImage());
             return QIcon(pm);
@@ -1727,10 +1739,10 @@ void CaptureOverlay::updateToolOptions()
                  [this](int k) { pickArrowStyle(k); });
         const bool editing = !m_live && m_selAnn >= 0 && m_selAnn < m_anns.size()
                              && m_anns[m_selAnn].tool == ATool::Arrow;
-        addCombo(lay, m_arrowLineStyle, 3,             // Path only; dashing is its own toggle.
+        addCombo(lay, m_arrowLineStyle, 2,             // Path only; dashing is its own toggle.
                  [&](int k) { return glyph(4, k); },
                  [](int k) {
-                     const char *const names[] = {"直线", "曲线", "折线（单击加拐点，双击或右键结束）"};
+                     const char *const names[] = {"直线", "曲线"};
                      return QString::fromUtf8(names[k]);
                  },
                  [this](int k) { pickArrowLineStyle(k); });

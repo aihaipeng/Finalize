@@ -93,7 +93,7 @@ private:
         qreal font = 15;                             // Text / Number point size (1/72 inch).
         QString family = QStringLiteral("Microsoft YaHei UI");
         int arrowStyle = 0;                          // Heads only: 0 single, 1 single hollow, 2 double, 3 double hollow, 4 none.
-        int lineStyle = 0;                           // Shaft path: 0 straight, 1 curve, 2 polyline (clicked vertices).
+        int lineStyle = 0;                           // Shaft path: 0 straight, 1 curve, 2 clicked vertices (straight tool, 3+ points).
         bool dashed = false;                         // Arrow shaft dashing, independent of the path.
         int numberStyle = 0;                         // 0 filled disc, 1 ring, 2 bare label.
         int numberFormat = 0;                        // 0 "1 2 3", 1 "I II III", 2 "A B C", 3 "a b c", 4 Chinese numerals.
@@ -310,7 +310,7 @@ private:
     QPointer<QColorDialog> m_colorDialog;
     bool m_shapeEllipse = false;                     // Current sub-shape of the shape button.
     int m_arrowStyle = 0;                            // Head shape, see Annotation::arrowStyle.
-    int m_arrowLineStyle = 0;                        // Shaft path, see Annotation::lineStyle.
+    int m_arrowLineStyle = 0;                        // Picked shaft path: 0 straight, 1 curve.
     bool m_arrowDashed = false;
     int m_numberStyle = 0, m_numberFormat = 0;       // See Annotation::numberStyle / numberFormat.
     bool m_markerFill = false;                       // Marker drags a translucent rectangle.
