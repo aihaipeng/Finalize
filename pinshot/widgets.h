@@ -22,8 +22,7 @@
 // in code so no resource files ship and any icon stays crisp at every scale.
 
 enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, Pen, Marker, Text,
-                  Number, Mosaic, Eraser, Undo, Redo, ArrowBoth, ArrowLine, ArrowHollow, Palette, Bold, Italic,
-                  Minimize, Maximize, Restore, Refresh, ArrowHollowBoth, ArrowCurve, LineDashDense, LineDashSparse,
+                  Number, Mosaic, Eraser, Undo, Redo, Bold, Italic, Minimize, Maximize, Restore, Refresh,
                   Fill, Dashed };
 
 QIcon makeIcon(Icon icon);
@@ -33,32 +32,30 @@ QToolButton *iconButton(Icon icon, const QString &tip);
 // 1px vertical divider between toolbar groups, styled by the bar stylesheet.
 QWidget *barSeparator();
 
-// ---------- Compact hue/saturation wheel; brightness is controlled by a slider. ----------
-class ColorWheel : public QWidget
+// ---------- Color strip: current-color button plus a 2x10 preset grid. ----------
+class ColorBoard : public QWidget
 {
     Q_OBJECT
 public:
-    explicit ColorWheel(const QColor &color, QWidget *parent = nullptr);
-    QRectF wheelRect() const;
-    QColor currentColor() const;
-    QColor brightColor() const;
-    int brightness() const;
+    explicit ColorBoard(const QColor &current, QWidget *parent = nullptr);
     void setCurrentColor(const QColor &color);
-    void setBrightness(int value);
+    QColor currentColor() const { return m_current; }
+    QRect currentRect() const { return QRect(1, 1, 24, 24); }
+    static QRect swatchRect(int index);        // Normal 11x11 cell; hover grows it by 1px.
+    static const QColor &preset(int index);
+    static constexpr int PresetCount = 20;
     static int testRendering();
 signals:
-    void colorChanged(const QColor &color);
+    void presetPicked(const QColor &color);
+    void customRequested();
 protected:
     void paintEvent(QPaintEvent *) override;
-    void mousePressEvent(QMouseEvent *e) override;
+    void mousePressEvent(QMouseEvent *e) override { e->accept(); }   // Keep presses off the canvas below.
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
-    void keyPressEvent(QKeyEvent *e) override;
+    void leaveEvent(QEvent *) override;
 private:
-    void selectAt(const QPoint &point);
-    void updateColor();
-    QImage m_disc;
-    QColor m_color;
-    qreal m_hue = 0, m_saturation = 1, m_value = 1;
-    bool m_dragging = false;
+    int swatchAt(const QPoint &pos) const;
+    QColor m_current;
+    int m_hover = -1;
 };

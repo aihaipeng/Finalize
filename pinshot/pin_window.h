@@ -16,9 +16,6 @@
 #include <qt_windows.h>
 
 // ---------- Pinned image window ----------
-class OcrDialog;
-OcrDialog *showOcr(const QImage &image, QWidget *source, const QRect &captureRect);
-
 class PinWindow : public QWidget
 {
 public:

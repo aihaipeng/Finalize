@@ -250,11 +250,14 @@ void LongCapture::buildUi()
         "QWidget{background:#f2f2f2;border:none;}"
         "QLabel{color:#323232;font-size:13px;padding:0 8px;}"
         "QToolButton{background:transparent;border:none;border-radius:0px;padding:4px;}"
-        "QToolButton:hover{background-color:#d4d4d4;}";
+        "QToolButton:hover{background-color:#d4d4d4;}"
+        "QWidget#longCaptureBar{border:1px solid #2080f0;}";   // Same 1px theme frame as the capture bars.
     m_bar = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    m_bar->setObjectName(QStringLiteral("longCaptureBar"));
+    m_bar->setAttribute(Qt::WA_StyledBackground);
     m_bar->setStyleSheet(barQss);
     auto *lay = new QHBoxLayout(m_bar);
-    lay->setContentsMargins(6, 0, 4, 0);
+    lay->setContentsMargins(6, 1, 4, 1);
     m_label = new QLabel;
     auto *save = iconButton(Icon::Save, QStringLiteral("保存到文件"));
     auto *copy = iconButton(Icon::Copy, QStringLiteral("复制到剪贴板"));
@@ -297,7 +300,7 @@ void LongCapture::buildUi()
     QApplication::processEvents();
     // Test capture exclusion; hide the preview during capture if unsupported.
     m_affinityOk = SetWindowDisplayAffinity(reinterpret_cast<HWND>(m_preview->winId()),
-                                            PINSHOT_WDA_EXCLUDEFROMCAPTURE);
+                                            WDA_EXCLUDEFROMCAPTURE);
 
     // Input-transparent 2 px blue border outside the selection; scrolling passes through.
     m_frame = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint

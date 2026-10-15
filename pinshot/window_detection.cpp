@@ -17,9 +17,6 @@
 #include <functional>
 #include <algorithm>
 
-// Qt's default Windows target hides this Vista+ declaration in the MinGW headers.
-extern "C" __declspec(dllimport) BOOL WINAPI QueryFullProcessImageNameW(HANDLE process, DWORD flags, LPWSTR path, PDWORD size);
-
 QVector<ScreenFrame> freezeScreens()
 {
     QVector<ScreenFrame> frames;

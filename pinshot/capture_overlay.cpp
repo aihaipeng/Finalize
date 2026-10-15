@@ -140,14 +140,15 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     m_shapeButton->setCheckable(true);
     m_shapeButton->setCursor(Qt::PointingHandCursor);
     connect(m_shapeButton, &QToolButton::clicked, this, [this] {
-        selectTool(m_shapeEllipse ? ATool::Ellipse : ATool::Rect);
+        const bool armed = m_atool == ATool::Rect || m_atool == ATool::Ellipse;
+        selectTool(armed ? ATool::None : m_shapeEllipse ? ATool::Ellipse : ATool::Rect);   // Reclick disarms.
         setCursor(Qt::CrossCursor);
         update();
     });
     m_toolBtn.fill(nullptr, int(ATool::Eraser) + 1);
     m_toolBtn[int(ATool::Rect)] = m_toolBtn[int(ATool::Ellipse)] = m_shapeButton;
     struct { ATool tool; Icon icon; const char *tip; } const tools[] = {
-        {ATool::Arrow, Icon::Arrow, "箭头"},
+        {ATool::Arrow, Icon::Arrow, "箭头 (A)"},
         {ATool::Pen, Icon::Pen, "画笔 (P)"},
         {ATool::Marker, Icon::Marker, "荧光笔 (H)"},
         {ATool::Text, Icon::Text, "文字 (T)"},
@@ -160,7 +161,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         button->setCheckable(true);
         const ATool tool = t.tool;
         connect(button, &QToolButton::clicked, this, [this, tool] {
-            selectTool(tool);
+            selectTool(tool == m_atool ? ATool::None : tool);   // Reclick disarms, like the shortcut key.
             update();
         });
         m_toolBtn[int(tool)] = button;

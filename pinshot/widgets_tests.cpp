@@ -13,33 +13,64 @@
 #include <QtMath>
 #include <qt_windows.h>
 #include <cstdio>
+#include <cstdlib>
 
-int ColorWheel::testRendering()
+int ColorBoard::testRendering()
 {
-    ColorWheel wheel(Qt::cyan);
-    wheel.show();
+    auto check = [](bool ok, const char *message) {
+        if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); }
+    };
+    ColorBoard board(QColor("#ed1c24"));
+    board.show();
     QApplication::processEvents();
-    const QImage image = wheel.grab().toImage();
-    const qreal dpr = image.devicePixelRatio();
-    const QRectF circle = wheel.wheelRect();
-    const QColor center = image.pixelColor(qRound(circle.center().x() * dpr), qRound(circle.center().y() * dpr));
-    const QColor rim = image.pixelColor(qRound((circle.right() - 6) * dpr), qRound(circle.center().y() * dpr));
-    if (image.width() != qRound(wheel.width() * dpr) || image.pixelColor(0, 0) != QColor(0xf2, 0xf2, 0xf2)
-        || center.red() < 250 || center.green() < 250 || center.blue() < 250
-        || rim.red() < 250 || rim.green() >= 32 || rim.blue() >= 32) {
-        std::fprintf(stderr, "FAIL: circular color rendering at DPR %.2f\n", double(dpr));
-        return 1;
+    check(board.currentRect() == QRect(1, 1, 24, 24) && board.focusPolicy() == Qt::NoFocus
+              && board.cursor().shape() == Qt::PointingHandCursor && board.accessibleName() == QStringLiteral("颜色"),
+          "current color square is 24x24 and the board never takes focus");
+    for (int i = 0; i < PresetCount; ++i) {
+        const QRect r = swatchRect(i);
+        check(r.size() == QSize(11, 11) && board.rect().contains(r.adjusted(-1, -1, 1, 1))
+                  && !r.intersects(board.currentRect()) && board.swatchAt(r.center()) == i,
+              "20 preset cells are 11x11, inside the board, and hit-test to their own index");
+        if (i % 10) check(r.left() - swatchRect(i - 1).right() == 3 && board.swatchAt(r.topLeft() - QPoint(1, 0)) == -1,
+                          "preset columns have a 2px gap that picks nothing");
     }
-    const QPointF point = circle.center();
-    for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
-        QMouseEvent event(type, point, wheel.mapToGlobal(point.toPoint()), Qt::LeftButton,
-                          type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
-        QApplication::sendEvent(&wheel, &event);
-    }
-    if (wheel.currentColor() != QColor(Qt::white)) {
-        std::fprintf(stderr, "FAIL: logical color-wheel hit testing at DPR %.2f\n", double(dpr));
-        return 1;
-    }
-    std::printf("PASS: circular color rendering and hit testing at DPR %.2f\n", double(dpr));
+    check(swatchRect(10).top() - swatchRect(0).bottom() == 3 && preset(0) == QColor("#000000")
+              && preset(3) == QColor("#ed1c24") && preset(10) == QColor("#ffffff") && preset(19) == QColor("#c8bfe7"),
+          "two rows of the expected preset colors");
+    auto click = [&board](const QPoint &at) {
+        for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+            QMouseEvent event(type, QPointF(at), QPointF(board.mapToGlobal(at)), Qt::LeftButton,
+                              type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(&board, &event);
+        }
+    };
+    QColor picked;
+    int custom = 0;
+    QObject::connect(&board, &ColorBoard::presetPicked, [&picked](const QColor &c) { picked = c; });
+    QObject::connect(&board, &ColorBoard::customRequested, [&custom] { ++custom; });
+    click(swatchRect(7).center());
+    check(picked == QColor("#00a2e8") && custom == 0, "a preset click emits its color");
+    picked = QColor();
+    click(board.currentRect().center());
+    check(custom == 1 && !picked.isValid(), "the current color square requests the full color dialog");
+    click(swatchRect(1).topRight() + QPoint(2, 0));
+    check(custom == 1 && !picked.isValid(), "clicking a gap does nothing");
+    const qreal dpr = board.devicePixelRatioF();
+    auto pixel = [&board, dpr](const QPoint &at) {
+        const QImage image = board.grab().toImage();
+        return image.pixelColor(qFloor((at.x() + 0.5) * dpr), qFloor((at.y() + 0.5) * dpr));
+    };
+    const QRect cell = swatchRect(4);
+    check(pixel(cell.topLeft() - QPoint(1, 1)) != QColor(0x40, 0x40, 0x40), "an idle cell does not draw the hover frame");
+    QMouseEvent hover(QEvent::MouseMove, QPointF(cell.center()), QPointF(board.mapToGlobal(cell.center())),
+                      Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&board, &hover);
+    check(pixel(cell.topLeft() - QPoint(1, 1)) == QColor(0x40, 0x40, 0x40),
+          "the hovered cell grows by 1px with a darker frame");
+    board.setCurrentColor(QColor("#3f48cc"));
+    check(board.currentColor() == QColor("#3f48cc") && pixel(QPoint(6, 6)) == QColor("#3f48cc")
+              && pixel(QPoint(1, 1)) == QColor(0x22, 0x22, 0x22),
+          "the current square repaints the new color inside a dark frame");
+    std::printf("PASS: color board geometry, hit testing, presets, custom request, and hover at DPR %.2f\n", double(dpr));
     return 0;
 }

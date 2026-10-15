@@ -365,11 +365,70 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     check(overlay.m_anns[0].pen == 4, "the wheel retunes the selected annotation");
     const QColor originalShapeColor = overlay.m_anns[0].color;
     const int beforeColorUndo = overlay.m_undoStack.size();
-    overlay.pickToolColor(ATool::Rect, QColor("#1c1c1e"));
-    check(overlay.m_anns[0].color == originalShapeColor
-              && overlay.m_undoStack.size() == beforeColorUndo
-              && overlay.m_colorShape == QColor("#1c1c1e"),
-          "color selection updates the tool default without recoloring a committed selection");
+    overlay.updateToolOptions();
+    check(overlay.m_colorBoard != nullptr, "a selected shape shows the color board");
+    auto clickBoard = [&overlay](const QPoint &at) {
+        for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+            QMouseEvent event(type, QPointF(at), QPointF(overlay.m_colorBoard->mapToGlobal(at)), Qt::LeftButton,
+                              type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(overlay.m_colorBoard, &event);
+        }
+        QApplication::processEvents();
+    };
+    clickBoard(ColorBoard::swatchRect(8).center());
+    check(overlay.m_anns[0].color == QColor("#3f48cc") && overlay.m_undoStack.size() == beforeColorUndo + 1
+              && overlay.m_acolor == QColor("#3f48cc") && overlay.m_colorBoard->currentColor() == QColor("#3f48cc"),
+          "a preset click recolors the selected annotation as one undo step");
+    overlay.undoAnnotation();
+    check(overlay.m_anns[0].color == originalShapeColor && overlay.m_acolor == QColor("#3f48cc")
+              && overlay.m_colorBoard && overlay.m_colorBoard->currentColor() == QColor("#3f48cc"),
+          "undo restores the object color while the current color stays");
+    overlay.m_selAnn = 0;
+    overlay.updateToolOptions();
+    const int beforeDialogUndo = overlay.m_undoStack.size();
+    clickBoard(overlay.m_colorBoard->currentRect().center());
+    QColorDialog *colorDialog = overlay.m_colorDialog;
+    check(colorDialog && colorDialog->isVisible() && colorDialog->isModal()
+              && colorDialog->windowTitle() == QStringLiteral("选择颜色")
+              && colorDialog->testOption(QColorDialog::ShowAlphaChannel)
+              && colorDialog->testOption(QColorDialog::DontUseNativeDialog)
+              && colorDialog->currentColor() == QColor("#3f48cc"),
+          "the current color square opens the standard color dialog with the current color");
+    const QRect available = colorDialog->screen()->availableGeometry();
+    {
+        const QPoint anchor = overlay.m_colorBoard->mapToGlobal(overlay.m_colorBoard->currentRect().topLeft());
+        const QPoint target = anchor + QPoint(191, -224);
+        const QPoint expected(qBound(available.left(), target.x(), available.right() + 1 - colorDialog->width()),
+                              qBound(available.top(), target.y(), available.bottom() + 1 - colorDialog->height()));
+        check(colorDialog->pos() == expected && available.contains(colorDialog->frameGeometry().topLeft()),
+              "the color dialog opens at a fixed offset from the current-color square, clamped to the screen");
+    }
+    colorDialog->setCurrentColor(QColor("#123abc"));
+    check(overlay.m_anns[0].color == QColor("#123abc") && overlay.m_colorBoard->currentColor() == QColor("#123abc")
+              && overlay.m_undoStack.size() == beforeDialogUndo,
+          "dialog color changes preview live on the selection without undo entries");
+    colorDialog->reject();
+    QApplication::processEvents();
+    check(!overlay.m_colorDialog && overlay.m_anns[0].color == originalShapeColor
+              && overlay.m_acolor == QColor("#3f48cc") && overlay.m_colorBoard->currentColor() == QColor("#3f48cc")
+              && overlay.m_undoStack.size() == beforeDialogUndo,
+          "cancel restores the previous colors with no undo entry");
+    clickBoard(overlay.m_colorBoard->currentRect().center());
+    colorDialog = overlay.m_colorDialog;
+    check(colorDialog != nullptr, "the color dialog reopens after cancel");
+    colorDialog->setCurrentColor(QColor("#20406080"));
+    colorDialog->setCurrentColor(QColor("#123abc"));
+    const QColor customBefore = QColorDialog::customColor(0);
+    colorDialog->accept();
+    QApplication::processEvents();
+    check(!overlay.m_colorDialog && overlay.m_anns[0].color == QColor("#123abc") && overlay.m_acolor == QColor("#123abc")
+              && overlay.m_colorBoard->currentColor() == QColor("#123abc")
+              && overlay.m_undoStack.size() == beforeDialogUndo + 1
+              && QColorDialog::customColor(0) == customBefore,
+          "OK commits the dialog color as one undo step without touching the custom colors");
+    overlay.undoAnnotation();
+    check(overlay.m_anns[0].color == originalShapeColor, "undo restores the color before the dialog");
+    overlay.m_selAnn = 0;
     QKeyEvent del(QEvent::KeyPress, Qt::Key_Delete, Qt::NoModifier);
     QApplication::sendEvent(&overlay, &del);
     check(overlay.m_anns.isEmpty(), "delete removes the selected annotation");
@@ -549,15 +608,19 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     overlay.setToolNone();
     overlay.selectTool(ATool::Rect);
     check(overlay.m_shapeButton->isChecked() && !overlay.m_shapeEllipse
-              && overlay.m_acolor == overlay.m_colorShape
               && overlay.m_toolOptions->isVisible(),
           "the merged shape button arms the rectangle with its option strip");
     overlay.selectTool(ATool::Ellipse);
     check(overlay.m_shapeEllipse && overlay.m_shapeButton->isChecked(),
           "arming the ellipse flips the shared button's sub-shape");
-    overlay.pickToolColor(ATool::Marker, QColor("#34c759"));
+    overlay.pickToolColor(QColor("#22b14c"));
+    for (ATool shared : {ATool::Marker, ATool::Arrow, ATool::Pen, ATool::Text, ATool::Number, ATool::Rect}) {
+        overlay.selectTool(shared);
+        check(overlay.m_acolor == QColor("#22b14c") && overlay.m_colorBoard
+                  && overlay.m_colorBoard->currentColor() == QColor("#22b14c"),
+              "the current color is shared by every colored tool");
+    }
     overlay.selectTool(ATool::Marker);
-    check(overlay.m_acolor == QColor("#34c759"), "each tool remembers its own color");
     overlay.selectTool(ATool::Arrow);
     overlay.pickArrowStyle(1);
     overlay.pickArrowLineStyle(0);
@@ -761,12 +824,15 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     check(overlay.m_anns.size() < beforeErase, "the eraser's reach tracks its thickness");
     overlay.m_anns.clear();
     overlay.m_selAnn = -1;
-    // Every tool exposes an editable size, and clicking it again keeps its options open.
+    // Every tool exposes an editable size; reclicking the armed tool disarms it, a third click re-arms.
     QVector<QImage> toolbarPreviews;
     for (ATool tool : {ATool::Rect, ATool::Ellipse, ATool::Arrow, ATool::Pen, ATool::Marker,
                        ATool::Text, ATool::Number, ATool::Mosaic, ATool::Eraser}) {
         overlay.selectTool(tool);
         overlay.m_toolBtn[int(tool)]->click();
+        check(overlay.m_atool == ATool::None && !overlay.m_toolBtn[int(tool)]->isChecked()
+                  && !overlay.m_toolOptions->isVisible(),
+              "reclicking the armed tool disarms it and hides its options");
         overlay.m_toolBtn[int(tool)]->click();
         check(overlay.m_atool == tool && overlay.m_toolOptions->isVisible()
                   && (tool == ATool::Mosaic ? overlay.m_mosaicStrengthLabel != nullptr
@@ -806,16 +872,16 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
             toolbarPreviews.append(bars);
         }
         const bool colored = tool != ATool::Mosaic && tool != ATool::Eraser;
-        const QList<QToolButton *> swatches = overlay.m_toolOptions->findChildren<QToolButton *>(QStringLiteral("presetColor"));
-        check((overlay.m_colorButton != nullptr) == colored && swatches.size() == (colored ? 8 : 0),
-              "colored tools expose eight common colors and a palette button, not a dense color grid");
-        if (colored)
-            check(overlay.m_colorButton->text().isEmpty() && !overlay.m_colorButton->icon().isNull()
-                      && overlay.m_colorButton->toolButtonStyle() == Qt::ToolButtonIconOnly
-                      && overlay.m_colorButton->styleSheet().isEmpty(),
-                  "every palette button uses a white icon without a text label or custom border");
-        for (QToolButton *swatch : swatches)
-            check(swatch->y() == swatches.first()->y(), "common color presets stay in one spacious row");
+        check((overlay.m_colorBoard != nullptr) == colored
+                  && overlay.m_toolOptions->findChildren<ColorBoard *>().size() == (colored ? 1 : 0),
+              "colored tools end with one color board; mosaic and eraser have none");
+        if (colored) {
+            const QList<QWidget *> row = overlay.m_toolOptions->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly);
+            const int at = row.indexOf(overlay.m_colorBoard);
+            check(at > 0 && row.at(at - 1)->objectName() == QStringLiteral("barSeparator")
+                      && overlay.m_colorBoard->focusPolicy() == Qt::NoFocus,
+                  "the color board follows a separator and never takes focus");
+        }
     }
     if (!toolbarPreviews.isEmpty()) {
         int width = 0, height = 0;
@@ -828,13 +894,6 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         painter.end();
         check(sheet.save(previewPath + QStringLiteral(".toolbars.png")), "save toolbar visual regression sheet");
     }
-    check(parseAnnotationColor(QStringLiteral("rgb(0, 128,255)")) == QColor(0, 128, 255)
-              && parseAnnotationColor(QStringLiteral("#A1b2C3")) == QColor("#a1b2c3")
-              && !parseAnnotationColor(QStringLiteral("rgb(256,0,0)")).isValid()
-              && !parseAnnotationColor(QStringLiteral("rgb(-1,0,0)")).isValid()
-              && !parseAnnotationColor(QStringLiteral("#12xz56")).isValid()
-              && !parseAnnotationColor(QStringLiteral("#12345678")).isValid(),
-          "manual colors validate channel bounds and exactly six hexadecimal digits");
     overlay.selectTool(ATool::Pen);
     overlay.m_sizeButton->click();
     check(overlay.m_sizePopup && overlay.m_sizePopup->isVisible() && overlay.m_sizeSlider
@@ -857,7 +916,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     mouse(QEvent::MouseButtonPress, sizeStroke);
     overlay.tuneWidth(1, sizeStroke);
     mouse(QEvent::MouseMove, sizeStroke + QPoint(20, 10));
-    overlay.pickToolColor(ATool::Pen, QColor("#007aff"));
+    overlay.pickToolColor(QColor("#007aff"));
     check(overlay.m_tools->isVisible() && overlay.m_toolOptions->isVisible()
               && overlay.m_sizeButton->text().toDouble() == 8 && overlay.m_ann.pen == 8,
           "drawing keeps both bars visible and wheel changes update the live stroke and number");

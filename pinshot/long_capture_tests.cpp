@@ -216,8 +216,7 @@ int LongCapture::testStitching()
                     "prepending an extra head preserves the complete very long image");
     QByteArray png;
     QBuffer pngBuffer(&png);
-    pngBuffer.open(QIODevice::WriteOnly);
-    regressionCheck(extended.save(&pngBuffer, "PNG") && QImage::fromData(png, "PNG") == extended,
+    regressionCheck(pngBuffer.open(QIODevice::WriteOnly) && extended.save(&pngBuffer, "PNG") && QImage::fromData(png, "PNG") == extended,
                     "PNG export beyond 65000 rows round-trips every pixel");
     regressionCheck(!large.reserveRows(1 << 25, 0) && large.m_storageFull && large.toImage() == extended,
                     "memory budget rejection leaves the complete capture intact");

@@ -11,10 +11,6 @@
 #include <QtMath>
 #include <qt_windows.h>
 
-#ifndef CAPTUREBLT
-#define CAPTUREBLT 0x40000000
-#endif
-
 QImage grabNative(const QRect &native)
 {
     if (native.width() <= 0 || native.height() <= 0)
@@ -61,8 +57,7 @@ QVector<GdiDisplay> gdiDisplays()
         mode.dmSize = sizeof(mode);
         if (!EnumDisplaySettingsW(dd.DeviceName, ENUM_CURRENT_SETTINGS, &mode))
             continue;
-        out.append({QString::fromWCharArray(dd.DeviceName),
-                    QRect(mode.dmPosition.x, mode.dmPosition.y, mode.dmPelsWidth, mode.dmPelsHeight)});
+        out.append({QRect(mode.dmPosition.x, mode.dmPosition.y, mode.dmPelsWidth, mode.dmPelsHeight)});
     }
     return out;
 }

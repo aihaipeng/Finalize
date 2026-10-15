@@ -364,6 +364,18 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
         mouse(QEvent::MouseButtonRelease, QPoint(580, 340));
         check(overlay.cropped().size() == original.size(), "brushes crossing the selection do not expand output");
         const int oldWidth = overlay.m_mosaicWidth;
+        for (int blurPass = 0; blurPass < 2; ++blurPass) {
+            QImage glyph(24, 24, QImage::Format_RGB32);    // As seen on the bar background.
+            glyph.fill(QColor(0xf2, 0xf2, 0xf2));
+            QPainter onBar(&glyph);
+            onBar.drawPixmap(0, 0, overlay.m_mosaicPreview->icon().pixmap(24, 24));
+            onBar.end();
+            int darkest = 255;
+            for (int y = 0; y < glyph.height(); ++y)
+                for (int x = 0; x < glyph.width(); ++x) darkest = qMin(darkest, qGray(glyph.pixel(x, y)));
+            check(darkest <= 0x7b, "effect preview glyph keeps >=3:1 contrast on the light bar");
+            overlay.m_mosaicPreview->click();
+        }
         overlay.m_mosaicPreview->click();
         check(overlay.mosaicBlur() && overlay.mosaicStrength() == 6 && overlay.toolSize() == oldWidth,
               "effect preview switches to the independent default blur strength without changing width");
@@ -612,12 +624,21 @@ int CaptureOverlay::testTextAnnotation()
         check(button->focusPolicy() == Qt::NoFocus, "text options do not steal keyboard focus");
         if (button->toolTip() == QStringLiteral("粗体") || button->toolTip() == QStringLiteral("斜体"))
             button->click();
-        if (button->toolTip() == QStringLiteral("#007aff")) button->click();
+    }
+    check(overlay.m_colorBoard && overlay.m_colorBoard->focusPolicy() == Qt::NoFocus,
+          "the text color board does not steal keyboard focus");
+    {
+        const QPoint at = ColorBoard::swatchRect(7).center();
+        for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+            QMouseEvent event(type, QPointF(at), QPointF(overlay.m_colorBoard->mapToGlobal(at)), Qt::LeftButton,
+                              type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(overlay.m_colorBoard, &event);
+        }
     }
     overlay.editorFontStep(1);
     check(overlay.editorActive() && overlay.m_editor->font().bold() && overlay.m_editor->font().italic()
               && overlay.m_editFont == 12.5 && overlay.m_sizeInput->currentText().toDouble() == 12.5
-              && overlay.m_editor->defaultTextColor() == QColor("#007aff")
+              && overlay.m_editor->defaultTextColor() == QColor("#00a2e8")
               && overlay.m_editor->textCursor().anchor() == anchor
               && overlay.m_editor->textCursor().position() == position,
           "live color, bold, italic, and font size preserve input and selection");
@@ -661,7 +682,7 @@ int CaptureOverlay::testTextAnnotation()
     check(!overlay.editorActive() && overlay.isVisible() && overlay.m_anns.size() == 1
               && overlay.m_atool == ATool::Text && overlay.m_anns[0].bold && overlay.m_anns[0].italic
               && overlay.m_anns[0].family == QStringLiteral("Arial")
-              && overlay.m_anns[0].color == QColor("#007aff"),
+              && overlay.m_anns[0].color == QColor("#00a2e8"),
           "Escape finishes text input in one transaction and keeps the capture open");
     check(overlay.cropped().toImage() == liveCapture,
           "text pixels do not jump or wrap differently when editing ends at 150 percent DPI");
@@ -739,115 +760,44 @@ int CaptureOverlay::testTextAnnotation()
     cur.setPosition(3, QTextCursor::KeepAnchor);
     overlay.m_editor->setTextCursor(cur);
     const int paletteUndoCount = overlay.m_undoStack.size();
-    overlay.m_colorButton->click();
+    const QPoint customAt = overlay.m_colorBoard->currentRect().center();
+    for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+        QMouseEvent event(type, QPointF(customAt), QPointF(overlay.m_colorBoard->mapToGlobal(customAt)), Qt::LeftButton,
+                          type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(overlay.m_colorBoard, &event);
+    }
     QApplication::processEvents();
-    check(overlay.m_colorDialog && overlay.m_colorDialog->isVisible() && overlay.editorActive(),
-          "opening the non-modal palette keeps native text editing live");
-    auto typeColor = [](QLineEdit *field, const QString &text) {
-        field->setFocus();
-        field->selectAll();
-        QKeyEvent input(QEvent::KeyPress, 0, Qt::NoModifier, text);
-        QApplication::sendEvent(field, &input);
-    };
-    typeColor(overlay.m_rgbInput, QStringLiteral("rgb(255,0,0)"));
-    check(overlay.m_editor->defaultTextColor() == QColor(Qt::red)
-              && overlay.m_colorWheel->currentColor() == QColor(Qt::red)
-              && overlay.m_hexInput->text() == QStringLiteral("#ff0000")
+    QColorDialog *colorDialog = overlay.m_colorDialog;
+    check(colorDialog && colorDialog->isVisible() && overlay.editorActive(),
+          "opening the color dialog keeps native text editing live");
+    const QColor textBefore = overlay.m_editor->defaultTextColor();
+    colorDialog->setCurrentColor(QColor("#123abc"));
+    check(overlay.m_editor->defaultTextColor() == QColor("#123abc")
               && overlay.m_editor->textCursor().anchor() == cur.anchor()
               && overlay.m_editor->textCursor().position() == cur.position(),
-          "RGB typing synchronizes the live text, picker, HEX value, and text selection");
-    QKeyEvent colorEnter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
-    QApplication::sendEvent(overlay.m_rgbInput, &colorEnter);
-    check(overlay.editorActive() && overlay.m_colorDialog->isVisible() && overlay.isVisible(),
-          "Enter in a color field does not commit text or pin the capture");
-    typeColor(overlay.m_hexInput, QStringLiteral("#123ABC"));
-    check(overlay.m_editor->defaultTextColor() == QColor("#123abc")
-              && overlay.m_rgbInput->text() == QStringLiteral("rgb(18,58,188)")
-              && overlay.m_colorWheel->currentColor() == QColor("#123abc")
-              && overlay.m_colorBrightness->value() == 188,
-          "HEX typing synchronizes RGB, the picker, and the current text");
-    typeColor(overlay.m_rgbInput, QStringLiteral("rgb(300,0,0)"));
-    typeColor(overlay.m_hexInput, QStringLiteral("#nothex"));
-    check(overlay.m_editor->defaultTextColor() == QColor("#123abc")
-              && overlay.m_colorWheel->currentColor() == QColor("#123abc"),
-          "invalid or incomplete manual colors never change the annotation or picker");
-    ColorWheel *picker = overlay.m_colorWheel;
-    check(picker && picker->width() == picker->height()
-              && overlay.m_colorDialog->findChildren<QLineEdit *>().size() == 2
-              && overlay.m_colorDialog->findChildren<QToolButton *>().isEmpty()
-              && overlay.m_colorDialog->width() < 300 && overlay.m_colorDialog->height() < 350,
-          "the compact palette only contains a circular wheel, brightness, preview, and two color fields");
-    const QColor beforeDrag = picker->currentColor();
-    const QPoint pickerStart(picker->width() / 3, picker->height() / 3);
-    for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseMove, QEvent::MouseButtonRelease}) {
-        const QPoint at = type == QEvent::MouseButtonPress ? pickerStart : pickerStart + QPoint(30, 15);
-        QMouseEvent mouse(type, at, picker->mapToGlobal(at),
-                          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
-                          type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(picker, &mouse);
+          "dialog color changes preview on the live text and keep its selection");
+    colorDialog->reject();
+    QApplication::processEvents();
+    check(overlay.editorActive() && overlay.m_editor->defaultTextColor() == textBefore,
+          "cancelling the dialog restores the live text color");
+    for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+        QMouseEvent event(type, QPointF(customAt), QPointF(overlay.m_colorBoard->mapToGlobal(customAt)), Qt::LeftButton,
+                          type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(overlay.m_colorBoard, &event);
     }
-    const QColor draggedColor = picker->currentColor();
-    check(draggedColor != beforeDrag && overlay.m_editor->defaultTextColor() == draggedColor
-              && overlay.m_rgbInput->text() == rgbColorText(draggedColor)
-              && overlay.m_hexInput->text() == draggedColor.name(),
-          "clicking and dragging the circular color wheel updates live text and both manual fields");
-    auto wheelClick = [picker](const QPointF &point) {
-        for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
-            QMouseEvent event(type, point, picker->mapToGlobal(point.toPoint()), Qt::LeftButton,
-                              type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
-            QApplication::sendEvent(picker, &event);
-        }
-    };
-    overlay.m_colorBrightness->setValue(255);
-    const QRectF circle = picker->wheelRect();
-    wheelClick(QPointF(circle.right(), circle.center().y()));
-    check(picker->currentColor() == QColor(Qt::red), "the wheel's right edge selects fully saturated red");
-    wheelClick(QPointF(circle.left(), circle.center().y()));
-    check(picker->currentColor() == QColor(Qt::cyan), "the opposite wheel edge selects cyan");
-    wheelClick(circle.center());
-    check(picker->currentColor() == QColor(Qt::white), "the wheel center selects neutral white");
-    wheelClick(circle.topLeft());
-    check(picker->currentColor() == QColor(Qt::white), "clicking outside the circle does not select a color");
-    overlay.m_colorBrightness->setValue(128);
-    check(picker->currentColor() == QColor(128, 128, 128)
-              && overlay.m_rgbInput->text() == QStringLiteral("rgb(128,128,128)")
-              && overlay.m_hexInput->text() == QStringLiteral("#808080"),
-          "brightness adjusts grayscale and synchronizes both color fields");
-    overlay.m_colorBrightness->setValue(0);
-    wheelClick(QPointF(circle.left(), circle.center().y()));
-    check(picker->currentColor() == QColor(Qt::black), "wheel selection at zero brightness stays black");
-    overlay.m_colorBrightness->setValue(255);
-    check(picker->currentColor() == QColor(Qt::cyan), "raising brightness preserves the color chosen while black");
-    QKeyEvent wheelKey(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
-    QApplication::sendEvent(picker, &wheelKey);
-    check(picker->currentColor() != QColor(Qt::cyan)
-              && overlay.m_editor->defaultTextColor() == picker->currentColor(),
-          "keyboard wheel adjustment remains accessible and updates the active text");
-    const QImage renderedWheel = picker->grab().toImage();
-    const qreal wheelDpr = renderedWheel.devicePixelRatio();
-    const QColor centerPixel = renderedWheel.pixelColor(qRound(circle.center().x() * wheelDpr),
-                                                        qRound(circle.center().y() * wheelDpr));
-    const QColor rimPixel = renderedWheel.pixelColor(qRound((circle.right() - 6) * wheelDpr),
-                                                     qRound(circle.center().y() * wheelDpr));
-    if (renderedWheel.pixelColor(0, 0) != QColor(0xf2, 0xf2, 0xf2)
-        || centerPixel.red() < 250 || centerPixel.green() < 250 || centerPixel.blue() < 250
-        || rimPixel.red() < 250 || rimPixel.green() >= 32 || rimPixel.blue() >= 32)
-        std::fprintf(stderr, "wheel pixels corner=%s center=%s rim=%s dpr=%.2f\n",
-                     qPrintable(renderedWheel.pixelColor(0, 0).name()), qPrintable(centerPixel.name()),
-                     qPrintable(rimPixel.name()), double(wheelDpr));
-    check(renderedWheel.pixelColor(0, 0) == QColor(0xf2, 0xf2, 0xf2)
-              && centerPixel.red() >= 250 && centerPixel.green() >= 250 && centerPixel.blue() >= 250
-              && rimPixel.red() >= 250 && rimPixel.green() < 32 && rimPixel.blue() < 32,
-          "the rendered wheel has a neutral center, a red rim, and light corners at the active DPI");
+    QApplication::processEvents();
+    colorDialog = overlay.m_colorDialog;
+    check(colorDialog != nullptr, "the color dialog reopens during text editing");
+    colorDialog->setCurrentColor(QColor("#123abc"));
+    colorDialog->accept();
+    QApplication::processEvents();
+    check(overlay.editorActive() && overlay.isVisible() && overlay.m_editor->defaultTextColor() == QColor("#123abc")
+              && overlay.m_textView->hasFocus(),
+          "accepting the dialog keeps text editing and returns keyboard focus");
     for (int i = 0; i < previousColors.size(); ++i)
         check(overlay.m_anns[i].color == previousColors[i],
               "palette changes leave earlier text, arrows, and marker strokes unchanged");
     check(overlay.m_undoStack.size() == paletteUndoCount, "palette changes stay inside the current text transaction");
-    QKeyEvent paletteEscape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-    QApplication::sendEvent(overlay.m_colorDialog, &paletteEscape);
-    check(overlay.editorActive() && overlay.isVisible() && overlay.m_textView->hasFocus(),
-          "closing the palette returns keyboard focus without closing or committing the text");
-    check(overlay.m_colorButton->styleSheet().isEmpty(), "live color changes do not restore a palette button border");
     QPixmap pinned;
     QRect pinnedRegion;
     QObject::connect(&overlay, &CaptureOverlay::grabbed,

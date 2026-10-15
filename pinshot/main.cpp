@@ -22,12 +22,18 @@
 #include <QMimeData>
 #include <QElapsedTimer>
 #include <QThreadPool>
+#include <QTranslator>
+#include <QStyleHints>
 #include <qt_windows.h>
 #include <cstdio>
 
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
+    app.styleHints()->setColorScheme(Qt::ColorScheme::Light);   // Standard dialogs match the light toolbars.
+    QTranslator qtTranslator;                   // Chinese labels for standard Qt dialogs.
+    if (qtTranslator.load(QStringLiteral("qtbase_zh_CN"), QCoreApplication::applicationDirPath() + QStringLiteral("/translations")))
+        app.installTranslator(&qtTranslator);
     if (app.arguments().contains(QStringLiteral("--test-ocr-lifetime")))
         return OcrDialog::testLifetime();
     if (app.arguments().contains(QStringLiteral("--test-ocr-languages")))
@@ -71,7 +77,7 @@ int main(int argc, char **argv)
     if (app.arguments().contains(QStringLiteral("--test-text-annotation")))
         return CaptureOverlay::testTextAnnotation();
     if (app.arguments().contains(QStringLiteral("--test-color-wheel")))
-        return ColorWheel::testRendering();
+        return ColorBoard::testRendering();
     const int probe = app.arguments().indexOf(QStringLiteral("--probe-uia"));
     if (probe > 0 && probe + 2 < app.arguments().size()) {
         // Diagnostic: run the production element engines at one native-pixel screen point.

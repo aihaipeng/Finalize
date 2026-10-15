@@ -28,7 +28,7 @@ Controller::Controller()
 {
     m_tray.setIcon(QApplication::windowIcon());
     m_tray.setToolTip(QStringLiteral("pinshot — F1 截图"));
-    QMenu *m = new QMenu;
+    QMenu *m = &m_menu;
     m->addAction(QStringLiteral("截图 (F1)"), this, &Controller::startCapture);
     QMenu *detection = m->addMenu(QStringLiteral("窗口/UI 检测"));
     QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));

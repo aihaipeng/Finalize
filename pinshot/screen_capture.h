@@ -1,7 +1,5 @@
 #pragma once
 
-#define PINSHOT_WDA_EXCLUDEFROMCAPTURE 0x00000011
-
 #include <QImage>
 #include <QPixmap>
 #include <QVector>
@@ -17,8 +15,8 @@
 QImage grabNative(const QRect &native);
 
 // Qt 6 names screens by monitor model instead of the GDI device name, so display
-// queries must enumerate real devices; attached desktop entries carry \\.\DISPLAYn.
-struct GdiDisplay { QString device; QRect native; };
+// queries must enumerate real devices.
+struct GdiDisplay { QRect native; };
 
 QVector<GdiDisplay> gdiDisplays();
 

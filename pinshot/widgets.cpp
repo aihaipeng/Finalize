@@ -60,10 +60,10 @@ static void buildIconPath(QPainterPath &path, QPainterPath &fill, Icon icon)
         path.addRect(2.5, 3.5, 11, 9);
         fill.addRect(4, 5, 8, 6);
         break;
-    case Icon::Dashed:                                // Three dashes on a diagonal.
-        path.moveTo(2.5, 13.5); path.lineTo(4.5, 11.5);
-        path.moveTo(7, 9); path.lineTo(9, 7);
-        path.moveTo(11.5, 4.5); path.lineTo(13.5, 2.5);
+    case Icon::Dashed:                                // Three horizontal dashes on the pixel grid, so they stay full contrast.
+        path.moveTo(2.5, 8.5); path.lineTo(3.5, 8.5);
+        path.moveTo(7.5, 8.5); path.lineTo(8.5, 8.5);
+        path.moveTo(12.5, 8.5); path.lineTo(13.5, 8.5);
         break;
     case Icon::Ellipse:
         path.addEllipse(QPointF(8, 8), 5.5, 5.5);
@@ -71,34 +71,6 @@ static void buildIconPath(QPainterPath &path, QPainterPath &fill, Icon icon)
     case Icon::Arrow:                                 // Thin diagonal shaft with a swept-back solid head.
         path.moveTo(2.5, 13.5); path.lineTo(10, 6);
         fill.moveTo(13.5, 2.5); fill.lineTo(12, 9); fill.lineTo(10.2, 5.8); fill.lineTo(7, 4); fill.closeSubpath();
-        break;
-    case Icon::ArrowBoth:                             // Solid heads on both ends.
-        path.moveTo(6, 10); path.lineTo(10, 6);
-        fill.moveTo(13.5, 2.5); fill.lineTo(13.5, 7.5); fill.lineTo(8.5, 2.5); fill.closeSubpath();
-        fill.moveTo(2.5, 13.5); fill.lineTo(2.5, 8.5); fill.lineTo(7.5, 13.5); fill.closeSubpath();
-        break;
-    case Icon::ArrowLine:                             // Plain line, no heads.
-        path.moveTo(3, 13); path.lineTo(13, 3);
-        break;
-    case Icon::ArrowHollow:                           // Outline head, open inside.
-        path.moveTo(3, 13); path.lineTo(9, 7);
-        path.moveTo(13, 3); path.lineTo(13, 8.5); path.lineTo(7.5, 3); path.closeSubpath();
-        break;
-    case Icon::ArrowHollowBoth:                       // Outline heads on both ends.
-        path.moveTo(6.5, 9.5); path.lineTo(9.5, 6.5);
-        path.moveTo(13, 3); path.lineTo(13, 8); path.lineTo(8, 3); path.closeSubpath();
-        path.moveTo(3, 13); path.lineTo(3, 8); path.lineTo(8, 13); path.closeSubpath();
-        break;
-    case Icon::ArrowCurve:                            // Curved shaft with a solid head.
-        path.moveTo(2.5, 13); path.quadTo(3.5, 5, 9.5, 5);
-        fill.moveTo(14, 5); fill.lineTo(9, 2); fill.lineTo(9, 8); fill.closeSubpath();
-        break;
-    case Icon::LineDashDense:                         // Dashed line, short period.
-        for (qreal x = 2; x < 14; x += 3) { path.moveTo(x, 8); path.lineTo(x + 1.5, 8); }
-        break;
-    case Icon::LineDashSparse:                        // Dashed line, long period.
-        path.moveTo(2, 8); path.lineTo(6, 8);
-        path.moveTo(10, 8); path.lineTo(14, 8);
         break;
     case Icon::Pen:                                   // Slim pencil: body, ferrule line, nib.
         path.moveTo(11, 2.5); path.lineTo(13.5, 5); path.lineTo(5, 13.5); path.lineTo(2.5, 13.5);
@@ -176,15 +148,6 @@ static void buildIconPath(QPainterPath &path, QPainterPath &fill, Icon icon)
         path.moveTo(13, 6.5); path.lineTo(6, 6.5); path.quadTo(2.5, 6.5, 2.5, 10);
         path.quadTo(2.5, 13.5, 6, 13.5); path.lineTo(9, 13.5);
         break;
-    case Icon::Palette:                               // Paint palette with a thumb notch and colour wells.
-        path.moveTo(8, 2.5);
-        path.cubicTo(4.5, 2.5, 2.5, 5, 2.5, 8); path.cubicTo(2.5, 11.5, 5, 13.5, 8, 13.5);
-        path.cubicTo(9.5, 13.5, 9.5, 11.5, 8.8, 11); path.cubicTo(8, 10, 9, 9, 10.5, 9.5);
-        path.cubicTo(12.5, 10, 13.5, 9, 13.5, 7.5); path.cubicTo(13.5, 4.5, 11, 2.5, 8, 2.5);
-        path.closeSubpath();
-        for (const QPointF &dot : {QPointF(5, 7), QPointF(7, 4.8), QPointF(10, 5), QPointF(5, 10)})
-            fill.addEllipse(dot, 0.9, 0.9);
-        break;
     }
 }
 
@@ -238,134 +201,87 @@ QWidget *barSeparator()
     return line;
 }
 
-ColorWheel::ColorWheel(const QColor &color, QWidget *parent) : QWidget(parent)
+// The classic 20-color paint palette, dark row first.
+static const QColor kPresets[ColorBoard::PresetCount] = {
+    "#000000", "#7f7f7f", "#880015", "#ed1c24", "#ff7f27", "#fff200", "#22b14c", "#00a2e8", "#3f48cc", "#a349a4",
+    "#ffffff", "#c3c3c3", "#b97a57", "#ffaec9", "#ffc90e", "#efe4b0", "#b5e61d", "#99d9ea", "#7092be", "#c8bfe7"};
+
+const QColor &ColorBoard::preset(int index) { return kPresets[qBound(0, index, PresetCount - 1)]; }
+
+ColorBoard::ColorBoard(const QColor &current, QWidget *parent) : QWidget(parent), m_current(current)
 {
-    setFixedSize(220, 220);
-    setFocusPolicy(Qt::StrongFocus);
-    setCursor(Qt::CrossCursor);
-    setAccessibleName(QStringLiteral("圆形颜色选择器"));
-    setToolTip(QStringLiteral("点击或拖动选色；左右调整色相，上下调整饱和度"));
-    setCurrentColor(color);
+    setObjectName(QStringLiteral("colorBoard"));
+    setFixedSize(158, 26);                             // 24px current color, 3px gap, 10 x 13px cells, 1px hover margin.
+    setMouseTracking(true);
+    setCursor(Qt::PointingHandCursor);
+    setFocusPolicy(Qt::NoFocus);
+    setAccessibleName(QStringLiteral("颜色"));
 }
 
-QRectF ColorWheel::wheelRect() const
+QRect ColorBoard::swatchRect(int index)
 {
-    const qreal side = qMin(width(), height()) - 20;
-    return QRectF((width() - side) / 2, (height() - side) / 2, side, side);
+    return QRect(28 + 13 * (index % 10), 1 + 13 * (index / 10), 11, 11);
 }
 
-QColor ColorWheel::currentColor() const { return m_color; }
-
-QColor ColorWheel::brightColor() const { return QColor::fromHsvF(m_hue, m_saturation, 1).toRgb(); }
-
-int ColorWheel::brightness() const { return qRound(m_value * 255); }
-
-void ColorWheel::setCurrentColor(const QColor &color)
+void ColorBoard::setCurrentColor(const QColor &color)
 {
-    if (!color.isValid() || color.toRgb() == m_color) return;
-    m_color = color.toRgb();
-    if (color.hsvHueF() >= 0) m_hue = color.hsvHueF();
-    if (color.valueF() > 0) m_saturation = color.hsvSaturationF(); // Black keeps the last wheel position.
-    m_value = color.valueF();
-    update();
-    emit colorChanged(m_color);
+    if (!color.isValid() || color == m_current) return;
+    m_current = color;
+    update(currentRect());
 }
 
-void ColorWheel::setBrightness(int value)
+int ColorBoard::swatchAt(const QPoint &pos) const
 {
-    const qreal next = qBound(0, value, 255) / 255.0;
-    if (next == m_value) return;
-    m_value = next;
-    updateColor();
+    for (int i = 0; i < PresetCount; ++i)
+        if (swatchRect(i).contains(pos)) return i;   // Gaps between cells pick nothing.
+    return -1;
 }
 
-void ColorWheel::paintEvent(QPaintEvent *)
+void ColorBoard::paintEvent(QPaintEvent *)
 {
-    const QRectF circle = wheelRect();
-    const int side = qRound(circle.width() * devicePixelRatioF());
-    if (m_disc.width() != side) {                 // Cache physical pixels; pointer drags only move the marker.
-        m_disc = QImage(side, side, QImage::Format_ARGB32);
-        m_disc.fill(Qt::transparent);
-        const qreal radius = side / 2.0;
-        for (int y = 0; y < side; ++y) {
-            QRgb *row = reinterpret_cast<QRgb *>(m_disc.scanLine(y));
-            for (int x = 0; x < side; ++x) {
-                const qreal dx = x + 0.5 - radius, dy = radius - y - 0.5;
-                const qreal distance = qSqrt(dx * dx + dy * dy);
-                const qreal coverage = qBound(qreal(0), radius - distance + 0.5, qreal(1));
-                if (coverage <= 0) continue;
-                qreal hue = qAtan2(dy, dx) / (2 * M_PI);
-                if (hue < 0) hue += 1;
-                QColor color = QColor::fromHsvF(hue, qMin(qreal(1), distance / radius), 1);
-                color.setAlpha(qRound(coverage * 255));
-                row[x] = color.rgba();
-            }
-        }
-    }
     QPainter p(this);
-    p.fillRect(rect(), QColor(0xf2, 0xf2, 0xf2));
-    p.setRenderHint(QPainter::Antialiasing);
-    p.drawImage(circle, m_disc);
-    p.setPen(QPen(QColor("#858585"), 1));
-    p.setBrush(QColor(0, 0, 0, qRound((1 - m_value) * 255)));
-    p.drawEllipse(circle);
-    const qreal angle = m_hue * 2 * M_PI;
-    const qreal radius = circle.width() / 2 * m_saturation;
-    const QPointF marker = circle.center() + QPointF(qCos(angle) * radius, -qSin(angle) * radius);
-    p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(Qt::black, 3));
-    p.drawEllipse(marker, 5, 5);
-    p.setPen(QPen(Qt::white, 1.5));
-    p.drawEllipse(marker, 5, 5);
-}
-
-void ColorWheel::mousePressEvent(QMouseEvent *e)
-{
-    const QRectF circle = wheelRect();
-    if (e->button() != Qt::LeftButton || QLineF(circle.center(), e->pos()).length() > circle.width() / 2) return;
-    m_dragging = true;
-    setFocus(Qt::MouseFocusReason);
-    selectAt(e->pos());
-}
-
-void ColorWheel::mouseMoveEvent(QMouseEvent *e)
-{
-    if (m_dragging && (e->buttons() & Qt::LeftButton)) selectAt(e->pos());
-}
-
-void ColorWheel::mouseReleaseEvent(QMouseEvent *e)
-{
-    if (e->button() == Qt::LeftButton) m_dragging = false;
-}
-
-void ColorWheel::keyPressEvent(QKeyEvent *e)
-{
-    if (e->key() == Qt::Key_Left || e->key() == Qt::Key_Right) {
-        m_hue += e->key() == Qt::Key_Right ? 1.0 / 360 : -1.0 / 360;
-        if (m_hue < 0) m_hue += 1;
-        if (m_hue >= 1) m_hue -= 1;
-    } else if (e->key() == Qt::Key_Up || e->key() == Qt::Key_Down) {
-        m_saturation = qBound(qreal(0), m_saturation + (e->key() == Qt::Key_Up ? 0.01 : -0.01), qreal(1));
-    } else { QWidget::keyPressEvent(e); return; }
-    updateColor();
-}
-
-void ColorWheel::selectAt(const QPoint &point)
-{
-    const QRectF circle = wheelRect();
-    const QPointF delta = point - circle.center();
-    const qreal distance = qSqrt(delta.x() * delta.x() + delta.y() * delta.y());
-    if (distance > 0.01) {
-        m_hue = qAtan2(-delta.y(), delta.x()) / (2 * M_PI);
-        if (m_hue < 0) m_hue += 1;
+    const QRect big = currentRect();
+    p.fillRect(big, QColor(0x22, 0x22, 0x22));
+    p.fillRect(big.adjusted(1, 1, -1, -1), m_current);
+    // Rainbow corner marks the button that opens the full color dialog.
+    for (int y = big.bottom() - 8; y < big.bottom(); ++y)
+        for (int x = big.right() - 1 - (y - (big.bottom() - 8)); x < big.right(); ++x) {
+            const bool edge = x + y == big.right() + big.bottom() - 9;
+            int hue = qRound(180 + 20.5 * ((x - big.left()) - (y - big.top())));
+            hue = ((hue % 360) + 360) % 360;
+            p.fillRect(QRect(x, y, 1, 1), QColor::fromHsv(hue, 249, edge ? 125 : 249));
+        }
+    for (int i = 0; i < PresetCount; ++i) {
+        const QColor &c = kPresets[i];
+        QRect r = swatchRect(i);
+        if (i == m_hover) r.adjust(-1, -1, 1, 1);
+        // Light top/left frame, color-tinted dark bottom/right edge.
+        const QColor shade(34 + qRound(c.red() * 0.325), 34 + qRound(c.green() * 0.325), 34 + qRound(c.blue() * 0.325));
+        p.fillRect(r, i == m_hover ? QColor(0x40, 0x40, 0x40) : QColor(0x71, 0x71, 0x71));
+        p.fillRect(r.adjusted(1, 1, 0, 0), shade);
+        p.fillRect(r.adjusted(1, 1, -1, -1), c);
     }
-    m_saturation = qMin(qreal(1), distance / (circle.width() / 2));
-    updateColor();
 }
 
-void ColorWheel::updateColor()
+void ColorBoard::mouseMoveEvent(QMouseEvent *e)
 {
-    m_color = QColor::fromHsvF(m_hue, m_saturation, m_value).toRgb();
+    const int hover = swatchAt(e->pos());
+    if (hover == m_hover) return;
+    m_hover = hover;
     update();
-    emit colorChanged(m_color);
+}
+
+void ColorBoard::mouseReleaseEvent(QMouseEvent *e)
+{
+    if (e->button() != Qt::LeftButton) return;
+    const int index = swatchAt(e->pos());
+    if (index >= 0) emit presetPicked(kPresets[index]);
+    else if (currentRect().contains(e->pos())) emit customRequested();
+}
+
+void ColorBoard::leaveEvent(QEvent *)
+{
+    if (m_hover < 0) return;
+    m_hover = -1;
+    update();
 }

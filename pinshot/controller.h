@@ -6,6 +6,7 @@
 #include <QObject>
 #include <QByteArray>
 #include <QSystemTrayIcon>
+#include <QMenu>
 #include <QtMath>
 #include <QAbstractNativeEventFilter>
 #include <QPointer>
@@ -28,6 +29,7 @@ public:
 public slots:
     void startCapture();
 private:
+    QMenu m_menu;                                    // Declared first so the tray releases it before destruction.
     QSystemTrayIcon m_tray;
     QPointer<CaptureOverlay> m_capture;
 };

@@ -12,15 +12,15 @@
 #include <QSaveFile>
 #include <qt_windows.h>
 
-bool copyImageToClipboard(const QImage &image)
+template <typename Set>
+static bool setClipboardWithRetry(Set set)
 {
-    if (image.isNull()) return false;
     QClipboard *clipboard = QGuiApplication::clipboard();
     QElapsedTimer retry;
     retry.start();
     do {
         const DWORD sequence = GetClipboardSequenceNumber();
-        clipboard->setImage(image);
+        set(clipboard);
         if (clipboard->ownsClipboard() && GetClipboardSequenceNumber() != sequence) return true;
         QEventLoop wait;
         QTimer::singleShot(15, &wait, &QEventLoop::quit);
@@ -29,21 +29,14 @@ bool copyImageToClipboard(const QImage &image)
     return false;
 }
 
+bool copyImageToClipboard(const QImage &image)
+{
+    return !image.isNull() && setClipboardWithRetry([&](QClipboard *c) { c->setImage(image); });
+}
+
 bool copyTextToClipboard(const QString &text)
 {
-    if (text.isEmpty()) return false;
-    QClipboard *clipboard = QGuiApplication::clipboard();
-    QElapsedTimer retry;
-    retry.start();
-    do {
-        const DWORD sequence = GetClipboardSequenceNumber();
-        clipboard->setText(text);
-        if (clipboard->ownsClipboard() && GetClipboardSequenceNumber() != sequence) return true;
-        QEventLoop wait;
-        QTimer::singleShot(15, &wait, &QEventLoop::quit);
-        wait.exec(QEventLoop::ExcludeUserInputEvents);
-    } while (retry.elapsed() < 300);
-    return false;
+    return !text.isEmpty() && setClipboardWithRetry([&](QClipboard *c) { c->setText(text); });
 }
 
 bool saveImageAtomic(const QImage &image, const QString &path)

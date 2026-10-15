@@ -28,6 +28,7 @@ PinWindow::PinWindow(const QPixmap &pix, const QRect &displayRect)
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
     setAttribute(Qt::WA_DeleteOnClose);
     setCursor(Qt::SizeAllCursor);
+    setAccessibleName(QStringLiteral("贴图"));
     setGeometry(displayRect);
     show();
 }
@@ -90,7 +91,7 @@ void PinWindow::contextMenuEvent(QContextMenuEvent *)
 void PinWindow::mousePressEvent(QMouseEvent *e)
 {
     if (e->button() == Qt::LeftButton)            // Reserve right-click for the menu.
-        m_dragOff = e->globalPos() - pos();
+        m_dragOff = e->globalPosition().toPoint() - pos();
 }
 
 void PinWindow::mouseMoveEvent(QMouseEvent *e)

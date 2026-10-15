@@ -27,9 +27,8 @@ int PinWindow::testPlacement()
         }
     };
     const QRect available(0, 0, 1920, 1040);
-    const QVector<GdiDisplay> displays{{QStringLiteral("left"), QRect(-1920, 0, 1920, 1080)},
-                                      {QStringLiteral("primary"), QRect(0, 0, 1920, 1080)},
-                                      {QStringLiteral("right"), QRect(1920, 0, 1920, 1080)}};
+    const QVector<GdiDisplay> displays{{QRect(-1920, 0, 1920, 1080)}, {QRect(0, 0, 1920, 1080)},
+                                      {QRect(1920, 0, 1920, 1080)}};
     for (qreal dpr : {1.0, 1.5, 2.0})
         for (const GdiDisplay &display : displays)
             check(nativeRectForScreen(QRect(display.native.topLeft(),

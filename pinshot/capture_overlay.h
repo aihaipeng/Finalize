@@ -32,6 +32,7 @@
 #include <QComboBox>
 #include <QSlider>
 #include <QDialog>
+#include <QColorDialog>
 #include <QLineEdit>
 #include <QCursor>
 #include <QTimer>
@@ -164,11 +165,9 @@ private:
     void setToolNone();
     void selectTool(ATool tool);
     void syncToolButtons();
-    QColor toolColor(ATool tool) const;
-    void pickToolColor(ATool family, const QColor &color, QLineEdit *source = nullptr);
-    static QString rgbColorText(const QColor &color);
-    static QColor parseAnnotationColor(const QString &text);
-    void showColorPalette(ATool family, QToolButton *anchor);
+    // One color shared by every colored tool; recolors the live item or the selection.
+    void pickToolColor(const QColor &color, bool undoable = true);
+    void showColorPalette();
     void pickArrowStyle(int style);
     void pickArrowLineStyle(int style);
     void toggleArrowDashed();
@@ -262,7 +261,7 @@ private:
     QWidget *m_tools = nullptr;
     QVector<QWidget *> m_toolButtons;
     ATool m_atool = ATool::None;
-    QColor m_acolor = QColor("#ff3b30");             // Red first: the loudest marking color.
+    QColor m_acolor = QColor("#ed1c24");             // Red first: the loudest marking color.
     int m_apen = 3;
     int m_mosaicLevels[2] = {6, 6}, m_mosaicWidth = 14;
     bool m_mosaicBrush = true, m_mosaicBlur = false, m_mosaicDragUndo = false;
@@ -289,7 +288,7 @@ private:
     QPoint m_textMovePress;
     QPointF m_textMoveOrigin;
     int m_editAnn = -1;                              // Annotation being re-edited.
-    QColor m_editColor = QColor("#ff3b30");
+    QColor m_editColor = QColor("#ed1c24");
     qreal m_editFont = 15;
     QString m_editFamily;
     bool m_committingText = false;
@@ -307,13 +306,8 @@ private:
     QLabel *m_mosaicStrengthLabel = nullptr;
     QLabel *m_mosaicWidthLabel = nullptr;
     QToolButton *m_mosaicPreview = nullptr;
-    QToolButton *m_colorButton = nullptr;
-    QPointer<QDialog> m_colorDialog;
-    QPointer<ColorWheel> m_colorWheel;
-    QPointer<QSlider> m_colorBrightness;
-    QPointer<QLabel> m_colorPreview;
-    QPointer<QLineEdit> m_rgbInput, m_hexInput;
-    ATool m_colorDialogTool = ATool::None;
+    ColorBoard *m_colorBoard = nullptr;
+    QPointer<QColorDialog> m_colorDialog;
     bool m_shapeEllipse = false;                     // Current sub-shape of the shape button.
     int m_arrowStyle = 0;                            // Head shape, see Annotation::arrowStyle.
     int m_arrowLineStyle = 0;                        // Shaft path, see Annotation::lineStyle.
@@ -322,6 +316,4 @@ private:
     bool m_markerFill = false;                       // Marker drags a translucent rectangle.
     bool m_abold = false, m_aitalic = false;         // Text tool defaults.
     bool m_editBold = false, m_editItalic = false;   // Live editor weight / slant.
-    QColor m_colorShape = "#ff3b30", m_colorArrow = "#ff3b30", m_colorPen = "#ff3b30",
-           m_colorMarker = "#ffcc00", m_colorText = "#ff3b30", m_colorNumber = "#ff3b30";
 };

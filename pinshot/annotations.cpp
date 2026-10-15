@@ -729,14 +729,6 @@ bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
         ev->accept();
         return true;
     }
-    if (m_colorDialog && (obj == m_rgbInput || obj == m_hexInput) && ev->type() == QEvent::KeyPress) {
-        const int key = static_cast<QKeyEvent *>(ev)->key();
-        if (key == Qt::Key_Return || key == Qt::Key_Enter) {
-            const QColor color = parseAnnotationColor(static_cast<QLineEdit *>(obj)->text());
-            if (color.isValid()) pickToolColor(m_colorDialogTool, color);
-            return true;                         // Enter applies a color; it never pins the capture.
-        }
-    }
     if (m_sizeInput && (obj == m_sizeInput || obj == m_sizeInput->findChild<QLineEdit *>())) {
         if (ev->type() == QEvent::Wheel) {
             const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
@@ -801,14 +793,14 @@ bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
             if (me->button() == Qt::LeftButton
                 && !m_editor->boundingRect().adjusted(6, 6, -6, -6).contains(local)) {
                 m_textMoving = true;
-                m_textMovePress = me->globalPos();
+                m_textMovePress = me->globalPosition().toPoint();
                 m_textMoveOrigin = m_editor->pos();
                 m_textView->viewport()->grabMouse();
                 return true;
             }
         } else if (m_textMoving && ev->type() == QEvent::MouseMove) {
             auto *me = static_cast<QMouseEvent *>(ev);
-            const QPoint delta = me->globalPos() - m_textMovePress;
+            const QPoint delta = me->globalPosition().toPoint() - m_textMovePress;
             if (m_editor->pos() == m_textMoveOrigin
                 && delta.manhattanLength() < QApplication::startDragDistance()) return true;
             m_editor->setPos(m_textMoveOrigin + delta);
@@ -834,7 +826,7 @@ void CaptureOverlay::beginTextEdit(const QPoint &pos, int existing)
     m_editItalic = existing >= 0 ? m_anns[existing].italic : m_aitalic;
     m_atool = ATool::Text;
     m_selAnn = existing;
-    m_acolor = m_colorText = m_editColor;
+    m_acolor = m_editColor;
     m_afont = m_editFont;
     m_afamily = m_editFamily;
     m_abold = m_editBold;
@@ -1086,8 +1078,9 @@ void CaptureOverlay::syncSizeInput()
         preview.fill(Qt::transparent);
         QPainter painter(&preview);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(QPen(Qt::white, 2.5));
-        painter.drawEllipse(QRectF(7, 7, 10, 10));
+        painter.setPen(Qt::NoPen);                // Solid dark disc: whole tiles stay dark on the light bar.
+        painter.setBrush(QColor(0x32, 0x32, 0x32));
+        painter.drawEllipse(QRectF(4, 4, 16, 16));
         painter.end();
         preview = mosaicBlur() ? mosaicBlurred(preview, mosaicStrength())
                                : mosaicTiles(preview, mosaicStrength(), 1).scaled(24, 24);
@@ -1378,7 +1371,6 @@ void CaptureOverlay::selectTool(ATool tool)                      // Shared by to
     if (tool == ATool::Rect) m_shapeEllipse = false;        // R/O/popup pick the sub-shape.
     else if (tool == ATool::Ellipse) m_shapeEllipse = true;
     m_selAnn = -1;                               // Tools and item selection exclude each other.
-    m_acolor = toolColor(tool);
     syncToolButtons();
     updateToolOptions();
     updateAnnotationCursor(mapFromGlobal(QCursor::pos()));
@@ -1397,152 +1389,64 @@ void CaptureOverlay::syncToolButtons()                           // Rect and Ell
     m_shapeButton->setIcon(makeIcon(Icon::Rect));   // The main bar stays the same whichever sub-shape is armed.
 }
 
-QColor CaptureOverlay::toolColor(ATool tool) const               // Each tool remembers its own color.
-{
-    switch (tool) {
-    case ATool::Rect: case ATool::Ellipse: return m_colorShape;
-    case ATool::Arrow: return m_colorArrow;
-    case ATool::Pen: return m_colorPen;
-    case ATool::Marker: return m_colorMarker;
-    case ATool::Text: return m_colorText;
-    case ATool::Number: return m_colorNumber;
-    default: return m_acolor;
-    }
-}
-
-void CaptureOverlay::pickToolColor(ATool family, const QColor &color, QLineEdit *source)
+void CaptureOverlay::pickToolColor(const QColor &color, bool undoable)
 {
     if (!color.isValid()) return;
-    switch (family) {
-    case ATool::Rect: case ATool::Ellipse: m_colorShape = color; break;
-    case ATool::Arrow: m_colorArrow = color; break;
-    case ATool::Pen: m_colorPen = color; break;
-    case ATool::Marker: m_colorMarker = color; break;
-    case ATool::Text: m_colorText = color; break;
-    case ATool::Number: m_colorNumber = color; break;
-    default: return;
-    }
-    const bool sameFamily = [](ATool a, ATool b) {
-        const bool shapes = (a == ATool::Rect || a == ATool::Ellipse)
-                         && (b == ATool::Rect || b == ATool::Ellipse);
-        return a == b || shapes;
-    }(m_atool, family);
-    if (sameFamily) m_acolor = color;
-    if (editorActive() && family == ATool::Text) {
+    m_acolor = color;
+    if (m_colorBoard) m_colorBoard->setCurrentColor(color);
+    if (editorActive()) {                       // Stays inside the current text transaction.
         m_editColor = color;
         applyEditorFont();
-    } else if (m_live && sameFamily) {
-        m_ann.color = color;                    // Committed annotations retain their original colors.
+    } else if (m_live) {
+        m_ann.color = color;
+        update();
+    } else if (m_selAnn >= 0 && m_selAnn < m_anns.size() && m_anns[m_selAnn].tool != ATool::Mosaic
+               && m_anns[m_selAnn].color != color) {
+        if (undoable) pushUndo();
+        m_anns[m_selAnn].color = color;
         update();
     }
-    if (m_colorDialog && m_colorDialogTool == family) {
-        const QSignalBlocker lock(m_colorWheel);
-        m_colorWheel->setCurrentColor(color);
-        const QSignalBlocker sliderLock(m_colorBrightness);
-        m_colorBrightness->setValue(m_colorWheel->brightness());
-        m_colorBrightness->setStyleSheet(QStringLiteral(
-            "QSlider::groove:vertical{width:12px;border:1px solid #858585;"
-            "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 %1,stop:1 #000000);}"
-            "QSlider::handle:vertical{background:#fff;border:1px solid #2080f0;height:8px;margin:0 -3px;}")
-            .arg(m_colorWheel->brightColor().name()));
-        m_colorPreview->setStyleSheet(QStringLiteral("background:%1;border:1px solid #222222;").arg(color.name()));
-        for (QLineEdit *field : {m_rgbInput.data(), m_hexInput.data()}) {
-            if (!field || field == source) continue;
-            const QSignalBlocker fieldLock(field);
-            field->setText(field == m_rgbInput ? rgbColorText(color) : color.name());
-            field->setStyleSheet(QString());
-        }
-    }
 }
 
-QString CaptureOverlay::rgbColorText(const QColor &color)
+void CaptureOverlay::showColorPalette()
 {
-    return QStringLiteral("rgb(%1,%2,%3)").arg(color.red()).arg(color.green()).arg(color.blue());
-}
-
-QColor CaptureOverlay::parseAnnotationColor(const QString &text)
-{
-    const QString value = text.trimmed();
-    static const QRegularExpression hex(QStringLiteral("^#[0-9a-fA-F]{6}$"));
-    if (hex.match(value).hasMatch()) return QColor(value);
-    static const QRegularExpression rgb(QStringLiteral("^rgb\\(\\s*(\\d{1,3})\\s*,\\s*(\\d{1,3})\\s*,\\s*(\\d{1,3})\\s*\\)$"),
-                                         QRegularExpression::CaseInsensitiveOption);
-    const QRegularExpressionMatch match = rgb.match(value);
-    if (!match.hasMatch()) return {};
-    const int r = match.captured(1).toInt(), g = match.captured(2).toInt(), b = match.captured(3).toInt();
-    return r <= 255 && g <= 255 && b <= 255 ? QColor(r, g, b) : QColor();
-}
-
-void CaptureOverlay::showColorPalette(ATool family, QToolButton *anchor)
-{
-    if (m_colorDialog) m_colorDialog->close();
-    auto *dialog = new QDialog(this, Qt::Popup | Qt::FramelessWindowHint);
+    if (m_colorDialog) return;
+    const QColor oldColor = m_acolor;
+    const QVector<Annotation> before = m_anns;
+    auto *dialog = new QColorDialog(oldColor, this);
     m_colorDialog = dialog;
-    m_colorDialogTool = family;
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setWindowTitle(QStringLiteral("调色板"));
-    dialog->setStyleSheet(QStringLiteral(
-        "QDialog{background:#f2f2f2;border:1px solid #2080f0;}"
-        "QLineEdit{color:#323232;background:#ffffff;border:1px solid #d2d2d2;"
-        "padding:3px;font-size:12px;selection-background-color:#2080f0;selection-color:#ffffff;}"));
-    auto *layout = new QVBoxLayout(dialog);
-    layout->setContentsMargins(12, 12, 12, 12);
-    layout->setSpacing(8);
-    auto *top = new QHBoxLayout;
-    top->setSpacing(8);
-    m_colorWheel = new ColorWheel(toolColor(family), dialog);
-    top->addWidget(m_colorWheel);
-    m_colorBrightness = new QSlider(Qt::Vertical, dialog);
-    m_colorBrightness->setRange(0, 255);
-    m_colorBrightness->setFixedSize(18, 200);
-    m_colorBrightness->setAccessibleName(QStringLiteral("明暗"));
-    m_colorBrightness->setToolTip(QStringLiteral("拖动调整明暗"));
-    top->addWidget(m_colorBrightness);
-    layout->addLayout(top);
-    auto *bottom = new QHBoxLayout;
-    bottom->setSpacing(8);
-    m_colorPreview = new QLabel(dialog);
-    m_colorPreview->setFixedSize(32, 54);
-    m_colorPreview->setToolTip(QStringLiteral("当前颜色"));
-    bottom->addWidget(m_colorPreview);
-    auto *fields = new QVBoxLayout;
-    fields->setSpacing(4);
-    m_rgbInput = new QLineEdit(dialog);
-    m_hexInput = new QLineEdit(dialog);
-    m_rgbInput->setPlaceholderText(QStringLiteral("rgb(255,0,0)"));
-    m_hexInput->setPlaceholderText(QStringLiteral("#ff0000"));
-    m_rgbInput->setToolTip(QStringLiteral("RGB 分量为 0–255，例如 rgb(255,0,0)"));
-    m_hexInput->setToolTip(QStringLiteral("六位 HEX 颜色，例如 #ff0000"));
-    m_rgbInput->setAccessibleName(QStringLiteral("RGB 颜色"));
-    m_hexInput->setAccessibleName(QStringLiteral("HEX 颜色"));
-    for (QLineEdit *field : {m_rgbInput.data(), m_hexInput.data()}) {
-        field->installEventFilter(this);
-        fields->addWidget(field);
-        connect(field, &QLineEdit::textEdited, this, [this, family, field](const QString &text) {
-            const QColor color = parseAnnotationColor(text);
-            field->setStyleSheet(color.isValid() ? QString() : QStringLiteral("border:1px solid #ff3b30;"));
-            if (color.isValid()) pickToolColor(family, color, field);
-        });
-    }
-    bottom->addLayout(fields);
-    layout->addLayout(bottom);
-    connect(m_colorBrightness, &QSlider::valueChanged, m_colorWheel, &ColorWheel::setBrightness);
-    connect(m_colorWheel, &ColorWheel::colorChanged, this,
-            [this, family](const QColor &color) { pickToolColor(family, color); });
-    connect(dialog, &QDialog::finished, this, [this] {
+    dialog->setOption(QColorDialog::ShowAlphaChannel);
+    dialog->setOption(QColorDialog::DontUseNativeDialog);
+    dialog->setWindowTitle(QStringLiteral("选择颜色"));
+    connect(dialog, &QColorDialog::currentColorChanged, this, [this](const QColor &c) { pickToolColor(c, false); });
+    connect(dialog, &QDialog::finished, this, [this, dialog, oldColor, before](int result) {
+        m_colorDialog.clear();                   // Deletion is deferred; allow reopening right away.
+        const QColor chosen = dialog->currentColor();
+        m_anns = before;                         // Drop the live preview; a commit re-applies it as one undo step.
+        if (result == QDialog::Accepted && chosen.isValid()) {
+            pickToolColor(chosen);
+        } else {
+            m_acolor = oldColor;
+            if (m_colorBoard) m_colorBoard->setCurrentColor(oldColor);
+            if (editorActive()) { m_editColor = oldColor; applyEditorFont(); }
+            else if (m_live) m_ann.color = oldColor;
+        }
+        update();
         if (!isVisible()) return;
         if (editorActive()) { m_textView->setFocus(); m_editor->setFocus(); }
         else setFocus();
     });
-    pickToolColor(family, toolColor(family));
-    dialog->show();
     dialog->adjustSize();
-    const QPoint below = anchor->mapToGlobal(QPoint(0, anchor->height()));
-    const QScreen *screen = QGuiApplication::screenAt(below);
+    // Fixed offset from the current-color square: right of the strip, raised so the canvas stays visible.
+    const QPoint anchor = m_colorBoard ? m_colorBoard->mapToGlobal(m_colorBoard->currentRect().topLeft())
+                                       : m_toolOptions->mapToGlobal(QPoint());
+    const QPoint target = anchor + QPoint(191, -224);
+    const QScreen *screen = QGuiApplication::screenAt(anchor);
     const QRect available = (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry();
-    const int y = below.y() + dialog->height() <= available.bottom() + 1 ? below.y()
-        : qMax(available.top(), anchor->mapToGlobal(QPoint()).y() - dialog->height());
-    dialog->move(qBound(available.left(), below.x(), available.right() + 1 - dialog->width()), y);
+    dialog->move(qBound(available.left(), target.x(), available.right() + 1 - dialog->width()),
+                 qBound(available.top(), target.y(), available.bottom() + 1 - dialog->height()));
+    dialog->open();                              // Window-modal over the overlay, without a nested event loop.
 }
 
 void CaptureOverlay::pickArrowStyle(int style)
@@ -1668,7 +1572,7 @@ void CaptureOverlay::updateToolOptions()
     m_mosaicWidthLabel = nullptr;
     m_mosaicPreview = nullptr;
     m_mosaicDragUndo = false;
-    m_colorButton = nullptr;
+    m_colorBoard = nullptr;
     delete m_toolOptions->layout();              // Drops the previous row.
     const QList<QWidget *> stale = m_toolOptions->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly);
     for (QWidget *w : stale) delete w;
@@ -1687,30 +1591,11 @@ void CaptureOverlay::updateToolOptions()
         l->addWidget(b);
     };
     auto addSeparator = [](QHBoxLayout *l) { l->addWidget(barSeparator()); };
-    auto addSwatches = [this](QHBoxLayout *l, ATool family) {
-        static const QColor swatches[] = {"#ff3b30", "#ff9500", "#ffcc00", "#34c759",
-                                          "#007aff", "#af52de", "#ffffff", "#1c1c1e"};
-        for (const QColor &color : swatches) {
-            auto *swatch = new QToolButton;
-            swatch->setObjectName(QStringLiteral("presetColor"));
-            swatch->setFixedSize(11, 11);              // 9px chip inside a 1px grey frame.
-            swatch->setFocusPolicy(Qt::NoFocus);
-            swatch->setCursor(Qt::PointingHandCursor);
-            swatch->setToolTip(color.name());
-            swatch->setStyleSheet(QString("QToolButton{background:%1;border:1px solid #717171;padding:0px;}"
-                                          "QToolButton:hover{border-color:#2080f0;}")
-                                      .arg(color.name()));
-            connect(swatch, &QToolButton::clicked, this,
-                    [this, family, color] { pickToolColor(family, color); });
-            l->addWidget(swatch);
-        }
-        m_colorButton = iconButton(Icon::Palette, QStringLiteral("调色板：点击或拖动选色，或输入 RGB / HEX"));
-        m_colorButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        m_colorButton->setFocusPolicy(Qt::NoFocus);
-        m_colorButton->setCursor(Qt::PointingHandCursor);
-        QToolButton *button = m_colorButton;
-        connect(button, &QToolButton::clicked, this, [this, family, button] { showColorPalette(family, button); });
-        l->addWidget(button);
+    auto addSwatches = [this](QHBoxLayout *l, ATool) {
+        m_colorBoard = new ColorBoard(m_acolor);
+        connect(m_colorBoard, &ColorBoard::presetPicked, this, [this](const QColor &color) { pickToolColor(color); });
+        connect(m_colorBoard, &ColorBoard::customRequested, this, &CaptureOverlay::showColorPalette);
+        l->addWidget(m_colorBoard);
     };
     const bool texty = tool == ATool::Text || tool == ATool::Number;
     auto addSize = [this, lay, texty, tool] {
