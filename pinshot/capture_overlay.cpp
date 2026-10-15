@@ -244,10 +244,11 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
     if (m_mode == Adjusting && !m_live
         && (editorActive() || (m_selAnn >= 0 && m_selAnn < m_anns.size()
                               && !m_anns[m_selAnn].mosaicBrush
+                              && !(m_anns[m_selAnn].tool == ATool::Eraser && !m_anns[m_selAnn].fill)
                               && (m_atool == ATool::None || m_spaceHeld
                                   || (m_atool == ATool::Text && m_anns[m_selAnn].tool == ATool::Text)
-                                  || (m_atool == ATool::Mosaic && !m_mosaicBrush
-                                      && m_anns[m_selAnn].tool == ATool::Mosaic))))) {
+                                  || (regionItem(m_anns[m_selAnn]) && m_anns[m_selAnn].tool == m_atool
+                                      && (m_atool == ATool::Mosaic ? !m_mosaicBrush : m_eraserRect)))))) {
         const Annotation ann = editorActive() ? editorAnnotation() : m_anns[m_selAnn];
         if (ann.tool == ATool::Mosaic) {
             paintMosaicBorder(p, ann, true);
@@ -322,13 +323,16 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
     m_pressPos = e->pos();
     m_dragStarted = false;
     m_inspector->hide();
-    if (m_mode == Adjusting && !m_spaceHeld && (m_atool == ATool::Mosaic || m_atool == ATool::None)) {
-        const bool regionTool = m_atool == ATool::None || !m_mosaicBrush;
-        if (regionTool && m_selAnn >= 0 && m_selAnn < m_anns.size()
-            && m_anns[m_selAnn].tool == ATool::Mosaic && !m_anns[m_selAnn].mosaicBrush) {
+    if (m_mode == Adjusting && !m_spaceHeld
+        && (m_atool == ATool::Mosaic || m_atool == ATool::Eraser || m_atool == ATool::None)) {
+        const bool regionTool = m_atool == ATool::None || (m_atool == ATool::Mosaic ? !m_mosaicBrush : m_eraserRect);
+        const auto ownRegion = [this](const Annotation &ann) {   // An armed tool only grabs its own regions.
+            return regionItem(ann) && (m_atool == ATool::None || ann.tool == m_atool);
+        };
+        if (regionTool && m_selAnn >= 0 && m_selAnn < m_anns.size() && ownRegion(m_anns[m_selAnn])) {
             const Annotation &ann = m_anns[m_selAnn];
             const Handle handle = annHandleAt(ann, e->pos());
-            if (handle != H_None || annotationHit(ann, e->pos())) {
+            if (handle != H_None || annotationHit(ann, mapToLocal(ann, e->pos()))) {
                 m_itemDrag = handle == H_None ? H_Move : handle;
                 m_pressAnn = ann;
                 updateAnnotationCursor(e->pos());
@@ -336,7 +340,7 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
             }
         }
         const int hit = regionTool ? annotationAt(e->pos()) : -1;
-        if (hit >= 0 && m_anns[hit].tool == ATool::Mosaic && !m_anns[hit].mosaicBrush) {
+        if (hit >= 0 && ownRegion(m_anns[hit])) {
             m_selAnn = hit;
             m_pressAnn = m_anns[hit];
             const Handle handle = annHandleAt(m_pressAnn, e->pos());
@@ -347,7 +351,8 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
             return;
         }
     }
-    if (m_selAnn >= 0 && m_selAnn < m_anns.size() && m_anns[m_selAnn].tool == ATool::Mosaic) {
+    if (m_selAnn >= 0 && m_selAnn < m_anns.size()
+        && (m_anns[m_selAnn].tool == ATool::Mosaic || m_anns[m_selAnn].tool == ATool::Eraser)) {
         m_selAnn = -1;
         updateToolOptions();
         update();
@@ -371,12 +376,6 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
     if (m_mode == Adjusting && m_atool != ATool::None
         && !m_spaceHeld && hitHandle(e->pos()) == H_Move) { // A tool acts inside the selection.
         if (m_atool == ATool::Text) { beginTextEdit(e->pos()); return; }
-        if (m_atool == ATool::Eraser) {          // Drag deletes whole annotations touched.
-            m_erasing = true;
-            m_eraseSnapshotted = false;
-            eraseAt(e->pos());
-            return;
-        }
         if (m_atool == ATool::Number) {          // Click drops the next sequence number.
             pushUndo();
             Annotation ann;
@@ -453,10 +452,6 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
         m_sizeTip->hide();                      // Drawing shows no floating text.
         return;
     }
-    if (m_erasing) {                             // The eraser removes whole annotations.
-        eraseAt(pos);
-        return;
-    }
     if (m_itemDrag != H_None) {                  // Move or resize the selected annotation.
         if (m_selAnn < 0 || m_selAnn >= m_anns.size()) { stopItemDrag(); return; }
         if (!m_dragStarted) {
@@ -522,7 +517,6 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
         commitAnnotation();
         return;
     }
-    if (m_erasing) { m_erasing = false; return; }
     if (m_itemDrag != H_None) {                 // A click only selects; a drag edits.
         const bool moved = m_dragStarted;
         m_itemDrag = H_None;
@@ -983,7 +977,7 @@ void CaptureOverlay::handleDetectedRect(const QRect &native, quint64 id)
 void CaptureOverlay::updateInspector()
 {
     const QPoint local = mapFromGlobal(QCursor::pos());
-    if (!isVisible() || editorActive() || m_live || m_erasing || m_itemDrag != H_None
+    if (!isVisible() || editorActive() || m_live || m_itemDrag != H_None
         || m_drag == H_Move
         || (m_mode == Adjusting && m_drag == H_None
             && (m_atool != ATool::None || m_selAnn >= 0 || !m_sel.contains(local)))

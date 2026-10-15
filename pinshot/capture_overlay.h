@@ -100,7 +100,7 @@ private:
         bool bold = false;                           // Text weight / slant.
         bool italic = false;
         qreal rot = 0;                               // Rotation around the box center (degrees).
-        bool fill = false;                           // Rect / Ellipse solid fill; Marker rectangle highlight.
+        bool fill = false;                           // Rect / Ellipse solid fill; Marker / Eraser rectangle mode.
     };
     static QRect annotationRect(const Annotation &ann);
     // Rotation helpers: item geometry stays in local space, the angle only transforms paint and hit tests.
@@ -110,7 +110,7 @@ private:
     static QPoint mapFromLocal(const Annotation &ann, const QPoint &pos);
     // ---- object editing: hit tests, selection anchors, move/resize, undo/redo ----
     static qreal distToSegment(const QPointF &p, const QPointF &a, const QPointF &b);
-    static bool annotationHit(const Annotation &ann, const QPoint &pos, int tolBoost = 0);
+    static bool annotationHit(const Annotation &ann, const QPoint &pos);
     int annotationAt(const QPoint &pos) const;
     // Corner anchors for area shapes, endpoint anchors for arrows; strokes and text move only.
     QVector<QPoint> annAnchors(const Annotation &ann) const;
@@ -120,6 +120,9 @@ private:
     static void paintHandle(QPainter &p, const QPointF &center);
     static int testSelectionBorders();
     static QCursor mosaicBrushCursor(qreal width, qreal dpr);
+    static QCursor eraserCursor(qreal width, qreal dpr);
+    static QPainterPath strokeMask(const QPolygonF &stroke, qreal width);
+    static QPainterPath eraserMask(const Annotation &ann);
     void updateAnnotationCursor(const QPoint &pos);
     static void translateAnnotation(Annotation &ann, const QPoint &d);
     void applyItemDrag(const QPoint &pos, Qt::KeyboardModifiers mods = Qt::NoModifier);
@@ -127,7 +130,6 @@ private:
     void pushUndo();
     void syncUndoButtons();
     void normalizeNumbers();
-    void eraseAt(const QPoint &pos);
     void deleteSelected();
     static QFont textFont(const Annotation &ann);
     static int numberDiameter(const Annotation &ann);
@@ -152,6 +154,10 @@ private:
     void switchMosaicEffect();
     void setMosaicStrength(int value);
     void selectMosaicMode(bool brush);
+    void selectEraserMode(bool rect);
+    bool eraserRect() const;
+    // Rectangle mosaics and rectangle erasures: movable regions that keep their frame while their tool is armed.
+    static bool regionItem(const Annotation &ann);
     qreal toolSize() const;
     void syncSizeInput();
     void commitSizeInput();
@@ -276,8 +282,8 @@ private:
     int m_selAnn = -1;                               // Annotation selected for editing.
     Annotation m_pressAnn;                           // Snapshot for move/resize drags.
     Handle m_itemDrag = H_None;
-    bool m_erasing = false;
-    bool m_eraseSnapshotted = false;
+    bool m_eraserRect = true;                        // Eraser starts in rectangle mode.
+    int m_eraserWidth = 14;
     QVector<QVector<Annotation>> m_undoStack, m_redoStack;
     QTimer m_detectionWatchdog;
     QToolButton *m_undoButton = nullptr;             // Enabled state follows the stacks.
@@ -305,6 +311,7 @@ private:
     QSlider *m_mosaicSlider = nullptr;
     QLabel *m_mosaicStrengthLabel = nullptr;
     QLabel *m_mosaicWidthLabel = nullptr;
+    QToolButton *m_eraserBrushButton = nullptr;      // Brush mode button; shows the brush width.
     QToolButton *m_mosaicPreview = nullptr;
     ColorBoard *m_colorBoard = nullptr;
     QPointer<QColorDialog> m_colorDialog;

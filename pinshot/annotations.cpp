@@ -238,7 +238,7 @@ protected:
 
 QRect CaptureOverlay::annotationRect(const Annotation &ann)
 {
-    if (ann.tool == ATool::Mosaic && ann.mosaicBrush) {
+    if ((ann.tool == ATool::Mosaic && ann.mosaicBrush) || (ann.tool == ATool::Eraser && !ann.fill)) {
         const int w = qCeil(ann.pen / 2.0) + 2;
         return ann.stroke.boundingRect().toAlignedRect().adjusted(-w, -w, w, w);
     }
@@ -295,26 +295,26 @@ qreal CaptureOverlay::distToSegment(const QPointF &p, const QPointF &a, const QP
     return QLineF(p, a + (b - a) * t).length();
 }
 
-bool CaptureOverlay::annotationHit(const Annotation &ann, const QPoint &pos, int tolBoost)
+bool CaptureOverlay::annotationHit(const Annotation &ann, const QPoint &pos)
 {
-    const int tol = qMax(5, ann.pen / 2 + 4);    // Areas keep the base reach; the boost
-    const int lineTol = tol + tolBoost;          // only widens outline / stroke hits.
+    const int tol = qMax(5, ann.pen / 2 + 4);
+    if (ann.tool == ATool::Eraser && !ann.fill) return false;   // Brush erasures are not selectable.
     if (ann.tool == ATool::Mosaic && ann.mosaicBrush) {
         if (ann.stroke.isEmpty()) return false;
         for (int i = 1; i < ann.stroke.size(); ++i)
-            if (distToSegment(pos, ann.stroke[i - 1], ann.stroke[i]) <= ann.pen / 2.0 + lineTol)
+            if (distToSegment(pos, ann.stroke[i - 1], ann.stroke[i]) <= ann.pen / 2.0 + tol)
                 return true;
-        return QLineF(pos, ann.stroke.first()).length() <= ann.pen / 2.0 + lineTol;
+        return QLineF(pos, ann.stroke.first()).length() <= ann.pen / 2.0 + tol;
     }
     switch (ann.tool) {
     case ATool::Rect:                            // Outlines select on their border only.
-        return ann.rect.adjusted(-lineTol, -lineTol, lineTol, lineTol).contains(pos)
+        return ann.rect.adjusted(-tol, -tol, tol, tol).contains(pos)
             && !ann.rect.adjusted(tol, tol, -tol, -tol).contains(pos);
     case ATool::Ellipse: {
         const QPointF d = pos - ann.rect.center();
         const qreal rx = ann.rect.width() / 2.0, ry = ann.rect.height() / 2.0;
         if (rx < 1 || ry < 1) return ann.rect.contains(pos);
-        const qreal outer = qPow(d.x() / (rx + lineTol), 2) + qPow(d.y() / (ry + lineTol), 2);
+        const qreal outer = qPow(d.x() / (rx + tol), 2) + qPow(d.y() / (ry + tol), 2);
         const qreal inner = qPow(d.x() / qMax(1.0, rx - tol), 2)
                           + qPow(d.y() / qMax(1.0, ry - tol), 2);
         return outer <= 1.0 && inner >= 1.0;
@@ -323,22 +323,22 @@ bool CaptureOverlay::annotationHit(const Annotation &ann, const QPoint &pos, int
         if (ann.lineStyle >= 1) {                 // Curve / polyline arrows hit along their vertices.
             if (ann.stroke.isEmpty()) return false;
             for (int i = 1; i < ann.stroke.size(); ++i)
-                if (distToSegment(QPointF(pos), ann.stroke[i - 1], ann.stroke[i]) <= lineTol + ann.pen / 2)
+                if (distToSegment(QPointF(pos), ann.stroke[i - 1], ann.stroke[i]) <= tol + ann.pen / 2)
                     return true;
             return distToSegment(QPointF(pos), ann.stroke.first(), ann.stroke.first())
-                <= lineTol + ann.pen / 2;
+                <= tol + ann.pen / 2;
         }
-        return distToSegment(QPointF(pos), ann.a, ann.b) <= lineTol + ann.pen / 2;
+        return distToSegment(QPointF(pos), ann.a, ann.b) <= tol + ann.pen / 2;
     case ATool::Pen:
     case ATool::Marker:
         if (ann.fill) return ann.rect.adjusted(-tol, -tol, tol, tol).contains(pos);   // Highlight block.
         if (ann.stroke.isEmpty()) return false;
         for (int i = 1; i < ann.stroke.size(); ++i)
             if (distToSegment(QPointF(pos), ann.stroke[i - 1], ann.stroke[i])
-                <= lineTol + ann.pen / 2)
+                <= tol + ann.pen / 2)
                 return true;
         return distToSegment(QPointF(pos), ann.stroke.first(), ann.stroke.first())
-            <= lineTol + ann.pen / 2;
+            <= tol + ann.pen / 2;
     default:                                     // Area objects select anywhere inside.
         return ann.rect.adjusted(-tol, -tol, tol, tol).contains(pos);
     }
@@ -359,6 +359,9 @@ QVector<QPoint> CaptureOverlay::annAnchors(const Annotation &ann) const
     case ATool::Marker:
         if (!ann.fill) return {};
         [[fallthrough]];
+    case ATool::Eraser:
+        if (!ann.fill) return {};
+        [[fallthrough]];
     case ATool::Rect: case ATool::Ellipse: case ATool::Mosaic:
     case ATool::Text: case ATool::Number: {
         const QRect r = ann.rect.normalized();
@@ -371,7 +374,7 @@ QVector<QPoint> CaptureOverlay::annAnchors(const Annotation &ann) const
 
 CaptureOverlay::Handle CaptureOverlay::annHandleAt(const Annotation &ann, const QPoint &pos) const
 {
-    if (ann.mosaicBrush) return H_None;
+    if (ann.mosaicBrush || (ann.tool == ATool::Eraser && !ann.fill)) return H_None;
     if (ann.tool != ATool::Mosaic
         && QRect(rotateAnchor(ann) - QPoint(6, 6), QSize(12, 12)).contains(pos)) return H_Rotate;
     const QVector<QPoint> anchors = annAnchors(ann);
@@ -452,16 +455,18 @@ void CaptureOverlay::updateAnnotationCursor(const QPoint &pos)
         setCursor(Qt::ArrowCursor);
         return;
     }
-    if (!m_live && m_selAnn >= 0 && m_selAnn < m_anns.size()
-        && m_anns[m_selAnn].tool == ATool::Mosaic && !m_anns[m_selAnn].mosaicBrush) {
+    if (!m_live && m_selAnn >= 0 && m_selAnn < m_anns.size() && regionItem(m_anns[m_selAnn])) {
         const Handle handle = annHandleAt(m_anns[m_selAnn], pos);
         if (handle != H_None) { setCursor(cursorForHandle(handle)); return; }
-        if (annotationHit(m_anns[m_selAnn], pos)) { setCursor(Qt::SizeAllCursor); return; }
+        if (annotationHit(m_anns[m_selAnn], mapToLocal(m_anns[m_selAnn], pos))) { setCursor(Qt::SizeAllCursor); return; }
     }
     const Handle handle = hitHandle(pos);
     if (m_atool == ATool::Mosaic && mosaicBrush() && handle == H_Move && !m_spaceHeld) {
         const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(pos));
         setCursor(mosaicBrushCursor(toolSize(), screen ? screen->devicePixelRatio() : devicePixelRatioF()));
+    } else if (m_atool == ATool::Eraser && !eraserRect() && handle == H_Move && !m_spaceHeld) {
+        const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(pos));
+        setCursor(eraserCursor(toolSize(), screen ? screen->devicePixelRatio() : devicePixelRatioF()));
     } else setCursor(m_atool != ATool::None && handle == H_Move ? Qt::CrossCursor : cursorForHandle(handle));
 }
 
@@ -599,22 +604,38 @@ QString CaptureOverlay::numberLabel(int n, int format)
     }
 }
 
-void CaptureOverlay::eraseAt(const QPoint &pos)
+QPainterPath CaptureOverlay::strokeMask(const QPolygonF &stroke, qreal width)
 {
-    const int tolBoost = m_apen * 2;              // Eraser thickness widens the hit zone.
-    for (int i = m_anns.size() - 1; i >= 0; --i)
-        if (annotationHit(m_anns[i], mapToLocal(m_anns[i], pos), tolBoost)) {
-            if (!m_eraseSnapshotted) {           // One snapshot covers the whole drag.
-                pushUndo();
-                m_eraseSnapshotted = true;
-            }
-            const QRect dirty = rotatedBounds(m_anns[i]).adjusted(-24, -24, 24, 24);
-            m_anns.removeAt(i);
-            if (m_selAnn == i) m_selAnn = -1;
-            else if (m_selAnn > i) --m_selAnn;
-            normalizeNumbers();
-            update(dirty);
-        }
+    QPainterPath mask;
+    if (stroke.isEmpty()) return mask;
+    if (stroke.size() == 1) { mask.addEllipse(stroke.first(), width / 2, width / 2); return mask; }
+    QPainterPath line;
+    line.moveTo(stroke.first());
+    for (int i = 1; i < stroke.size(); ++i) line.lineTo(stroke[i]);
+    QPainterPathStroker stroker;
+    stroker.setWidth(width);
+    stroker.setCapStyle(Qt::RoundCap);
+    stroker.setJoinStyle(Qt::RoundJoin);
+    return stroker.createStroke(line);
+}
+
+QCursor CaptureOverlay::eraserCursor(qreal width, qreal dpr)   // Hollow ring, dark inside light, as wide as the brush.
+{
+    const int side = qCeil(width) + 5;
+    QPixmap pixmap(qRound(side * dpr), qRound(side * dpr));
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setBrush(Qt::NoBrush);
+    const QPointF c(side / 2.0, side / 2.0);
+    painter.setPen(QPen(Qt::white, 1));
+    painter.drawEllipse(c, width / 2 + 1, width / 2 + 1);
+    painter.setPen(QPen(QColor(0x20, 0x20, 0x20), 1));
+    painter.drawEllipse(c, width / 2, width / 2);
+    painter.drawEllipse(c, qMax(1.0, width / 2 - 2), qMax(1.0, width / 2 - 2));
+    painter.end();
+    return QCursor(pixmap);
 }
 
 void CaptureOverlay::deleteSelected()
@@ -716,7 +737,7 @@ bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
     if ((obj == m_tools || obj == m_toolOptions)
         && (ev->type() == QEvent::Enter || ev->type() == QEvent::Leave))
         updateInspector();
-    if (obj == m_mosaicWidthLabel && ev->type() == QEvent::Wheel) {
+    if ((obj == m_mosaicWidthLabel || obj == m_eraserBrushButton) && ev->type() == QEvent::Wheel) {
         const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
         if (delta) tuneWidth(delta > 0 ? 1 : -1, mapFromGlobal(QCursor::pos()));
         ev->accept();
@@ -1053,6 +1074,26 @@ void CaptureOverlay::selectMosaicMode(bool brush)
     selectTool(ATool::Mosaic);
 }
 
+void CaptureOverlay::selectEraserMode(bool rect)
+{
+    if (m_live) { m_live = false; commitAnnotation(); }
+    m_eraserRect = rect;
+    selectTool(ATool::Eraser);
+}
+
+bool CaptureOverlay::eraserRect() const
+{
+    if (m_live) return m_ann.fill;
+    if (m_selAnn >= 0 && m_selAnn < m_anns.size() && m_anns[m_selAnn].tool == ATool::Eraser)
+        return m_anns[m_selAnn].fill;
+    return m_eraserRect;
+}
+
+bool CaptureOverlay::regionItem(const Annotation &ann)
+{
+    return (ann.tool == ATool::Mosaic && !ann.mosaicBrush) || (ann.tool == ATool::Eraser && ann.fill);
+}
+
 qreal CaptureOverlay::toolSize() const
 {
     if (editorActive()) return m_editFont;
@@ -1063,9 +1104,10 @@ qreal CaptureOverlay::toolSize() const
         if (m_selAnn >= 0 && m_selAnn < m_anns.size()) return m_anns[m_selAnn].pen;
         return m_mosaicWidth;
     }
+    if (tool == ATool::Eraser) return m_live ? m_ann.pen : m_eraserWidth;
     const bool texty = tool == ATool::Text || tool == ATool::Number;
     if (m_live) return texty ? m_ann.font : m_ann.pen;
-    if (m_atool != ATool::Eraser && m_selAnn >= 0 && m_selAnn < m_anns.size())
+    if (m_selAnn >= 0 && m_selAnn < m_anns.size())
         return texty ? m_anns[m_selAnn].font : m_anns[m_selAnn].pen;
     return texty ? m_afont : m_apen;
 }
@@ -1073,6 +1115,7 @@ qreal CaptureOverlay::toolSize() const
 void CaptureOverlay::syncSizeInput()
 {
     if (m_mosaicWidthLabel) m_mosaicWidthLabel->setText(QString::number(toolSize()));
+    if (m_eraserBrushButton) m_eraserBrushButton->setText(QString::number(toolSize()));
     if (m_mosaicPreview) {
         QImage preview(24, 24, QImage::Format_ARGB32);
         preview.fill(Qt::transparent);
@@ -1177,8 +1220,17 @@ void CaptureOverlay::setToolSize(qreal value)                    // Numeric edit
     const bool texty = tool == ATool::Text || tool == ATool::Number;
     const bool strength = tool == ATool::Mosaic && !mosaicBrush();
     value = texty ? qBound(qreal(1), value, qreal(1638))
-                  : tool == ATool::Mosaic ? qBound(strength ? 3 : 4, qRound(value), strength ? 24 : 50)
-                                         : qBound(1, qRound(value), 12);
+                  : tool == ATool::Mosaic || tool == ATool::Eraser
+                        ? qBound(strength ? 3 : 4, qRound(value), strength ? 24 : 50)
+                        : qBound(1, qRound(value), 12);
+    if (tool == ATool::Eraser) {                 // Only the brush width; rectangle erasures have none.
+        m_eraserWidth = qRound(value);
+        if (m_live) m_ann.pen = m_eraserWidth;
+        syncSizeInput();
+        updateAnnotationCursor(mapFromGlobal(QCursor::pos()));
+        update();
+        return;
+    }
     if (tool == ATool::Mosaic) {
         if (!mosaicBrush()) { setMosaicStrength(qRound(value)); return; }
         if (value != toolSize()) {
@@ -1200,7 +1252,7 @@ void CaptureOverlay::setToolSize(qreal value)                    // Numeric edit
         applyEditorFont();
     } else if (m_live) {
         m_ann.pen = m_apen = qRound(value);
-    } else if (m_atool != ATool::Eraser && m_selAnn >= 0 && m_selAnn < m_anns.size()) {
+    } else if (m_selAnn >= 0 && m_selAnn < m_anns.size()) {
         const bool dragging = m_sizeSlider && m_sizeSlider->isSliderDown();
         if (!dragging || !m_sizeDragUndo) pushUndo();   // One undo step per slider drag.
         m_sizeDragUndo = dragging;
@@ -1242,6 +1294,10 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
         m_ann.mosaicStrength = m_mosaicLevels[m_mosaicBlur];
         m_ann.mosaicSeed = QRandomGenerator::global()->generate();
     }
+    if (m_atool == ATool::Eraser) {
+        m_ann.fill = m_eraserRect;
+        m_ann.pen = m_eraserWidth;
+    }
     if (m_atool == ATool::Rect || m_atool == ATool::Ellipse) m_ann.fill = m_afill;
     if (m_atool == ATool::Marker) m_ann.fill = m_markerFill;
     if (m_atool == ATool::Arrow) {
@@ -1254,8 +1310,8 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
         m_ann.lineStyle = 2;                     // Straight arrows build clicked vertices; two collapse to a/b.
         m_ann.stroke << pos << pos;              // Fixed vertex plus a rubber-band end.
     }
-    else if (m_atool == ATool::Pen || (m_atool == ATool::Marker && !m_ann.fill) || m_ann.mosaicBrush
-        || (m_atool == ATool::Arrow && m_arrowLineStyle == 1))
+    else if (m_atool == ATool::Pen || ((m_atool == ATool::Marker || m_atool == ATool::Eraser) && !m_ann.fill)
+        || m_ann.mosaicBrush || (m_atool == ATool::Arrow && m_arrowLineStyle == 1))
         m_ann.stroke << pos;                     // Curve arrows sample the drag like the pen.
     else if (m_atool != ATool::Arrow) m_ann.rect = QRect(pos, pos);
     syncSizeInput();                             // Keep the active options visible while drawing.
@@ -1284,10 +1340,12 @@ void CaptureOverlay::updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers m
         m_ann.b = m_ann.stroke.last().toPoint();
         return;
     }
-    const ATool shape = m_ann.tool == ATool::Marker && m_ann.fill ? ATool::Rect : m_atool;
+    const ATool shape = (m_ann.tool == ATool::Marker || m_ann.tool == ATool::Eraser) && m_ann.fill
+        ? ATool::Rect : m_ann.tool;
     switch (shape) {
     case ATool::Pen:
     case ATool::Marker:
+    case ATool::Eraser:
         if ((pos - m_ann.stroke.last().toPoint()).manhattanLength() >= 2)
             m_ann.stroke << pos;                 // Decimate near-duplicate samples.
         break;
@@ -1325,6 +1383,7 @@ void CaptureOverlay::commitAnnotation()
     qreal pathLength = 0;
     for (int i = 1; i < m_ann.stroke.size(); ++i) pathLength += QLineF(m_ann.stroke[i - 1], m_ann.stroke[i]).length();
     const bool meaningful = m_ann.mosaicBrush ? !m_ann.stroke.isEmpty()
+        : m_ann.tool == ATool::Eraser && !m_ann.fill ? !m_ann.stroke.isEmpty()   // A click erases a dot.
         : m_ann.tool == ATool::Pen || (m_ann.tool == ATool::Marker && !m_ann.fill)
         ? m_ann.stroke.size() >= 2
         : m_ann.tool == ATool::Arrow
@@ -1335,7 +1394,8 @@ void CaptureOverlay::commitAnnotation()
         pushUndo();
         m_anns.append(m_ann);
         normalizeNumbers();
-        m_selAnn = m_ann.mosaicBrush ? -1 : m_anns.size() - 1;  // Completed mosaic strokes are not re-editable.
+        // Completed mosaic and eraser strokes are not re-editable.
+        m_selAnn = m_ann.mosaicBrush || (m_ann.tool == ATool::Eraser && !m_ann.fill) ? -1 : m_anns.size() - 1;
     }
     if (m_ann.color != m_acolor) {               // A pick made mid-draw does not outlive the drawing.
         m_acolor = m_ann.color;
@@ -1415,7 +1475,7 @@ void CaptureOverlay::pickToolColor(const QColor &color, bool undoable)
             update();
         }
     } else if (m_selAnn >= 0 && m_selAnn < m_anns.size() && m_anns[m_selAnn].tool != ATool::Mosaic
-               && m_anns[m_selAnn].color != color) {
+               && m_anns[m_selAnn].tool != ATool::Eraser && m_anns[m_selAnn].color != color) {
         if (undoable) pushUndo();
         m_anns[m_selAnn].color = color;
         update();
@@ -1584,6 +1644,7 @@ void CaptureOverlay::updateToolOptions()
     m_mosaicSlider = nullptr;
     m_mosaicStrengthLabel = nullptr;
     m_mosaicWidthLabel = nullptr;
+    m_eraserBrushButton = nullptr;
     m_mosaicPreview = nullptr;
     m_mosaicDragUndo = false;
     m_colorBoard = nullptr;
@@ -1843,8 +1904,22 @@ void CaptureOverlay::updateToolOptions()
         syncSizeInput();
         break;
     }
-    case ATool::Eraser: {
-        addSize();
+    case ATool::Eraser: {                        // Brush (shows its width) and rectangle modes.
+        const bool rect = eraserRect();
+        m_eraserBrushButton = new QToolButton;
+        m_eraserBrushButton->setObjectName(QStringLiteral("eraserBrush"));
+        m_eraserBrushButton->setAccessibleName(QStringLiteral("橡皮擦笔：滚轮调节笔宽"));
+        m_eraserBrushButton->setFixedSize(32, 32);
+        m_eraserBrushButton->setFocusPolicy(Qt::NoFocus);
+        m_eraserBrushButton->setCheckable(true);
+        m_eraserBrushButton->setChecked(!rect);
+        m_eraserBrushButton->setCursor(Qt::PointingHandCursor);
+        m_eraserBrushButton->installEventFilter(this);
+        connect(m_eraserBrushButton, &QToolButton::clicked, this, [this] { selectEraserMode(false); });
+        lay->addWidget(m_eraserBrushButton);
+        addOption(lay, Icon::Fill, QStringLiteral("矩形橡皮擦"), rect, [this] { selectEraserMode(true); });
+        lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("eraserRectangle"));
+        syncSizeInput();
         break;
     }
     case ATool::Number: {
@@ -1895,6 +1970,23 @@ void CaptureOverlay::paintAnnotations(QPainter &p, const QPointF &origin, qreal 
     p.translate(origin);
     p.scale(scale, scale);
     p.setClipRect(clip, Qt::IntersectClip);
+    // Erasures cut through annotations only, so they all paint into a transparent layer first.
+    bool erasing = m_live && m_ann.tool == ATool::Eraser;
+    for (const Annotation &ann : m_anns) erasing = erasing || ann.tool == ATool::Eraser;
+    const qreal layerDpr = p.device()->devicePixelRatioF();
+    // shortcut: the layer spans the whole selection each repaint; clip it to the dirty rect if large captures lag.
+    const QRect device = erasing ? p.transform().mapRect(clip).toAlignedRect() : QRect();
+    QImage layerImage;
+    QPainter layerPainter;
+    if (erasing && !device.isEmpty()) {
+        layerImage = QImage((QSizeF(device.size()) * layerDpr).toSize(), QImage::Format_ARGB32_Premultiplied);
+        layerImage.setDevicePixelRatio(layerDpr);
+        layerImage.fill(Qt::transparent);
+        layerPainter.begin(&layerImage);
+        layerPainter.setTransform(p.transform() * QTransform::fromTranslate(-device.x(), -device.y()));
+        layerPainter.setClipRect(clip);
+    }
+    QPainter &out = layerPainter.isActive() ? layerPainter : p;
     int remainingMosaics = m_live && m_ann.tool == ATool::Mosaic ? 1 : 0;
     for (const Annotation &ann : m_anns) if (ann.tool == ATool::Mosaic) ++remainingMosaics;
     QImage lower;
@@ -1907,13 +1999,18 @@ void CaptureOverlay::paintAnnotations(QPainter &p, const QPointF &origin, qreal 
     }
     const auto paint = [&](const Annotation &ann, bool visible = true) {
         if (ann.tool == ATool::Mosaic) --remainingMosaics;
-        if (visible) drawAnnotation(p, ann, lower);
+        if (visible) drawAnnotation(out, ann, lower);
         if (remainingMosaics > 0) {
             const QImage source = ann.tool == ATool::Mosaic ? lower : QImage();
             QPainter layer(&lower);
-            layer.scale(m_shot.devicePixelRatioF(), m_shot.devicePixelRatioF());
+            const qreal dpr = m_shot.devicePixelRatioF();
+            layer.scale(dpr, dpr);
             layer.setClipRect(QRectF(m_sel));
-            drawAnnotation(layer, ann, source);
+            if (ann.tool == ATool::Eraser) {     // Later mosaics see the original pixels through erasures.
+                layer.setClipPath(annTransform(ann).map(eraserMask(ann)), Qt::IntersectClip);
+                layer.drawImage(QRectF(0, 0, m_mosaicFrame.width() / dpr, m_mosaicFrame.height() / dpr),
+                                m_mosaicFrame);
+            } else drawAnnotation(layer, ann, source);
         }
     };
     for (int i = 0; i < m_anns.size(); ++i)
@@ -1921,7 +2018,22 @@ void CaptureOverlay::paintAnnotations(QPainter &p, const QPointF &origin, qreal 
         else paint(editorAnnotation(), includeEditor);
     if (editorActive() && m_editAnn < 0) paint(editorAnnotation(), includeEditor);
     if (m_live) paint(m_ann);
+    if (layerPainter.isActive()) {
+        layerPainter.end();
+        p.save();
+        p.resetTransform();
+        p.drawImage(device.topLeft(), layerImage);
+        p.restore();
+    }
     p.restore();
+}
+
+QPainterPath CaptureOverlay::eraserMask(const Annotation &ann)
+{
+    if (!ann.fill) return strokeMask(ann.stroke, ann.pen);
+    QPainterPath mask;
+    mask.addRect(QRectF(ann.rect));
+    return mask;
 }
 
 QImage CaptureOverlay::mosaicTiles(const QImage &source, int block, quint32 seed)
@@ -2260,19 +2372,8 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
             QRect(0, 0, qFloor(m_shot.width() / dpr), qFloor(m_shot.height() / dpr)));
         if (area.isEmpty() || (ann.mosaicBrush && ann.stroke.isEmpty())) break;
         QPainterPath mask;
-        if (ann.mosaicBrush) {
-            if (ann.stroke.size() == 1) mask.addEllipse(ann.stroke.first(), ann.pen / 2.0, ann.pen / 2.0);
-            else {
-                QPainterPath line;
-                line.moveTo(ann.stroke.first());
-                for (int i = 1; i < ann.stroke.size(); ++i) line.lineTo(ann.stroke[i]);
-                QPainterPathStroker stroker;
-                stroker.setWidth(ann.pen);
-                stroker.setCapStyle(Qt::RoundCap);
-                stroker.setJoinStyle(Qt::RoundJoin);
-                mask = stroker.createStroke(line);
-            }
-        } else mask.addRect(QRectF(ann.rect));
+        if (ann.mosaicBrush) mask = strokeMask(ann.stroke, ann.pen);
+        else mask.addRect(QRectF(ann.rect));
         p.setClipPath(mask, Qt::IntersectClip);
         if (ann.mosaicCacheStrength != ann.mosaicStrength || ann.mosaicCache.isNull()
             || ann.mosaicSource != source) {
@@ -2290,6 +2391,10 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         }
         break;
     }
+    case ATool::Eraser:                          // Clears lower annotations; the capture shows through.
+        p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
+        p.fillPath(eraserMask(ann), Qt::black);
+        break;
     default:
         break;
     }
