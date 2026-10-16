@@ -20,6 +20,13 @@ int ColorBoard::testRendering()
     auto check = [](bool ok, const char *message) {
         if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); }
     };
+    for (int i = 0; i <= int(Icon::EraseRect); ++i) {     // Every glyph loads from the resource and draws ink.
+        const QImage img = makeIcon(Icon(i)).pixmap(QSize(16, 16)).toImage();
+        bool ink = false;
+        for (int y = 0; y < img.height() && !ink; ++y)
+            for (int x = 0; x < img.width() && !ink; ++x) ink = qAlpha(img.pixel(x, y)) > 128;
+        check(ink, "every toolbar icon renders from its SVG resource");
+    }
     ColorBoard board(QColor("#ed1c24"));
     board.show();
     QApplication::processEvents();

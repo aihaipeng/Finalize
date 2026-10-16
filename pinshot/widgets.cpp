@@ -19,142 +19,16 @@
 #include <QStylePainter>
 #include <QStyleOptionComboBox>
 #include <QFrame>
+#include <QSvgRenderer>
 #include <qt_windows.h>
-
-// One 16px grid, glyphs inside a 2.5..13.5 box, straight strokes on half pixels so they
-// stay crisp at 100%; `fill` holds the few solid accents.
-static void buildIconPath(QPainterPath &path, QPainterPath &fill, Icon icon)
-{
-    switch (icon) {
-    case Icon::Save:                                  // Floppy disk with shutter and label.
-        path.moveTo(2.5, 2.5); path.lineTo(11, 2.5); path.lineTo(13.5, 5); path.lineTo(13.5, 13.5);
-        path.lineTo(2.5, 13.5); path.closeSubpath();
-        path.moveTo(5.5, 2.5); path.lineTo(5.5, 5.5); path.lineTo(10.5, 5.5); path.lineTo(10.5, 2.5);
-        path.moveTo(4.5, 13.5); path.lineTo(4.5, 9.5); path.lineTo(11.5, 9.5); path.lineTo(11.5, 13.5);
-        break;
-    case Icon::Copy:                                  // Front sheet over a partly hidden back sheet.
-        path.addRoundedRect(5.5, 5.5, 8, 8, 1.5, 1.5);
-        path.moveTo(10.5, 4); path.lineTo(10.5, 3.5); path.quadTo(10.5, 2.5, 9.5, 2.5);
-        path.lineTo(3.5, 2.5); path.quadTo(2.5, 2.5, 2.5, 3.5); path.lineTo(2.5, 9.5);
-        path.quadTo(2.5, 10.5, 3.5, 10.5); path.lineTo(4, 10.5);
-        break;
-    case Icon::Pin:                                   // Thumbtack: cap, flared body, needle.
-        path.moveTo(5, 2.5); path.lineTo(11, 2.5);
-        path.moveTo(6.5, 2.5); path.lineTo(6.5, 6.5); path.lineTo(4.5, 9.5); path.lineTo(11.5, 9.5);
-        path.lineTo(9.5, 6.5); path.lineTo(9.5, 2.5);
-        path.moveTo(8, 9.5); path.lineTo(8, 13.5);
-        break;
-    case Icon::LongShot:                              // Page top with a downward arrow: scrolling capture.
-        path.moveTo(2.5, 5.5); path.lineTo(2.5, 2.5); path.lineTo(13.5, 2.5); path.lineTo(13.5, 5.5);
-        path.moveTo(8, 5.5); path.lineTo(8, 13);
-        path.moveTo(5, 10); path.lineTo(8, 13); path.lineTo(11, 10);
-        break;
-    case Icon::Cancel:                                // Cross.
-        path.moveTo(3.5, 3.5); path.lineTo(12.5, 12.5);
-        path.moveTo(12.5, 3.5); path.lineTo(3.5, 12.5);
-        break;
-    case Icon::Rect:                                  // Plain square frame, square corners.
-        path.addRect(2.5, 3.5, 11, 9);
-        break;
-    case Icon::Fill:                                  // Solid block inside a frame: filled shape.
-        path.addRect(2.5, 3.5, 11, 9);
-        fill.addRect(4, 5, 8, 6);
-        break;
-    case Icon::Dashed:                                // Three horizontal dashes on the pixel grid, so they stay full contrast.
-        path.moveTo(2.5, 8.5); path.lineTo(3.5, 8.5);
-        path.moveTo(7.5, 8.5); path.lineTo(8.5, 8.5);
-        path.moveTo(12.5, 8.5); path.lineTo(13.5, 8.5);
-        break;
-    case Icon::Ellipse:
-        path.addEllipse(QPointF(8, 8), 5.5, 5.5);
-        break;
-    case Icon::Arrow:                                 // Thin diagonal shaft with a swept-back solid head.
-        path.moveTo(2.5, 13.5); path.lineTo(10, 6);
-        fill.moveTo(13.5, 2.5); fill.lineTo(12, 9); fill.lineTo(10.2, 5.8); fill.lineTo(7, 4); fill.closeSubpath();
-        break;
-    case Icon::Pen:                                   // Slim pencil: body, ferrule line, nib.
-        path.moveTo(11, 2.5); path.lineTo(13.5, 5); path.lineTo(5, 13.5); path.lineTo(2.5, 13.5);
-        path.lineTo(2.5, 11); path.closeSubpath();
-        path.moveTo(9.5, 4); path.lineTo(12, 6.5);
-        break;
-    case Icon::Mosaic:                                // Checkerboard: two solid cells in an outline.
-        path.addRect(2.5, 2.5, 11, 11);
-        fill.addRect(3, 3, 5, 5);
-        fill.addRect(8, 8, 5, 5);
-        break;
-    case Icon::Marker:                                // Highlighter: wide body, chisel tip, ink base.
-        path.moveTo(9, 2.5); path.lineTo(13.5, 7); path.lineTo(8.5, 12); path.lineTo(4, 7.5);
-        path.closeSubpath();
-        path.moveTo(5.5, 9); path.lineTo(3.5, 11); path.lineTo(5, 12.5); path.lineTo(7, 10.5);
-        fill.addRect(2.5, 13, 11, 1);
-        break;
-    case Icon::Text:                                  // Letter T.
-        path.moveTo(3.5, 4.5); path.lineTo(3.5, 2.5); path.lineTo(12.5, 2.5); path.lineTo(12.5, 4.5);
-        path.moveTo(8, 2.5); path.lineTo(8, 13.5);
-        path.moveTo(6, 13.5); path.lineTo(10, 13.5);
-        break;
-    case Icon::Bold:
-        path.moveTo(4.5, 2.5); path.lineTo(9, 2.5); path.cubicTo(12.5, 2.5, 12.5, 7.5, 9, 7.5);
-        path.lineTo(4.5, 7.5);
-        path.moveTo(4.5, 2.5); path.lineTo(4.5, 13.5); path.lineTo(9.5, 13.5);
-        path.cubicTo(13.5, 13.5, 13.5, 7.5, 9.5, 7.5);
-        break;
-    case Icon::Minimize:
-        path.moveTo(3, 8.5); path.lineTo(13, 8.5);
-        break;
-    case Icon::Maximize:
-        path.addRect(3.5, 3.5, 9, 9);
-        break;
-    case Icon::Restore:
-        path.addRect(3.5, 5.5, 7, 7);
-        path.moveTo(5.5, 3.5); path.lineTo(12.5, 3.5); path.lineTo(12.5, 10.5);
-        break;
-    case Icon::Refresh:                               // Open ring with an arrowhead at its end.
-        path.moveTo(13, 8); path.arcTo(QRectF(3, 3, 10, 10), 0, 300);
-        path.moveTo(13.5, 3.5); path.lineTo(13.5, 7.5); path.lineTo(9.5, 7.5);
-        break;
-    case Icon::Ocr:                                   // Scan corners around a letter T.
-        path.moveTo(2.5, 5.5); path.lineTo(2.5, 2.5); path.lineTo(5.5, 2.5);
-        path.moveTo(10.5, 2.5); path.lineTo(13.5, 2.5); path.lineTo(13.5, 5.5);
-        path.moveTo(2.5, 10.5); path.lineTo(2.5, 13.5); path.lineTo(5.5, 13.5);
-        path.moveTo(13.5, 10.5); path.lineTo(13.5, 13.5); path.lineTo(10.5, 13.5);
-        path.moveTo(5.5, 5.5); path.lineTo(10.5, 5.5);
-        path.moveTo(8, 5.5); path.lineTo(8, 10.5);
-        break;
-    case Icon::Italic:
-        path.moveTo(7, 2.5); path.lineTo(12, 2.5);
-        path.moveTo(4, 13.5); path.lineTo(9, 13.5);
-        path.moveTo(9.5, 2.5); path.lineTo(6.5, 13.5);
-        break;
-    case Icon::Number:                                // Circled digit one.
-        path.addEllipse(QPointF(8, 8), 5.5, 5.5);
-        path.moveTo(6.5, 6.5); path.lineTo(8.5, 5); path.lineTo(8.5, 11);
-        break;
-    case Icon::Eraser:                                // Slanted block with a dividing band, on a base line.
-        path.moveTo(9, 2.5); path.lineTo(13.5, 7); path.lineTo(8, 12.5); path.lineTo(5.5, 12.5);
-        path.lineTo(2.5, 9.5); path.closeSubpath();
-        path.moveTo(5.5, 6); path.lineTo(10, 10.5);
-        path.moveTo(8, 13.5); path.lineTo(13.5, 13.5);
-        fill.moveTo(9, 2.5); fill.lineTo(13.5, 7); fill.lineTo(10, 10.5); fill.lineTo(5.5, 6);
-        fill.closeSubpath();
-        break;
-    case Icon::Undo:                                  // Hooked arrow turning back.
-        path.moveTo(6, 3.5); path.lineTo(3, 6.5); path.lineTo(6, 9.5);
-        path.moveTo(3, 6.5); path.lineTo(10, 6.5); path.quadTo(13.5, 6.5, 13.5, 10);
-        path.quadTo(13.5, 13.5, 10, 13.5); path.lineTo(7, 13.5);
-        break;
-    case Icon::Redo:                                  // Hooked arrow turning forward.
-        path.moveTo(10, 3.5); path.lineTo(13, 6.5); path.lineTo(10, 9.5);
-        path.moveTo(13, 6.5); path.lineTo(6, 6.5); path.quadTo(2.5, 6.5, 2.5, 10);
-        path.quadTo(2.5, 13.5, 6, 13.5); path.lineTo(9, 13.5);
-        break;
-    }
-}
 
 QIcon makeIcon(Icon icon)
 {
-    QPainterPath path, fill;
-    buildIconPath(path, fill, icon);
+    static const char *const names[] = {
+        "save", "copy", "pin", "long_shot", "ocr", "cancel", "rect", "ellipse", "arrow", "pen", "marker",
+        "text", "number", "mosaic", "eraser", "undo", "redo", "bold", "italic", "minimize", "maximize",
+        "restore", "refresh", "fill", "dashed", "icons8-line-width", "erase_rect"};
+    QSvgRenderer svg(QStringLiteral(":/icons/%1.svg").arg(QLatin1String(names[int(icon)])));
     QIcon result;
     // Light bar language: dark glyphs, grey when disabled, white on the checked theme fill.
     const struct { QColor color; QIcon::State state; QList<QIcon::Mode> modes; } variants[] = {
@@ -169,13 +43,10 @@ QIcon makeIcon(Icon icon)
         pm.setDevicePixelRatio(px / 16.0);
         pm.fill(Qt::transparent);
         QPainter p(&pm);
-        p.setRenderHint(QPainter::Antialiasing);
-        QPen pen(variant.color, 1);                   // One uniform 1px line weight across the set.
-        pen.setCapStyle(Qt::SquareCap);
-        pen.setJoinStyle(Qt::MiterJoin);
-        p.setPen(pen);
-        p.fillPath(fill, variant.color);
-        p.drawPath(path);
+        svg.render(&p, QRectF(0, 0, 16, 16));
+        p.setCompositionMode(QPainter::CompositionMode_SourceIn);   // Recolor the glyph, keep its alpha.
+        p.fillRect(QRectF(0, 0, 16, 16), variant.color);
+        p.end();
         for (QIcon::Mode mode : variant.modes) result.addPixmap(pm, mode, variant.state);
     }
     return result;

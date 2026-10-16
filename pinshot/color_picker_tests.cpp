@@ -490,15 +490,27 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
               && overlay.cropped().toImage() != beforeMosaic,
           "mosaic pixelates the frozen frame in its rectangle");
     overlay.selectTool(ATool::Eraser);
-    check(overlay.eraserRect() && overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserRectangle"))
-              && overlay.m_eraserBrushButton && !overlay.m_colorBoard,
-          "the eraser starts in rectangle mode with brush and rectangle options and no colors");
+    {
+        const auto *strip = static_cast<QBoxLayout *>(overlay.m_toolOptions->layout());
+        const auto *brushButton = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserBrush"));
+        check(!overlay.eraserRect() && strip->count() == 3 && brushButton && brushButton->isChecked()
+                  && strip->itemAt(0)->widget() == brushButton
+                  && strip->itemAt(1)->widget()->objectName() == QStringLiteral("eraserRectangle")
+                  && strip->itemAt(2)->widget() == overlay.m_sizeButton && !overlay.m_colorBoard,
+              "the eraser starts in brush mode: brush, rectangle, then the width button, no colors");
+    }
+    overlay.selectEraserMode(true);
+    check(overlay.m_sizeButton != nullptr, "rectangle erasing keeps the width button");
     const QImage beforeErase = overlay.cropped().toImage();
     const QPoint erasePixel = (strokeAt + QPoint(9, 9) - overlay.m_sel.topLeft()) * overlay.m_shot.devicePixelRatio();
     const QImage blank = overlay.m_shot.toImage();
     const QPoint blankPixel = (strokeAt + QPoint(9, 9)) * overlay.m_shot.devicePixelRatio();
+    const QRect frameArea(strokeAt + QPoint(4, 4), QSize(11, 11));
+    const QImage beforeFrame = overlay.grab(frameArea).toImage();
     mouse(QEvent::MouseButtonPress, strokeAt + QPoint(4, 4));
     mouse(QEvent::MouseMove, strokeAt + QPoint(14, 14));
+    check(overlay.grab(frameArea).toImage() != beforeFrame && overlay.m_live && overlay.m_ann.fill,
+          "dragging a rectangle erasure draws a frame around the area");
     mouse(QEvent::MouseButtonRelease, strokeAt + QPoint(14, 14));
     const QImage afterRectErase = overlay.cropped().toImage();
     check(overlay.m_anns.size() == 5 && overlay.m_anns[0].tool == ATool::Marker
@@ -507,12 +519,79 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     check(afterRectErase.pixelColor(erasePixel) == blank.pixelColor(blankPixel)
               && beforeErase.pixelColor(erasePixel) != blank.pixelColor(blankPixel),
           "erased pixels show the capture again");
+    const QRect erasedRect = overlay.m_anns[4].rect;
+    mouse(QEvent::MouseButtonPress, annOrigin + QPoint(100, 15));
+    mouse(QEvent::MouseButtonRelease, annOrigin + QPoint(100, 15));
+    check(overlay.m_selAnn == -1 && overlay.annotationAt(strokeAt + QPoint(9, 9)) != 4,
+          "clicking outside finishes a rectangle erasure");
+    {
+        const QRect keptSel = overlay.m_sel;
+        const int kept = overlay.m_anns.size();
+        overlay.m_selAnn = 4;
+        const QPoint outside = keptSel.bottomRight() + QPoint(60, 60);
+        mouse(QEvent::MouseButtonPress, outside);
+        mouse(QEvent::MouseButtonRelease, outside);
+        check(overlay.m_sel == keptSel && overlay.m_anns.size() == kept && overlay.m_selAnn == -1
+                  && overlay.m_atool == ATool::Eraser,
+              "an eraser click outside the capture finishes the erasure and keeps the capture region");
+        overlay.selectTool(ATool::Rect);
+        mouse(QEvent::MouseButtonPress, keptSel.topLeft() + QPoint(60, 62));
+        mouse(QEvent::MouseMove, keptSel.topLeft() + QPoint(100, 76));
+        mouse(QEvent::MouseButtonRelease, keptSel.topLeft() + QPoint(100, 76));
+        const int shape = overlay.m_anns.size() - 1;
+        QToolButton *ellipseButton = nullptr;
+        for (QToolButton *b : overlay.m_toolOptions->findChildren<QToolButton *>())
+            if (b->accessibleName() == QStringLiteral("椭圆")) ellipseButton = b;
+        check(overlay.m_anns[shape].tool == ATool::Rect && overlay.m_selAnn == shape && ellipseButton,
+              "a drawn rectangle stays selected with the shape options shown");
+        ellipseButton->click();
+        check(overlay.m_anns.size() == kept + 1 && overlay.m_anns[shape].tool == ATool::Ellipse
+                  && overlay.m_selAnn == shape && overlay.m_atool == ATool::Ellipse,
+              "picking the ellipse turns the selected rectangle into an ellipse in place");
+        mouse(QEvent::MouseButtonPress, outside);
+        mouse(QEvent::MouseButtonRelease, outside);
+        check(overlay.m_sel == keptSel && overlay.m_selAnn == -1 && overlay.m_atool == ATool::Ellipse
+                  && overlay.m_anns[shape].tool == ATool::Ellipse,
+              "a shape-tool click outside the capture keeps the shape and the capture region");
+        overlay.undoAnnotation();
+        check(overlay.m_anns[shape].tool == ATool::Rect, "undo restores the rectangle");
+        overlay.selectTool(ATool::Rect);
+        mouse(QEvent::MouseButtonPress, keptSel.topLeft() + QPoint(60, 62));   // Select it again by drawing anew.
+        mouse(QEvent::MouseMove, keptSel.topLeft() + QPoint(100, 76));
+        mouse(QEvent::MouseButtonRelease, keptSel.topLeft() + QPoint(100, 76));
+        const int fresh = overlay.m_anns.size() - 1;
+        const bool freshFill = overlay.m_anns[fresh].fill;
+        const QPoint blankInside = keptSel.topLeft() + QPoint(10, 10);   // Inside the capture, off the shape.
+        mouse(QEvent::MouseButtonPress, blankInside);
+        mouse(QEvent::MouseButtonRelease, blankInside);
+        check(overlay.m_selAnn == -1 && overlay.m_anns.size() == fresh + 1,
+              "a click on blank capture area releases the shape without drawing");
+        for (QToolButton *b : overlay.m_toolOptions->findChildren<QToolButton *>())
+            if (b->accessibleName() == QStringLiteral("椭圆")) ellipseButton = b;
+        ellipseButton->click();
+        overlay.toggleFill();
+        check(overlay.m_anns[fresh].tool == ATool::Rect && overlay.m_anns[fresh].fill == freshFill
+                  && overlay.m_atool == ATool::Ellipse,
+              "after releasing, shape and fill picks only set up the next shape");
+        overlay.toggleFill();
+        overlay.undoAnnotation();
+        overlay.undoAnnotation();
+        check(overlay.m_anns.size() == kept, "undo removes the shapes");
+        overlay.selectEraserMode(true);
+    }
+    const int finished = overlay.m_anns.size();
+    mouse(QEvent::MouseButtonPress, strokeAt + QPoint(9, 9));
+    mouse(QEvent::MouseMove, strokeAt + QPoint(20, 20));
+    mouse(QEvent::MouseButtonRelease, strokeAt + QPoint(20, 20));
+    check(overlay.m_anns[4].rect == erasedRect && overlay.m_anns.size() == finished + 1,
+          "dragging inside a finished erasure starts a new one instead of moving it");
+    while (overlay.m_anns.size() > 5) overlay.undoAnnotation();
     overlay.undoAnnotation();
     check(overlay.m_anns.size() == 4 && overlay.cropped().toImage() == beforeErase,
           "undo restores the erased pixels");
     overlay.selectEraserMode(false);
     overlay.setToolSize(99);
-    check(overlay.toolSize() == 50 && overlay.m_eraserBrushButton->text() == QStringLiteral("50"),
+    check(overlay.toolSize() == 50 && overlay.m_sizeButton && overlay.m_sizeButton->text() == QStringLiteral("50"),
           "the eraser brush width stops at 50 and shows on its button");
     overlay.setToolSize(0);
     check(overlay.toolSize() == 4, "the eraser brush width stops at 4");
@@ -921,13 +1000,16 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         check(overlay.m_atool == tool && overlay.m_toolOptions->isVisible()
                   && (tool == ATool::Mosaic ? overlay.m_mosaicStrengthLabel != nullptr
                       : tool == ATool::Text ? overlay.m_sizeInput != nullptr
-                      : tool == ATool::Eraser ? overlay.m_eraserBrushButton != nullptr : overlay.m_sizeButton != nullptr),
+                      : overlay.m_sizeButton != nullptr),
               "repeated toolbar clicks keep the matching options and numeric control visible");
         const bool textSize = tool == ATool::Text;
         if (tool == ATool::Eraser) {
-            check(overlay.m_eraserBrushButton->text().toInt() == overlay.toolSize() && !overlay.m_sizeButton
+            const auto *strip = static_cast<QBoxLayout *>(overlay.m_toolOptions->layout());
+            check(strip->itemAt(strip->count() - 1)->widget() == overlay.m_sizeButton
+                      && overlay.m_sizeButton->text().toInt() == overlay.toolSize()
+                      && overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserBrush"))
                       && overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserRectangle")),
-                  "the eraser strip holds a brush button with its width and a rectangle button");
+                  "the eraser strip is brush, rectangle, then the width button");
         } else if (tool != ATool::Mosaic && tool != ATool::Text) {
             const auto *strip = static_cast<QBoxLayout *>(overlay.m_toolOptions->layout());
             check(!overlay.m_sizeInput && strip->itemAt(0)->widget() == overlay.m_sizeButton
@@ -953,7 +1035,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         }
         for (QWidget *bar : {overlay.m_tools, overlay.m_toolOptions})
             for (QToolButton *button : bar->findChildren<QToolButton *>())
-                check(button == overlay.m_sizeButton || button == overlay.m_eraserBrushButton || button->text().isEmpty(),
+                check(button == overlay.m_sizeButton || button->text().isEmpty(),
                       "toolbar actions render icons or swatches rather than text");
         if (!previewPath.isEmpty()) {
             QImage bars = overlay.grab(overlay.m_tools->geometry().united(overlay.m_toolOptions->geometry())).toImage();

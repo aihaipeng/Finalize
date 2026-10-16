@@ -17,13 +17,12 @@
 #include <qt_windows.h>
 
 // ---------- Shared icon set for all buttons. ----------
-// Stroke glyphs on a 24-unit grid with 2-unit round strokes, following the free
-// Feather/Lucide line-icon style: one vocabulary for every button in the app, painted
-// in code so no resource files ship and any icon stays crisp at every scale.
+// Sharp-cornered SVG glyphs compiled in from icons/icons.qrc; the enum order matches
+// the file-name table in makeIcon.
 
 enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, Pen, Marker, Text,
                   Number, Mosaic, Eraser, Undo, Redo, Bold, Italic, Minimize, Maximize, Restore, Refresh,
-                  Fill, Dashed };
+                  Fill, Dashed, LineWidth, EraseRect };
 
 QIcon makeIcon(Icon icon);
 
