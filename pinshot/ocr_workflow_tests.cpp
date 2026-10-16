@@ -64,6 +64,16 @@ int CaptureOverlay::testOcr(const QString &previewPath)
                   && available.contains(OcrDialog::placement(QRect(available.bottomRight(),QSize(2,2)),available)),
               "OCR placement retains the selected secondary screen and clamps edge captures inside its work area");
     }
+    for (const QRect pin : {target,QRect(1500,300,400,300),QRect(0,0,500,300)}) {
+        const QRect card = OcrDialog::beside(pin,primary);
+        check(primary.contains(card) && !card.intersects(pin),
+              "OCR card opened from a pin sits beside the pin inside the work area");
+    }
+    const QRect bigPin(600,200,700,500);
+    const QRect crowded = OcrDialog::beside(bigPin,primary), plain = OcrDialog::placement(bigPin,primary);
+    const auto covered = [&](const QRect &r) { const QRect h = r.intersected(bigPin); return h.width()*h.height(); };
+    check(primary.contains(crowded) && covered(crowded) < covered(plain),
+          "OCR card covers a large pin less than the plain origin placement when no clear spot exists");
     const QString missing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
     if (!missing.isEmpty()) {
         QImage image(640,180,QImage::Format_RGB32); image.fill(Qt::white);
