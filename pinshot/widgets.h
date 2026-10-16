@@ -29,6 +29,9 @@ QIcon makeIcon(Icon icon, int size = 16);
 
 QToolButton *iconButton(Icon icon, const QString &tip);
 
+// Grey groove, theme-blue fill, white ring handle. Shared by mosaic and pin sliders.
+extern const QString lightSliderQss;
+
 // 1px vertical divider between toolbar groups, styled by the bar stylesheet.
 QWidget *barSeparator();
 

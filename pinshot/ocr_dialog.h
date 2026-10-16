@@ -48,6 +48,7 @@ public:
     explicit OcrDialog(const QImage &image, const QRect &captureRect = {});
     ~OcrDialog() override;
     static QRect placement(const QRect &capture, const QRect &available);
+    static QRect beside(const QRect &avoid, const QRect &available);
     static bool prefersRows(const QSize &image, const QSize &card);
     static QString formatText(const QString &text, TextFormat kind);
     void start();

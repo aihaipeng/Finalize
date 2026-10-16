@@ -58,6 +58,12 @@ OcrDialog *showOcr(const QImage &image, QWidget *source, const QRect &captureRec
         if (source->isVisible()) { source->raise(); source->activateWindow(); source->setFocus(); }
     });
     if (source) QObject::connect(source,&QObject::destroyed,dialog,&QObject::deleteLater);
+    // A source still on screen (a pin) stays visible next to the card instead of under it.
+    if (source && source->isVisible()) {
+        const QRect avoid = source->frameGeometry();
+        const QScreen *screen = QGuiApplication::screenAt(avoid.center());
+        dialog->setGeometry(OcrDialog::beside(avoid,(screen ? screen : QGuiApplication::primaryScreen())->availableGeometry()));
+    }
     dialog->show();
     dialog->raise(); dialog->activateWindow();
     return dialog;
@@ -450,6 +456,25 @@ QRect OcrDialog::placement(const QRect &capture, const QRect &available) {
     const QSize size(qMin(1000,available.width()),qMin(650,available.height()));
     return QRect(QPoint(qBound(available.left(),capture.left(),available.right()-size.width()+1),
                         qBound(available.top(),capture.top(),available.bottom()-size.height()+1)),size);
+}
+
+QRect OcrDialog::beside(const QRect &avoid, const QRect &available) {
+    const QRect card = placement(avoid,available);
+    const QSize s = card.size();
+    const int gap = 8;
+    // Right, left, below, above, slid inside the work area; the first clear spot wins, else the least covering one.
+    QRect best = card;
+    qint64 bestArea = qint64(avoid.width())*avoid.height()+1;
+    for (const QPoint p : {QPoint(avoid.right()+1+gap,avoid.top()),QPoint(avoid.left()-gap-s.width(),avoid.top()),
+                           QPoint(avoid.left(),avoid.bottom()+1+gap),QPoint(avoid.left(),avoid.top()-gap-s.height())}) {
+        const QRect r(QPoint(qBound(available.left(),p.x(),available.right()-s.width()+1),
+                             qBound(available.top(),p.y(),available.bottom()-s.height()+1)),s);
+        const QRect hit = r.intersected(avoid);
+        const qint64 area = hit.isEmpty() ? 0 : qint64(hit.width())*hit.height();
+        if (area < bestArea) { best = r; bestArea = area; }
+        if (!area) break;
+    }
+    return best;
 }
 
 void OcrDialog::start() {

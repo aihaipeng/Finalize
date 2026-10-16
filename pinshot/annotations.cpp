@@ -133,14 +133,6 @@ protected:
     }
 };
 
-// Light horizontal slider: grey groove, theme-blue fill and ring.
-const QString lightSliderQss = QStringLiteral(
-    "QSlider{margin:0px 1px 0px 1px;}"
-    "QSlider::groove:horizontal{border:none;background:#bdb8b9;height:2px;border-radius:1px;margin:3px 0px 3px 0px;}"
-    "QSlider::handle:horizontal{background:#fff;width:7px;margin:-4px 0px -4px 0px;border-radius:4px;border:1px solid #2080f0;}"
-    "QSlider::handle:horizontal:hover{background:#2080f0;width:7px;margin:-4px 0px -4px 0px;border:1px solid #2080f0;}"
-    "QSlider::sub-page:horizontal{border-radius:1px;background:#2080f0;margin:3px 0px 3px 0px;}");
-
 // Popup scrollbar in the light language: a slim thumb at rest; on hover a wider thumb
 // over a visible track with up/down step arrows. The stylesheet only fixes the geometry
 // (12px bar, 12px step buttons) so hit testing matches what paintEvent draws.

@@ -22,6 +22,13 @@
 #include <QSvgRenderer>
 #include <qt_windows.h>
 
+const QString lightSliderQss = QStringLiteral(
+    "QSlider{margin:0px 1px 0px 1px;}"
+    "QSlider::groove:horizontal{border:none;background:#bdb8b9;height:2px;border-radius:1px;margin:3px 0px 3px 0px;}"
+    "QSlider::handle:horizontal{background:#fff;width:7px;margin:-4px 0px -4px 0px;border-radius:4px;border:1px solid #2080f0;}"
+    "QSlider::handle:horizontal:hover{background:#2080f0;width:7px;margin:-4px 0px -4px 0px;border:1px solid #2080f0;}"
+    "QSlider::sub-page:horizontal{border-radius:1px;background:#2080f0;margin:3px 0px 3px 0px;}");
+
 QIcon makeIcon(Icon icon, int size)
 {
     static const char *const names[] = {
