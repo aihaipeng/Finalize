@@ -186,6 +186,13 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     QPointer<OcrDialog> dialog = overlay.m_ocrDialog;
     check(dialog && dialog->findChild<QSplitter *>(QStringLiteral("ocrSplit"))->count()==2,
           "OCR opens a two-pane screenshot and text comparison");
+    check(dialog->findChild<QSplitter *>(QStringLiteral("ocrSplit"))->orientation()==Qt::Vertical
+              && OcrDialog::prefersRows(QSize(800,100),QSize(1000,650)) && !OcrDialog::prefersRows(QSize(300,300),QSize(1000,650))
+              && !OcrDialog::prefersRows(QSize(100,600),QSize(1000,650)),
+          "wide strips open stacked while square and tall captures open side by side");
+    dialog->findChild<QToolButton *>(QStringLiteral("ocrLayout"))->click();
+    check(dialog->findChild<QSplitter *>(QStringLiteral("ocrSplit"))->orientation()==Qt::Horizontal,
+          "the layout button switches the comparison back to side by side");
     QApplication::processEvents();
     check(!overlay.isVisible() && !overlay.m_tools->isVisible() && !overlay.m_toolOptions->isVisible()
               && !overlay.m_inspector->isVisible() && dialog->windowModality()==Qt::NonModal && !QApplication::activeModalWidget(),
@@ -245,7 +252,9 @@ int CaptureOverlay::testOcr(const QString &previewPath)
         const double first=luminance(a),second=luminance(b);
         return (qMax(first,second)+0.05)/(qMin(first,second)+0.05);
     };
-    check(contrast(QColor("#323232"),QColor("#fdfdfd"))>=4.5
+    check(contrast(QColor("#323232"),QColor("#ffffff"))>=4.5
+              && contrast(QColor("#5b5b5b"),QColor("#f2f2f2"))>=4.5
+              && contrast(QColor("#2080f0"),QColor("#2f3236"))>=3
               && contrast(QColor("#5b5b5b"),QColor("#ffffff"))>=4.5
               && contrast(QColor("#323232"),QColor("#a3d6ff"))>=4.5
               && contrast(QColor("#858585"),QColor("#ffffff"))>=3
@@ -253,7 +262,10 @@ int CaptureOverlay::testOcr(const QString &previewPath)
           "OCR text, metadata, accent buttons, control outlines and focus cues meet their contrast budgets");
     const QList<QWidget *> tabOrder{dialog->findChild<QToolButton *>(QStringLiteral("ocrPin")),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrMinimize")),dialog->findChild<QToolButton *>(QStringLiteral("ocrMaximize")),
-        dialog->findChild<QToolButton *>(QStringLiteral("ocrClose")),back,dialog->findChild<QGraphicsView *>(),retry,copy,text};
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrClose")),back,dialog->findChild<QToolButton *>(QStringLiteral("ocrFit")),
+        dialog->findChild<QGraphicsView *>(),dialog->findChild<QToolButton *>(QStringLiteral("ocrLayout")),
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrFormat")),dialog->findChild<QToolButton *>(QStringLiteral("ocrSearch")),
+        retry,copy,text};
     tabOrder.first()->setFocus();
     for (int i=1;i<tabOrder.size();++i) {
         QKeyEvent tab(QEvent::KeyPress,Qt::Key_Tab,Qt::NoModifier);
@@ -318,7 +330,12 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     check(text->toPlainText()==expectedText,"retry recognizes the same retained screenshot");
     auto *maximize=dialog->findChild<QToolButton *>(QStringLiteral("ocrMaximize"));
     maximize->click(); QApplication::processEvents();
-    check(dialog->isMaximized() && maximize->toolTip()==QStringLiteral("还原"),"maximize changes to a restore control");
+    QElapsedTimer maximizeTimer; maximizeTimer.start();
+    while (dialog->geometry()!=dialog->screen()->availableGeometry() && maximizeTimer.elapsed()<2000) {
+        QApplication::processEvents(); QThread::msleep(10);
+    }
+    check(dialog->isMaximized() && IsZoomed(cardHwnd) && maximize->toolTip()==QStringLiteral("还原")
+              && dialog->geometry()==dialog->screen()->availableGeometry(),"maximize fills the work area and changes to a restore control");
     maximize->click(); QApplication::processEvents();
     check(!dialog->isMaximized() && text->toPlainText()==expectedText,"restoring the card keeps the recognized text");
     dialog->findChild<QToolButton *>(QStringLiteral("ocrMinimize"))->click(); QApplication::processEvents();
