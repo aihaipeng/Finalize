@@ -26,6 +26,6 @@
         <file>fill.svg</file>
         <file>dashed.svg</file>
         <file>icons8-line-width.svg</file>
-        <file>erase_rect.svg</file>
+        <file>marker_rect.svg</file>
     </qresource>
 </RCC>

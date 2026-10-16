@@ -724,27 +724,15 @@ bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
         for (QWidget *w = static_cast<QWidget *>(obj); w; w = w->parentWidget())
             if (w == this) return true;
     }
-    if (m_sizeSlider && obj == m_sizeSlider && ev->type() == QEvent::Wheel) {
+    if (((m_sizeSlider && obj == m_sizeSlider) || obj == m_sizeButton) && ev->type() == QEvent::Wheel) {
         const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
-        if (delta) setToolSize(toolSize() + (delta > 0 ? 1 : -1));
-        ev->accept();
-        return true;
-    }
-    if (obj == m_sizeButton && ev->type() == QEvent::Wheel) {
-        const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
-        if (delta) setToolSize(toolSize() + (delta > 0 ? 1 : -1));
+        if (delta) setWidthControl(qRound(widthControlValue()) + (delta > 0 ? 1 : -1));
         ev->accept();
         return true;
     }
     if ((obj == m_tools || obj == m_toolOptions)
         && (ev->type() == QEvent::Enter || ev->type() == QEvent::Leave))
         updateInspector();
-    if (obj == m_mosaicWidthLabel && ev->type() == QEvent::Wheel) {
-        const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
-        if (delta) tuneWidth(delta > 0 ? 1 : -1, mapFromGlobal(QCursor::pos()));
-        ev->accept();
-        return true;
-    }
     if ((obj == m_mosaicSlider || obj == m_mosaicStrengthLabel || obj == m_mosaicPreview)
         && ev->type() == QEvent::Wheel) {
         const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
@@ -1114,9 +1102,20 @@ qreal CaptureOverlay::toolSize() const
     return texty ? m_afont : m_apen;
 }
 
+qreal CaptureOverlay::widthControlValue() const       // Rectangle mosaics tune strength on the canvas, width on the button.
+{
+    return optionsTool() == ATool::Mosaic && !mosaicBrush() ? m_mosaicWidth : toolSize();
+}
+
+void CaptureOverlay::setWidthControl(int value)
+{
+    if (optionsTool() != ATool::Mosaic || mosaicBrush()) { setToolSize(value); return; }
+    m_mosaicWidth = qBound(4, value, 50);        // Sets up the next brush; rectangles have no width.
+    syncSizeInput();
+}
+
 void CaptureOverlay::syncSizeInput()
 {
-    if (m_mosaicWidthLabel) m_mosaicWidthLabel->setText(QString::number(toolSize()));
     if (m_mosaicPreview) {
         QImage preview(24, 24, QImage::Format_ARGB32);
         preview.fill(Qt::transparent);
@@ -1158,12 +1157,12 @@ void CaptureOverlay::syncSizeInput()
         painter.setFont(m_sizeButton->font());
         painter.setPen(QColor(0x32, 0x32, 0x32));
         // Value sits a fixed 4px after the glyph; spare room of short values falls on the right.
-        painter.drawText(QRect(20, 0, 16, 16), Qt::AlignLeft | Qt::AlignVCenter, QString::number(toolSize()));
+        painter.drawText(QRect(20, 0, 16, 16), Qt::AlignCenter, QString::number(widthControlValue()));
         painter.end();
         m_sizeButton->setToolButtonStyle(Qt::ToolButtonIconOnly);   // The value is drawn in the glyph.
         m_sizeButton->setIconSize(QSize(36, 16));
         m_sizeButton->setIcon(QIcon(glyph));
-        m_sizeButton->setText(QString::number(toolSize()));
+        m_sizeButton->setText(QString::number(widthControlValue()));
     } else if (m_sizeButton) {                   // Number size: dot grows with the size, value beside it.
         const qreal dpr = devicePixelRatioF();
         QPixmap dot(qCeil(16 * dpr), qCeil(16 * dpr));
@@ -1181,9 +1180,9 @@ void CaptureOverlay::syncSizeInput()
     }
     if (m_sizeSlider) {
         const QSignalBlocker lock(m_sizeSlider);
-        m_sizeSlider->setValue(qRound(toolSize()));
+        m_sizeSlider->setValue(qRound(widthControlValue()));
     }
-    if (m_sizeValue) m_sizeValue->setText(QString::number(toolSize()));
+    if (m_sizeValue) m_sizeValue->setText(QString::number(widthControlValue()));
     if (!m_sizeInput) return;
     const QSignalBlocker lock(m_sizeInput);
     m_sizeInput->setEditText(QString::number(toolSize()));
@@ -1216,7 +1215,7 @@ void CaptureOverlay::showSizePopup(QToolButton *anchor, int minimum, int maximum
     row->addWidget(m_sizeValue);
     m_sizeDragUndo = false;
     syncSizeInput();
-    connect(m_sizeSlider, &QSlider::valueChanged, this, [this](int value) { setToolSize(value); });
+    connect(m_sizeSlider, &QSlider::valueChanged, this, [this](int value) { setWidthControl(value); });
     connect(m_sizeSlider, &QSlider::sliderPressed, this, [this] { m_sizeDragUndo = false; });
     connect(m_sizeSlider, &QSlider::sliderReleased, this, [this] { m_sizeDragUndo = false; });
     connect(popup, &QDialog::finished, this, [this] { if (isVisible()) setFocus(); });
@@ -1246,9 +1245,9 @@ void CaptureOverlay::setToolSize(qreal value)                    // Numeric edit
     const bool texty = tool == ATool::Text || tool == ATool::Number;
     const bool strength = tool == ATool::Mosaic && !mosaicBrush();
     value = texty ? qBound(qreal(1), value, qreal(1638))
-                  : tool == ATool::Mosaic || tool == ATool::Eraser
+                  : tool == ATool::Mosaic
                         ? qBound(strength ? 3 : 4, qRound(value), strength ? 24 : 50)
-                        : qBound(1, qRound(value), 12);
+                        : qBound(1, qRound(value), 50);
     if (tool == ATool::Eraser) {                 // Only the brush width; rectangle erasures have none.
         m_eraserWidth = qRound(value);
         if (m_live) m_ann.pen = m_eraserWidth;
@@ -1672,7 +1671,6 @@ void CaptureOverlay::updateToolOptions()
     if (m_sizePopup) m_sizePopup->close();
     m_mosaicSlider = nullptr;
     m_mosaicStrengthLabel = nullptr;
-    m_mosaicWidthLabel = nullptr;
     m_mosaicPreview = nullptr;
     m_mosaicDragUndo = false;
     m_colorBoard = nullptr;
@@ -1704,8 +1702,8 @@ void CaptureOverlay::updateToolOptions()
     auto addSize = [this, lay, texty, tool] {
         if (tool != ATool::Text) {               // Width button on the left; the slider pops up below it.
             // shortcut: number slider spans 6-96 pt; finer or larger sizes still come from the canvas wheel.
-            const int minimum = tool == ATool::Number ? 6 : tool == ATool::Eraser ? 4 : 1,
-                      maximum = tool == ATool::Number ? 96 : tool == ATool::Eraser ? 50 : 12;
+            const int minimum = tool == ATool::Number ? 6 : tool == ATool::Mosaic ? 4 : 1,
+                      maximum = tool == ATool::Number ? 96 : 50;
             m_sizeButton = new QToolButton;
             m_sizeButton->setObjectName(QStringLiteral("sizeButton"));
             m_sizeButton->setAccessibleName(tool == ATool::Number ? QStringLiteral("大小") : QStringLiteral("粗细"));
@@ -1787,8 +1785,12 @@ void CaptureOverlay::updateToolOptions()
         break;
     }
     case ATool::Marker:
-        addOption(lay, Icon::Fill, QStringLiteral("矩形高亮"), m_markerFill, [this] { toggleFill(); });
-        lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("fillButton"));
+        addOption(lay, Icon::MarkerRect, QStringLiteral("矩形高亮"), m_markerFill, [this] { toggleFill(); });
+        if (auto *b = qobject_cast<QToolButton *>(lay->itemAt(lay->count() - 1)->widget())) {
+            b->setObjectName(QStringLiteral("fillButton"));
+            b->setIcon(makeIcon(Icon::MarkerRect, 20));   // Fine checker needs more room than the 16px glyphs.
+            b->setIconSize(QSize(20, 20));
+        }
         addSize();
         addSeparator(lay);
         addSwatches(lay, ATool::Marker);
@@ -1899,18 +1901,6 @@ void CaptureOverlay::updateToolOptions()
     }
     case ATool::Mosaic: {
         const bool brush = mosaicBrush();
-        if (brush) {
-            m_mosaicWidthLabel = new QLabel(QString::number(toolSize()));
-            m_mosaicWidthLabel->setObjectName(QStringLiteral("mosaicWidthValue"));
-            m_mosaicWidthLabel->setToolTip(QStringLiteral("涂抹粗细：滚轮调节，不可手动编辑"));
-            m_mosaicWidthLabel->setAccessibleName(QStringLiteral("涂抹粗细（只读）"));
-            m_mosaicWidthLabel->setTextInteractionFlags(Qt::NoTextInteraction);
-            m_mosaicWidthLabel->setFocusPolicy(Qt::NoFocus);
-            m_mosaicWidthLabel->setAlignment(Qt::AlignCenter);
-            m_mosaicWidthLabel->setFixedWidth(24);
-            m_mosaicWidthLabel->installEventFilter(this);
-            lay->addWidget(m_mosaicWidthLabel);
-        }
         addOption(lay, Icon::Rect, QStringLiteral("矩形马赛克"), !brush,
                   [this] { selectMosaicMode(false); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("mosaicRectangle"));
@@ -1946,14 +1936,14 @@ void CaptureOverlay::updateToolOptions()
         m_mosaicStrengthLabel->setFixedWidth(24);
         m_mosaicStrengthLabel->installEventFilter(this);
         lay->addWidget(m_mosaicStrengthLabel);
-        syncSizeInput();
+        addSize();                               // Brush width stays visible in both modes.
         break;
     }
     case ATool::Eraser: {                        // Brush and rectangle modes; only the brush has a width.
         const bool rect = eraserRect();
         addOption(lay, Icon::Pen, QStringLiteral("画笔橡皮擦"), !rect, [this] { selectEraserMode(false); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("eraserBrush"));
-        addOption(lay, Icon::EraseRect, QStringLiteral("矩形橡皮擦"), rect, [this] { selectEraserMode(true); });
+        addOption(lay, Icon::Rect, QStringLiteral("矩形橡皮擦"), rect, [this] { selectEraserMode(true); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("eraserRectangle"));
         addSize();
         lay->removeWidget(m_sizeButton);         // Brush, rectangle, then the width button.

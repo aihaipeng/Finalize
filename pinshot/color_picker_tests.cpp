@@ -594,7 +594,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     check(overlay.toolSize() == 50 && overlay.m_sizeButton && overlay.m_sizeButton->text() == QStringLiteral("50"),
           "the eraser brush width stops at 50 and shows on its button");
     overlay.setToolSize(0);
-    check(overlay.toolSize() == 4, "the eraser brush width stops at 4");
+    check(overlay.toolSize() == 1, "the eraser brush width stops at 1");
     overlay.setToolSize(14);
     mouse(QEvent::MouseButtonPress, strokeAt + QPoint(9, 9));
     mouse(QEvent::MouseButtonRelease, strokeAt + QPoint(9, 9));
@@ -1019,8 +1019,8 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
                   "the option strip is only as wide as its contents");
         } else if (tool == ATool::Mosaic) {
             check(overlay.m_mosaicStrengthLabel->text().toInt() == overlay.mosaicStrength()
-                      && !overlay.m_sizeInput && (overlay.mosaicBrush() ? overlay.m_mosaicWidthLabel
-                          && overlay.m_mosaicWidthLabel->text().toInt() == overlay.toolSize() : !overlay.m_mosaicWidthLabel),
+                      && !overlay.m_sizeInput && overlay.m_sizeButton
+                      && overlay.m_sizeButton->text().toInt() == overlay.widthControlValue(),
                   "mosaic exposes independent mode-specific width and strength controls");
         } else {
         check(overlay.m_sizeInput->width() == (textSize ? 62 : 46)
@@ -1069,7 +1069,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     overlay.m_sizeButton->click();
     check(overlay.m_sizePopup && overlay.m_sizePopup->isVisible() && overlay.m_sizeSlider
               && overlay.m_sizeSlider->orientation() == Qt::Horizontal
-              && overlay.m_sizeSlider->minimum() == 1 && overlay.m_sizeSlider->maximum() == 12
+              && overlay.m_sizeSlider->minimum() == 1 && overlay.m_sizeSlider->maximum() == 50
               && overlay.m_sizePopup->geometry().top() >= overlay.m_sizeButton->mapToGlobal(QPoint(0, overlay.m_sizeButton->height())).y(),
           "clicking the width button opens a horizontal slider below it");
     overlay.m_sizeSlider->setValue(6);
@@ -1108,7 +1108,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     check(overlay.m_anns.last().pen == 9, "redo reapplies the numeric width edit");
     overlay.selectTool(ATool::Pen);
     overlay.setToolSize(99);
-    check(overlay.toolSize() == 12 && overlay.m_sizeButton->text().toDouble() == 12,
+    check(overlay.toolSize() == 50 && overlay.m_sizeButton->text().toDouble() == 50,
           "width input stays within the supported range");
     overlay.setToolSize(0);
     check(overlay.toolSize() == 1 && overlay.m_sizeButton->text().toDouble() == 1,

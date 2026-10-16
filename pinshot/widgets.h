@@ -22,9 +22,9 @@
 
 enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, Pen, Marker, Text,
                   Number, Mosaic, Eraser, Undo, Redo, Bold, Italic, Minimize, Maximize, Restore, Refresh,
-                  Fill, Dashed, LineWidth, EraseRect };
+                  Fill, Dashed, LineWidth, MarkerRect };
 
-QIcon makeIcon(Icon icon);
+QIcon makeIcon(Icon icon, int size = 16);
 
 QToolButton *iconButton(Icon icon, const QString &tip);
 

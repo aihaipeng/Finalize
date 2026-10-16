@@ -141,14 +141,13 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
         if (!previewPath.isEmpty() && dpr == 1)
             check(overlay.grab(overlay.m_tools->geometry().united(overlay.m_toolOptions->geometry()))
                       .save(previewPath + QStringLiteral(".brush-toolbar.png")), "save explicit brush-mode toolbar preview");
-        check(!overlay.m_sizeInput && overlay.m_mosaicWidthLabel
-                  && !overlay.m_mosaicWidthLabel->textInteractionFlags()
+        check(!overlay.m_sizeInput && overlay.m_sizeButton
                   && overlay.m_toolOptions->findChildren<QLineEdit *>().isEmpty()
                   && overlay.m_toolOptions->findChildren<QComboBox *>().isEmpty(),
-              "mosaic brush width is a read-only counter, not a text input or dropdown");
+              "mosaic brush width is the shared width button, not a text input or dropdown");
         QKeyEvent typeWidth(QEvent::KeyPress, Qt::Key_9, Qt::NoModifier, QStringLiteral("9"));
-        QApplication::sendEvent(overlay.m_mosaicWidthLabel, &typeWidth);
-        check(overlay.toolSize() == 14 && overlay.m_mosaicWidthLabel->text() == QStringLiteral("14"),
+        QApplication::sendEvent(overlay.m_sizeButton, &typeWidth);
+        check(overlay.toolSize() == 14 && overlay.m_sizeButton->text() == QStringLiteral("14"),
               "typing cannot edit the brush-width counter");
         const QPoint cursorPoint = origin + QPoint(280, 200);
         overlay.updateAnnotationCursor(cursorPoint);
@@ -164,7 +163,7 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
             QApplication::sendEvent(&overlay, &event);
         };
         scrollBrush(120); scrollBrush(120);
-        check(overlay.toolSize() == 16 && overlay.m_mosaicWidthLabel->text() == QStringLiteral("16")
+        check(overlay.toolSize() == 16 && overlay.m_sizeButton->text() == QStringLiteral("16")
                   && overlay.cursor().pixmap().width() > initialCursor.width() && overlay.mosaicStrength() == 6,
               "canvas wheel grows the circular cursor and its read-only width count, not strength");
         scrollBrush(-120); scrollBrush(-120);
@@ -256,32 +255,32 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
         check(overlay.toolSize() == 14, "rectangle strength changes preserve the default brush width");
         overlay.setToolSize(15);
         check(overlay.mosaicBrush() && overlay.toolSize() == 15 && overlay.m_mosaicSlider->value() == 14
-                  && overlay.m_mosaicWidthLabel->text().toInt() == 15
+                  && overlay.m_sizeButton->text().toInt() == 15
                   && overlay.m_mosaicStrengthLabel->text().toInt() == 14
                   && overlay.m_mosaicStrengthLabel->x() > overlay.m_mosaicSlider->x(),
               "brush mode keeps separate remembered width and strength");
         wheel(&overlay, QPoint(0, 120));
-        wheel(overlay.m_mosaicWidthLabel, QPoint(0, 120));
+        wheel(overlay.m_sizeButton, QPoint(0, 120));
         wheel(overlay.m_mosaicSlider, QPoint(0, 120));
-        check(overlay.toolSize() == 17 && overlay.m_mosaicWidthLabel->text().toInt() == 17
+        check(overlay.toolSize() == 17 && overlay.m_sizeButton->text().toInt() == 17
                   && overlay.m_mosaicSlider->value() == 15 && overlay.m_mosaicStrengthLabel->text().toInt() == 15,
               "canvas and width-field wheels change width; strength-slider wheel changes only strength");
         wheel(overlay.m_mosaicStrengthLabel, QPoint(0, -120));
-        check(overlay.toolSize() == 17 && overlay.m_mosaicWidthLabel->text().toInt() == 17
+        check(overlay.toolSize() == 17 && overlay.m_sizeButton->text().toInt() == 17
                   && overlay.m_mosaicStrengthLabel->text().toInt() == 14,
               "strength-label wheel does not overwrite the brush-width number");
-        wheel(overlay.m_mosaicWidthLabel, QPoint(120, 0));
+        wheel(overlay.m_sizeButton, QPoint(120, 0));
         wheel(overlay.m_mosaicSlider, QPoint(120, 0));
         check(overlay.toolSize() == 17 && overlay.mosaicStrength() == 14,
               "horizontal wheel input changes neither mosaic parameter");
         overlay.m_mosaicSlider->setValue(8);
         check(overlay.m_anns.first().mosaicStrength == 14 && overlay.toolSize() == 17
-                  && overlay.m_mosaicWidthLabel->text().toInt() == 17
+                  && overlay.m_sizeButton->text().toInt() == 17
                   && overlay.m_mosaicStrengthLabel->text().toInt() == 8,
               "switching modes and tuning a new brush leaves the older rectangle unchanged");
         const QImage beforeBrush = overlay.cropped().toImage();
         mouse(QEvent::MouseButtonPress, QPoint(280, 100));
-        wheel(overlay.m_mosaicWidthLabel, QPoint(0, 120));
+        wheel(overlay.m_sizeButton, QPoint(0, 120));
         overlay.m_mosaicSlider->setValue(9);
         mouse(QEvent::MouseMove, QPoint(360, 190));
         mouse(QEvent::MouseMove, QPoint(460, 100));
@@ -346,7 +345,7 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
               "brush width stays at its independent minimum without changing strength");
         overlay.setToolSize(18);
         wheel(&overlay, QPoint(0, -120));
-        check(overlay.toolSize() == 17 && overlay.m_mosaicWidthLabel->text().toInt() == 17,
+        check(overlay.toolSize() == 17 && overlay.m_sizeButton->text().toInt() == 17,
               "downward brush wheel reduces width and updates its number");
         wheel(&overlay, QPoint(0, 120));
         overlay.m_mosaicSlider->setValue(12);
