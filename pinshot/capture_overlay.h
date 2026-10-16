@@ -282,7 +282,7 @@ private:
     int m_selAnn = -1;                               // Annotation selected for editing.
     Annotation m_pressAnn;                           // Snapshot for move/resize drags.
     Handle m_itemDrag = H_None;
-    bool m_eraserRect = true;                        // Eraser starts in rectangle mode.
+    bool m_eraserRect = false;                       // Eraser starts in brush mode.
     int m_eraserWidth = 14;
     QVector<QVector<Annotation>> m_undoStack, m_redoStack;
     QTimer m_detectionWatchdog;
@@ -311,7 +311,6 @@ private:
     QSlider *m_mosaicSlider = nullptr;
     QLabel *m_mosaicStrengthLabel = nullptr;
     QLabel *m_mosaicWidthLabel = nullptr;
-    QToolButton *m_eraserBrushButton = nullptr;      // Brush mode button; shows the brush width.
     QToolButton *m_mosaicPreview = nullptr;
     ColorBoard *m_colorBoard = nullptr;
     QPointer<QColorDialog> m_colorDialog;

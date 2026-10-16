@@ -106,7 +106,6 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         "QToolButton{color:#323232;background:transparent;border:none;border-radius:0px;padding:4px;}"
         "QToolButton:hover{background-color:#d4d4d4;}"
         "QToolButton:checked{background-color:#2080f0;}"
-        "QToolButton:pressed{padding:6px 2px 2px 6px;}"
         "QFrame#barSeparator{background-color:rgba(50,50,50,144);margin:0px 2px;border:none;}");
     m_tools->setStyleSheet(barQss);
     auto *save = iconButton(Icon::Save, QStringLiteral("保存到文件 (Ctrl+S)"));
@@ -239,7 +238,7 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
     }
     if (m_mode == Adjusting && !m_sel.isNull())   // Annotations clip to the selection.
         paintAnnotations(p, QPointF(0, 0), 1.0, QRectF(m_sel), false);
-    if (m_live && m_ann.tool == ATool::Mosaic && !m_ann.mosaicBrush)
+    if (m_live && regionItem(m_ann))              // Thin frame shows the dragged region.
         paintMosaicBorder(p, m_ann, false);
     if (m_mode == Adjusting && !m_live
         && (editorActive() || (m_selAnn >= 0 && m_selAnn < m_anns.size()
@@ -320,6 +319,7 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
         return;
     }
     setFocus();                                   // Any click restores keyboard handling.
+    const bool hadItem = m_selAnn >= 0;
     m_pressPos = e->pos();
     m_dragStarted = false;
     m_inspector->hide();
@@ -416,6 +416,15 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
         }
         m_selAnn = -1;
         updateToolOptions();
+    }
+    const QVector<QRect> selHandles = handleRects(m_sel);
+    if (m_mode == Adjusting && m_atool != ATool::None && !m_spaceHeld && !m_sel.contains(e->pos())
+        && std::none_of(selHandles.cbegin(), selHandles.cend(),
+                        [e](const QRect &h) { return h.contains(e->pos()); })) {
+        if (hadItem) m_selAnn = -1;               // With a tool armed an outside click only finishes the item.
+        updateToolOptions();
+        update();
+        return;
     }
     if (m_mode == Adjusting) {
         m_drag = hitHandle(e->pos());

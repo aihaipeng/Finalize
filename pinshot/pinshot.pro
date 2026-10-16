@@ -1,4 +1,4 @@
-QT       += core gui widgets concurrent
+QT       += core gui widgets concurrent svg
 LIBS     += -limm32 -lgdi32 -ldwmapi -loleacc -lole32 -loleaut32
 TARGET    = pinshot
 TEMPLATE  = app
@@ -14,4 +14,5 @@ HEADERS  += screen_capture.h output.h test_support.h pin_window.h widgets.h \
             long_capture.h window_detection.h pixel_inspector.h ocr_engine.h \
             ocr_dialog.h capture_overlay.h controller.h \
             onnxruntime_c_api.h onnxruntime_ep_c_api.h
+RESOURCES += icons/icons.qrc
 DISTFILES += onnxruntime-LICENSE.txt

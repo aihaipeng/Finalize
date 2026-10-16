@@ -1,0 +1,31 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file>save.svg</file>
+        <file>copy.svg</file>
+        <file>pin.svg</file>
+        <file>long_shot.svg</file>
+        <file>ocr.svg</file>
+        <file>cancel.svg</file>
+        <file>rect.svg</file>
+        <file>ellipse.svg</file>
+        <file>arrow.svg</file>
+        <file>pen.svg</file>
+        <file>marker.svg</file>
+        <file>text.svg</file>
+        <file>number.svg</file>
+        <file>mosaic.svg</file>
+        <file>eraser.svg</file>
+        <file>undo.svg</file>
+        <file>redo.svg</file>
+        <file>bold.svg</file>
+        <file>italic.svg</file>
+        <file>minimize.svg</file>
+        <file>maximize.svg</file>
+        <file>restore.svg</file>
+        <file>refresh.svg</file>
+        <file>fill.svg</file>
+        <file>dashed.svg</file>
+        <file>icons8-line-width.svg</file>
+        <file>erase_rect.svg</file>
+    </qresource>
+</RCC>
