@@ -4,7 +4,7 @@
         <file>copy.svg</file>
         <file>pin.svg</file>
         <file>long_shot.svg</file>
-        <file>ocr.svg</file>
+        <file>icons8-ocr.svg</file>
         <file>cancel.svg</file>
         <file>rect.svg</file>
         <file>ellipse.svg</file>
@@ -27,5 +27,13 @@
         <file>dashed.svg</file>
         <file>icons8-line-width.svg</file>
         <file>marker_rect.svg</file>
+        <file>fit_view.svg</file>
+        <file>search.svg</file>
+        <file>text_format.svg</file>
+        <file>split_columns.svg</file>
+        <file>split_rows.svg</file>
+        <file>chevron_up.svg</file>
+        <file>chevron_down.svg</file>
+        <file>chevron_right.svg</file>
     </qresource>
 </RCC>
