@@ -474,6 +474,13 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     check(overlay.m_anns.size() == 4 && overlay.m_anns[2].text == QStringLiteral("1")
               && overlay.m_anns[3].text == QStringLiteral("2"),
           "number clicks place incrementing sequence digits");
+    {
+        const QRect start = overlay.m_anns[3].rect;
+        const qreal size = overlay.toolSize();
+        for (int k = 0; k < 6; ++k) overlay.setToolSize(size + 0.5 * (k + 1));
+        for (int k = 5; k >= 0; --k) overlay.setToolSize(size + 0.5 * k);
+        check(overlay.m_anns[3].rect == start, "resizing a number keeps it in place");
+    }
     overlay.setToolNone();
     mouse(QEvent::MouseButtonPress, n1);
     mouse(QEvent::MouseButtonRelease, n1);

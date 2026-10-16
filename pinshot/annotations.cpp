@@ -1138,7 +1138,7 @@ void CaptureOverlay::syncSizeInput()
         m_mosaicSlider->setValue(mosaicStrength());
         m_mosaicSlider->setToolTip(QStringLiteral("马赛克强度 %1：拖动调节，数值越大像素块越大").arg(mosaicStrength()));
     }
-    if (m_sizeButton && optionsTool() != ATool::Number) {   // Line-width glyph with the value beside it.
+    if (m_sizeButton) {                          // Line-width glyph with the value beside it.
         // Glyph and value share one fixed 16+4+16 canvas, so the button never resizes as the value changes.
         const qreal dpr = devicePixelRatioF();
         QPixmap glyph(qCeil(36 * dpr), qCeil(16 * dpr));
@@ -1157,26 +1157,14 @@ void CaptureOverlay::syncSizeInput()
         painter.setFont(m_sizeButton->font());
         painter.setPen(QColor(0x32, 0x32, 0x32));
         // Value sits a fixed 4px after the glyph; spare room of short values falls on the right.
-        painter.drawText(QRect(20, 0, 16, 16), Qt::AlignCenter, QString::number(widthControlValue()));
+        // Number size may carry a half step shared with text; the button shows whole values only.
+        const QString value = QString::number(qRound(widthControlValue()));
+        painter.drawText(QRect(20, 0, 16, 16), Qt::AlignCenter, value);
         painter.end();
         m_sizeButton->setToolButtonStyle(Qt::ToolButtonIconOnly);   // The value is drawn in the glyph.
         m_sizeButton->setIconSize(QSize(36, 16));
         m_sizeButton->setIcon(QIcon(glyph));
-        m_sizeButton->setText(QString::number(widthControlValue()));
-    } else if (m_sizeButton) {                   // Number size: dot grows with the size, value beside it.
-        const qreal dpr = devicePixelRatioF();
-        QPixmap dot(qCeil(16 * dpr), qCeil(16 * dpr));
-        dot.setDevicePixelRatio(dpr);
-        dot.fill(Qt::transparent);
-        QPainter painter(&dot);
-        painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(0x32, 0x32, 0x32));
-        const qreal d = qBound(2.0, 2 + toolSize() * (optionsTool() == ATool::Number ? 0.2 : 1.0), 14.0);
-        painter.drawEllipse(QPointF(8, 8), d / 2, d / 2);
-        painter.end();
-        m_sizeButton->setIcon(QIcon(dot));
-        m_sizeButton->setText(QString::number(toolSize()));
+        m_sizeButton->setText(value);
     }
     if (m_sizeSlider) {
         const QSignalBlocker lock(m_sizeSlider);
@@ -1285,8 +1273,10 @@ void CaptureOverlay::setToolSize(qreal value)                    // Numeric edit
         if (texty) ann.font = value; else ann.pen = qRound(value);
         if (ann.tool == ATool::Text) fitTextAnnotation(ann);
         if (ann.tool == ATool::Number) {          // Circles stay square and wrap the digits.
+            // Exact center: QRect::center() rounds down on even sizes and would drift on every step.
+            const QPoint c = ann.rect.topLeft() + QPoint(ann.rect.width() / 2, ann.rect.height() / 2);
             const int s = numberDiameter(ann);
-            ann.rect = QRect(ann.rect.center() - QPoint(s / 2, s / 2), QSize(s, s));
+            ann.rect = QRect(c - QPoint(s / 2, s / 2), QSize(s, s));
         }
     } else if (texty) m_afont = value;
     else m_apen = qRound(value);
@@ -1953,14 +1943,36 @@ void CaptureOverlay::updateToolOptions()
     case ATool::Number: {
         const bool editing = !m_live && m_selAnn >= 0 && m_selAnn < m_anns.size()
                              && m_anns[m_selAnn].tool == ATool::Number;
-        auto addList = [this, lay](const QString &name, const QStringList &items, int current, bool format) {
-            auto *combo = new FlatComboBox;
+        // Style glyphs come from the number renderer itself: filled disc, ring, bare digit.
+        auto styleGlyph = [this](int style) {
+            const qreal dpr = devicePixelRatioF();
+            QPixmap pm(qCeil(16 * dpr), qCeil(16 * dpr));
+            pm.setDevicePixelRatio(dpr);
+            pm.fill(Qt::transparent);
+            Annotation sample;
+            sample.tool = ATool::Number;
+            sample.color = QColor(0x32, 0x32, 0x32);
+            sample.rect = QRect(1, 1, 14, 14);
+            sample.font = style == 2 ? 10 : 7;   // A bare digit has no disc, so it fills the cell itself.
+            sample.text = QStringLiteral("1");
+            sample.numberStyle = style;
+            QPainter painter(&pm);
+            painter.setRenderHint(QPainter::Antialiasing);
+            drawAnnotation(painter, sample, QImage());
+            return QIcon(pm);
+        };
+        auto addList = [this, lay, styleGlyph](const QString &name, const QStringList &items, int current, bool format) {
+            auto *combo = new FlatComboBox(!format);   // Style shows glyphs only; format keeps its sample text.
             combo->setObjectName(format ? QStringLiteral("numberFormat") : QStringLiteral("numberStyle"));
-            combo->addItems(items);
+            for (int k = 0; k < items.size(); ++k) {
+                if (format) combo->addItem(items[k]);
+                else combo->addItem(styleGlyph(k), items[k]);
+            }
             combo->setCurrentIndex(current);
             combo->setAccessibleName(name);
             combo->setFocusPolicy(Qt::NoFocus);
-            combo->setFixedSize(format ? 84 : 64, 24);
+            combo->setIconSize(QSize(16, 16));
+            combo->setFixedSize(format ? 60 : 40, 24);
             connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, format](int k) {
                 pickNumberOption(format, k);
                 setFocus();
