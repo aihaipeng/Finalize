@@ -22,12 +22,12 @@
 #include <QSvgRenderer>
 #include <qt_windows.h>
 
-QIcon makeIcon(Icon icon)
+QIcon makeIcon(Icon icon, int size)
 {
     static const char *const names[] = {
         "save", "copy", "pin", "long_shot", "ocr", "cancel", "rect", "ellipse", "arrow", "pen", "marker",
         "text", "number", "mosaic", "eraser", "undo", "redo", "bold", "italic", "minimize", "maximize",
-        "restore", "refresh", "fill", "dashed", "icons8-line-width", "erase_rect"};
+        "restore", "refresh", "fill", "dashed", "icons8-line-width", "marker_rect"};
     QSvgRenderer svg(QStringLiteral(":/icons/%1.svg").arg(QLatin1String(names[int(icon)])));
     QIcon result;
     // Light bar language: dark glyphs, grey when disabled, white on the checked theme fill.
@@ -38,14 +38,14 @@ QIcon makeIcon(Icon icon)
         {QColor(Qt::white), QIcon::On, {QIcon::Normal, QIcon::Active, QIcon::Selected}},
     };
     for (const auto &variant : variants)
-    for (int px : {16, 24, 32}) {                     // 1x / 1.5x / 2x variants of one logical size.
+    for (int px : {size, size * 3 / 2, size * 2}) {   // 1x / 1.5x / 2x variants of one logical size.
         QPixmap pm(px, px);
-        pm.setDevicePixelRatio(px / 16.0);
+        pm.setDevicePixelRatio(px / qreal(size));
         pm.fill(Qt::transparent);
         QPainter p(&pm);
-        svg.render(&p, QRectF(0, 0, 16, 16));
+        svg.render(&p, QRectF(0, 0, size, size));
         p.setCompositionMode(QPainter::CompositionMode_SourceIn);   // Recolor the glyph, keep its alpha.
-        p.fillRect(QRectF(0, 0, 16, 16), variant.color);
+        p.fillRect(QRectF(0, 0, size, size), variant.color);
         p.end();
         for (QIcon::Mode mode : variant.modes) result.addPixmap(pm, mode, variant.state);
     }

@@ -162,6 +162,8 @@ private:
     void syncSizeInput();
     void commitSizeInput();
     void setToolSize(qreal value);
+    qreal widthControlValue() const;
+    void setWidthControl(int value);
     void tuneWidth(int dir, const QPoint &at);
     void beginAnnotation(const QPoint &pos);
     void updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers mods = Qt::NoModifier);
@@ -310,7 +312,6 @@ private:
     bool m_sizeDragUndo = false;
     QSlider *m_mosaicSlider = nullptr;
     QLabel *m_mosaicStrengthLabel = nullptr;
-    QLabel *m_mosaicWidthLabel = nullptr;
     QToolButton *m_mosaicPreview = nullptr;
     ColorBoard *m_colorBoard = nullptr;
     QPointer<QColorDialog> m_colorDialog;
