@@ -38,5 +38,6 @@
         <file>icons8-wavy-line.svg</file>
         <file>icons8-underline.svg</file>
         <file>icons8-strikethrough.svg</file>
+        <file>check.svg</file>
     </qresource>
 </RCC>

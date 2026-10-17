@@ -1,5 +1,7 @@
 #include "pin_window.h"
 #include "ocr_dialog.h"
+#include "capture_overlay.h"
+#include <QPointer>
 #include <QPixmap>
 #include <QPoint>
 #include <QRect>
@@ -35,6 +37,7 @@
 #include <QLayout>
 #include <QtConcurrent>
 #include <QFutureWatcher>
+#include <QThread>
 #include <qt_windows.h>
 
 PinWindow::PinWindow(const QPixmap &pix, const QRect &displayRect)
@@ -46,8 +49,9 @@ PinWindow::PinWindow(const QPixmap &pix, const QRect &displayRect)
     setCursor(Qt::SizeAllCursor);
     setAccessibleName(QStringLiteral("贴图"));
     setMouseTracking(true);
-    setGeometry(displayRect);
-    setShadowEnabled(m_shadowOn);
+    setAttribute(Qt::WA_TranslucentBackground);   // The shadow band is painted, per-pixel alpha.
+    setImageGeometry(displayRect);
+    toggleTextSelectable(true);   // Text is selectable by default (user requirement).
     // Every markup tool starts on the first palette color, reference behavior.
     for (QColor &c : m_decoToolColor) c = QColor("#ff909c");
     qApp->installEventFilter(this);   // Clicks outside the markup toolbar close it.
@@ -56,14 +60,53 @@ PinWindow::PinWindow(const QPixmap &pix, const QRect &displayRect)
 
 void PinWindow::setShadowEnabled(bool enabled)
 {
+    // Only a repaint: the band stays, so the pin neither moves nor flickers.
     m_shadowOn = enabled;
-    const HWND hwnd = reinterpret_cast<HWND>(winId());
-    if (hwnd) {
-        const ULONG_PTR style = GetClassLongPtrW(hwnd, GCL_STYLE);
-        if (enabled) SetClassLongPtrW(hwnd, GCL_STYLE, style | CS_DROPSHADOW);
-        else SetClassLongPtrW(hwnd, GCL_STYLE, style & ~CS_DROPSHADOW);
-        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    update();
+}
+
+void PinWindow::changeEvent(QEvent *e)
+{
+    if (e->type() == QEvent::ActivationChange) update();   // Active pins glow in the theme color.
+    QWidget::changeEvent(e);
+}
+
+// A blurred rectangle under the image: alpha = peak * F(dx) * F(dy), d = logical pixels
+// past the nearest image edge (1 = first pixel outside, <= 0 inside). Measured per pixel.
+static double shadowFalloff(int d)
+{
+    static const double inside[] = { 0.958, 0.917, 0.854, 0.75, 0.604 };              // d = -4 .. 0
+    static const double outside[] = { 49, 35, 25, 17, 11, 7, 5, 3, 2, 1, 1, 1 };      // d = 1 .. 12, /107
+    if (d <= -5) return 1.0;
+    if (d <= 0) return inside[d + 4];
+    if (d <= 12) return outside[d - 1] / 107.0;
+    return 0.0;
+}
+
+QImage PinWindow::shadowImage(const QSize &window, const QColor &color, qreal dpr)
+{
+    QImage img((QSizeF(window) * dpr).toSize(), QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+    const double peak = 215;   // Solved from white/dark backdrops: alpha 96 at d = 1 (F = 49/107).
+    const double m = kShadowMargin;
+    const auto dist = [m, dpr](int px, int extent) {
+        const double c = (px + 0.5) / dpr, e = extent / dpr;
+        return int(std::ceil(qMax(m - c, c - (e - m))));
+    };
+    const int band = qCeil(m * dpr);
+    for (int py = 0; py < img.height(); ++py) {
+        const double fy = shadowFalloff(dist(py, img.height()));
+        const bool edgeRow = py < band || py >= img.height() - band;
+        QRgb *line = reinterpret_cast<QRgb *>(img.scanLine(py));
+        for (int px = 0; px < img.width(); ++px) {
+            if (!edgeRow && px == band) px = qMax(band, img.width() - band);   // The image covers the middle.
+            if (px >= img.width()) break;
+            const int a = qRound(peak * fy * shadowFalloff(dist(px, img.width())));
+            if (a > 0) line[px] = qPremultiply(qRgba(color.red(), color.green(), color.blue(), a));
+        }
     }
+    img.setDevicePixelRatio(dpr);
+    return img;
 }
 
 void PinWindow::applyProcessedImage()
@@ -111,17 +154,18 @@ void PinWindow::applyProcessedImage()
     }
 
     // Recalculate window size to preserve logical scale and aspect ratio
-    const QPoint c = geometry().center();
+    const QPoint c = imageGeometry().center();
     const QSize newSize(qMax(1, qRound(m_pix.width() * m_scale)),
                         qMax(1, qRound(m_pix.height() * m_scale)));
     QRect r(0, 0, newSize.width(), newSize.height());
     r.moveCenter(c);
-    setGeometry(r);
+    setImageGeometry(r);
     update();
 }
 
 void PinWindow::rotateBy(int degrees)
 {
+    bakeAnnotations();   // Marks composite into pixels before the transform.
     m_rotation = (m_rotation + degrees) % 360;
     if (m_rotation < 0) m_rotation += 360;
     applyProcessedImage();
@@ -129,18 +173,21 @@ void PinWindow::rotateBy(int degrees)
 
 void PinWindow::flipHorizontal()
 {
+    bakeAnnotations();
     m_flipH = !m_flipH;
     applyProcessedImage();
 }
 
 void PinWindow::flipVertical()
 {
+    bakeAnnotations();
     m_flipV = !m_flipV;
     applyProcessedImage();
 }
 
 void PinWindow::invertColors()
 {
+    bakeAnnotations();
     m_inverted = !m_inverted;
     applyProcessedImage();
 }
@@ -153,12 +200,14 @@ void PinWindow::setOpacityPercent(int percent)
 
 void PinWindow::setBrightnessPercent(int percent)
 {
+    bakeAnnotations();
     m_brightnessPercent = qBound(0, percent, 200);
     applyProcessedImage();
 }
 
 void PinWindow::resetProcessing()
 {
+    bakeAnnotations();
     m_rotation = 0;
     m_flipH = false;
     m_flipV = false;
@@ -185,15 +234,28 @@ QRect PinWindow::fittedGeometry(const QSize &imageSize, const QRect &source, con
 void PinWindow::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
-    p.drawPixmap(0, 0, m_pix.scaled(size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+    if (m_shadowOn) {
+        // Theme blue while the pin is active, neutral gray otherwise (both measured).
+        const QColor c = isActiveWindow() ? QColor(0x20, 0x80, 0xf0) : QColor(0x80, 0x80, 0x80);
+        const qreal dpr = devicePixelRatioF();
+        if (m_shadowCache.deviceIndependentSize().toSize() != size()
+                || m_shadowCache.devicePixelRatio() != dpr || m_shadowCache.text(QStringLiteral("c")) != c.name()) {
+            m_shadowCache = shadowImage(size(), c, dpr);
+            m_shadowCache.setText(QStringLiteral("c"), c.name());
+        }
+        p.drawImage(0, 0, m_shadowCache);
+    }
+    const QSize is = imageRect().size();
+    p.translate(imageRect().topLeft());
+    p.drawPixmap(0, 0, m_pix.scaled(is, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
 
     // Draw text selection highlight if text is selectable and selected
     if (m_textSelectable && m_selAnchor >= 0 && m_selLead >= 0
             && !m_charBoxes.isEmpty() && !m_ocrImgSize.isEmpty()) {
         const int start = qMin(m_selAnchor, m_selLead);
         const int end = qMax(m_selAnchor, m_selLead);
-        const double scaleX = double(width()) / m_ocrImgSize.width();
-        const double scaleY = double(height()) / m_ocrImgSize.height();
+        const double scaleX = double(is.width()) / m_ocrImgSize.width();
+        const double scaleY = double(is.height()) / m_ocrImgSize.height();
 
         p.save();
         p.setRenderHint(QPainter::Antialiasing, true);
@@ -211,8 +273,8 @@ void PinWindow::paintEvent(QPaintEvent *)
     // Markup is drawn after the selection so lines stay readable over the blue highlight.
     if ((!m_decoHighlight.isEmpty() || !m_decoLine.isEmpty())
             && !m_charBoxes.isEmpty() && !m_ocrImgSize.isEmpty()) {
-        const double scaleX = double(width()) / m_ocrImgSize.width();
-        const double scaleY = double(height()) / m_ocrImgSize.height();
+        const double scaleX = double(is.width()) / m_ocrImgSize.width();
+        const double scaleY = double(is.height()) / m_ocrImgSize.height();
         const double dpr = devicePixelRatioF();
         p.save();
         p.setRenderHint(QPainter::Antialiasing, true);
@@ -289,14 +351,6 @@ void PinWindow::paintEvent(QPaintEvent *)
             i = j + 1;
         }
         p.restore();
-    }
-
-    if (m_borderOn) {                             // Highlight border, toggled through the context menu.
-        p.setPen(QPen(QColor("#2080f0"), 2));
-        p.drawRect(rect().adjusted(1, 1, -1, -1));
-    } else {
-        p.setPen(QPen(QColor(0, 0, 0, 90), 1));
-        p.drawRect(rect().adjusted(0, 0, -1, -1));
     }
 }
 
@@ -441,6 +495,11 @@ static QMenu *createSliderSubMenu(QMenu *parent, const QString &title,
 
 void PinWindow::toggleTextSelectable(bool enabled)
 {
+    if (enabled && m_canvas) {   // Selection works on pixels: marks bake, the canvas steps aside.
+        bakeAnnotations();
+        m_canvas->armTool(CaptureOverlay::ATool::None);
+        m_canvas->hide();
+    }
     m_textSelectable = enabled;
     m_selAnchor = -1;
     m_selLead = -1;
@@ -536,9 +595,10 @@ void PinWindow::rebuildCharBoxes()
 int PinWindow::charIndexAt(const QPoint &pos, bool proximity) const
 {
     if (m_pix.isNull() || m_charBoxes.isEmpty() || m_ocrImgSize.isEmpty()) return -1;
-    const double scaleX = m_ocrImgSize.width() / width();
-    const double scaleY = m_ocrImgSize.height() / height();
-    const QPointF imgPt(pos.x() * scaleX, pos.y() * scaleY);
+    const double scaleX = m_ocrImgSize.width() / imageRect().width();
+    const double scaleY = m_ocrImgSize.height() / imageRect().height();
+    const QPoint ip = imagePos(pos);
+    const QPointF imgPt(ip.x() * scaleX, ip.y() * scaleY);
 
     // 1. Direct hit with generous view padding (5px in view coordinates)
     const double padX = 5.0 * scaleX;
@@ -753,14 +813,15 @@ void PinWindow::updateSelToolbar()
     }
     ensureSelToolbar();
     m_selToolbar->adjustSize();
-    const double scaleX = double(width()) / m_ocrImgSize.width();
-    const double scaleY = double(height()) / m_ocrImgSize.height();
+    const double scaleX = double(imageRect().width()) / m_ocrImgSize.width();
+    const double scaleY = double(imageRect().height()) / m_ocrImgSize.height();
     QRectF sel;
     const int from = qMin(m_selAnchor, m_selLead);
     const int to = qMax(m_selAnchor, m_selLead);
     for (int i = from; i <= to && i < m_charBoxes.size(); ++i)
         sel = sel.isNull() ? m_charBoxes.at(i).rect : sel.united(m_charBoxes.at(i).rect);
-    const QRectF view(sel.x() * scaleX, sel.y() * scaleY, sel.width() * scaleX, sel.height() * scaleY);
+    const QRectF view = QRectF(sel.x() * scaleX, sel.y() * scaleY, sel.width() * scaleX, sel.height() * scaleY)
+                            .translated(imageRect().topLeft());
     QPoint g = mapToGlobal(QPoint(qRound(view.center().x()), qRound(view.bottom()) + 6));
     const QRect avail = screen() ? screen()->availableGeometry()
                                  : QGuiApplication::primaryScreen()->availableGeometry();
@@ -782,21 +843,73 @@ void PinWindow::toggleToolbar(bool enabled)
     m_toolbarOn = enabled;
     if (m_toolbarOn) {
         if (!m_toolbar) {
-            m_toolbar = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+            // Never activates: clicks keep keyboard focus (Esc, Ctrl+Z) on the pin.
+            m_toolbar = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint
+                                                 | Qt::WindowDoesNotAcceptFocus);
             m_toolbar->setAttribute(Qt::WA_DeleteOnClose, false);
             m_toolbar->setStyleSheet(QStringLiteral(
                 "QWidget { background: #f2f2f2; border: 1px solid #c8c8c8; border-radius: 4px; }"
                 "QToolButton { color: #323232; background: transparent; border: none; border-radius: 2px; padding: 4px; }"
                 "QToolButton:hover { background-color: #d4d4d4; }"
                 "QToolButton:checked { background-color: #2080f0; }"
+                "QFrame#barSeparator { background-color: rgba(50,50,50,144); margin: 0px 2px; border: none; }"
             ));
             auto *lay = new QHBoxLayout(m_toolbar);
             lay->setContentsMargins(4, 4, 4, 4);
             lay->setSpacing(2);
 
+            // The full annotation tool set: any tool arms the in-place canvas
+            // inside the pin; reclicking disarms it. Options live on the strip
+            // that opens under this toolbar; undo/redo follow the canvas stacks.
+            const struct { CaptureOverlay::ATool tool; Icon icon; QString tip; } annTools[] = {
+                { CaptureOverlay::ATool::Rect, Icon::Rect, QStringLiteral("形状：矩形/椭圆") },
+                { CaptureOverlay::ATool::Arrow, Icon::Arrow, QStringLiteral("箭头") },
+                { CaptureOverlay::ATool::Pen, Icon::Pen, QStringLiteral("画笔") },
+                { CaptureOverlay::ATool::Marker, Icon::Marker, QStringLiteral("荧光笔") },
+                { CaptureOverlay::ATool::Mosaic, Icon::Mosaic, QStringLiteral("马赛克") },
+                { CaptureOverlay::ATool::Text, Icon::Text, QStringLiteral("文字") },
+                { CaptureOverlay::ATool::Number, Icon::Number, QStringLiteral("序号") },
+                { CaptureOverlay::ATool::Eraser, Icon::Eraser, QStringLiteral("橡皮") },
+            };
+            for (const auto &t : annTools) {
+                auto *btn = iconButton(t.icon, t.tip);
+                btn->setCheckable(true);
+                btn->setFocusPolicy(Qt::NoFocus);
+                const int tool = int(t.tool);
+                btn->setProperty("pinTool", tool);
+                connect(btn, &QToolButton::clicked, this, [this, btn, tool] {
+                    armPinTool(btn->isChecked() ? tool : -1);
+                });
+                lay->addWidget(btn);
+            }
+            auto *sep = new QFrame(m_toolbar);
+            sep->setObjectName(QStringLiteral("barSeparator"));
+            sep->setFixedSize(1, 22);
+            lay->addWidget(sep);
+
+            m_undoBtn = iconButton(Icon::Undo, QStringLiteral("撤销 (Ctrl+Z)"));
+            m_undoBtn->setEnabled(false);
+            m_undoBtn->setFocusPolicy(Qt::NoFocus);
+            connect(m_undoBtn, &QToolButton::clicked, this, [this] {
+                if (m_canvas) m_canvas->undoAnnotation();
+            });
+            lay->addWidget(m_undoBtn);
+            m_redoBtn = iconButton(Icon::Redo, QStringLiteral("重做 (Ctrl+Y)"));
+            m_redoBtn->setEnabled(false);
+            m_redoBtn->setFocusPolicy(Qt::NoFocus);
+            connect(m_redoBtn, &QToolButton::clicked, this, [this] {
+                if (m_canvas) m_canvas->redoAnnotation();
+            });
+            lay->addWidget(m_redoBtn);
+
+            auto *sep2 = new QFrame(m_toolbar);
+            sep2->setObjectName(QStringLiteral("barSeparator"));
+            sep2->setFixedSize(1, 22);
+            lay->addWidget(sep2);
+
             auto *copyBtn = iconButton(Icon::Copy, QStringLiteral("复制图像"));
             connect(copyBtn, &QToolButton::clicked, this, [this] {
-                if (!copyImageToClipboard(m_pix.toImage()))
+                if (!copyImageToClipboard(annotatedPix().toImage()))
                     QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
             });
             lay->addWidget(copyBtn);
@@ -807,26 +920,29 @@ void PinWindow::toggleToolbar(bool enabled)
                 const QString path = QFileDialog::getSaveFileName(
                     this, QStringLiteral("保存图片"), dir + QStringLiteral("/pin.png"),
                     QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
-                if (!path.isEmpty() && !saveImageAtomic(m_pix.toImage(), path))
+                if (!path.isEmpty() && !saveImageAtomic(annotatedPix().toImage(), path))
                     QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("保存失败，请检查路径或磁盘空间后重试"));
             });
             lay->addWidget(saveBtn);
 
             auto *ocrBtn = iconButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)"));
             connect(ocrBtn, &QToolButton::clicked, this, [this] {
-                showOcr(m_pix.toImage(), this, geometry());
+                showOcr(annotatedPix().toImage(), this, imageGeometry());
             });
             lay->addWidget(ocrBtn);
 
-            auto *closeBtn = iconButton(Icon::Cancel, QStringLiteral("关闭贴图 (Esc)"));
-            connect(closeBtn, &QToolButton::clicked, this, &PinWindow::close);
-            lay->addWidget(closeBtn);
+            // Done: hides the bar like the first Esc; the pin and its marks stay.
+            auto *doneBtn = iconButton(Icon::Check, QStringLiteral("完成"));
+            doneBtn->setFocusPolicy(Qt::NoFocus);
+            connect(doneBtn, &QToolButton::clicked, this, [this] { toggleToolbar(false); });
+            lay->addWidget(doneBtn);
 
             m_toolbar->adjustSize();
         }
         updateToolbarPosition();
         m_toolbar->show();
     } else {
+        if (m_canvas) m_canvas->armTool(CaptureOverlay::ATool::None);   // Marks stay; the strip closes.
         if (m_toolbar) m_toolbar->hide();
     }
 }
@@ -834,14 +950,104 @@ void PinWindow::toggleToolbar(bool enabled)
 void PinWindow::updateToolbarPosition()
 {
     if (m_toolbar && m_toolbarOn) {
-        const QRect geom = geometry();
+        const QRect geom = imageGeometry();
         const QSize tSize = m_toolbar->sizeHint();
-        // Position toolbar centered below the pinned window
-        const int x = geom.left() + (geom.width() - tSize.width()) / 2;
-        const int y = geom.bottom() + 6;
+        // Position toolbar centered below the pinned window, clamped to the
+        // screen so the widened annotation bar stays fully visible.
+        const QScreen *scr = QGuiApplication::screenAt(geom.center());
+        if (!scr) scr = QGuiApplication::primaryScreen();
+        const QRect avail = scr->availableGeometry();
+        const int x = qBound(avail.left(), geom.left() + (geom.width() - tSize.width()) / 2,
+                             qMax(avail.left(), avail.right() + 1 - tSize.width()));
+        const int y = qMin(geom.bottom() + 6, avail.bottom() - tSize.height());
         m_toolbar->move(x, y);
     }
     updateSelToolbar();   // The selection toolbar follows window moves and zoom too.
+    positionStrip();
+}
+
+void PinWindow::armPinTool(int tool)
+{
+    if (m_textSelectable && tool >= 0) toggleTextSelectable(false);
+    if (!m_canvas) {
+        // The shared annotation engine runs as a child canvas: the pin never
+        // changes and the desktop stays live; there is no capture session.
+        ScreenFrame pinFrame;
+        pinFrame.image = displayImage();
+        pinFrame.logicalRect = QRect(QPoint(0, 0), imageRect().size());
+        pinFrame.pixelRect = QRect(QPoint(0, 0), pinFrame.image.size());
+        m_canvas = new CaptureOverlay({pinFrame}, {}, DetectionOptions(), false, true, this);
+        connect(m_canvas.data(), &CaptureOverlay::undoAvailability, this, [this](bool u, bool r) {
+            if (m_undoBtn) m_undoBtn->setEnabled(u);
+            if (m_redoBtn) m_redoBtn->setEnabled(r);
+        });
+        connect(m_canvas.data(), &CaptureOverlay::stripRebuilt, this, [this] {
+            // Tool buttons follow the canvas, which can disarm itself (Esc, right-click).
+            auto armed = m_canvas->armedTool();
+            if (armed == CaptureOverlay::ATool::Ellipse) armed = CaptureOverlay::ATool::Rect;
+            if (m_toolbar)
+                for (QToolButton *b : m_toolbar->findChildren<QToolButton *>()) {
+                    const QVariant t = b->property("pinTool");
+                    if (t.isValid()) b->setChecked(t.toInt() == int(armed));
+                }
+            positionStrip();
+        });
+    }
+    if (!m_canvas->hasAnnotations()) {   // Pixels as displayed; processing/zoom bake before mutating.
+        m_canvas->setGeometry(imageRect());
+        m_canvas->setImage(displayImage());
+    }
+    const int lastTool = int(CaptureOverlay::ATool::Eraser);
+    const auto atool = tool >= 0 && tool <= lastTool
+        ? static_cast<CaptureOverlay::ATool>(tool) : CaptureOverlay::ATool::None;
+    m_canvas->armTool(atool);
+    m_canvas->show();
+    m_canvas->raise();
+    positionStrip();
+}
+
+void PinWindow::positionStrip()
+{
+    if (!m_canvas || !m_toolbar) return;
+    QWidget *strip = m_canvas->optionsStrip();
+    if (!strip || !strip->isVisible()) return;
+    strip->adjustSize();
+    const QRect avail = screen() ? screen()->availableGeometry()
+                                 : QGuiApplication::primaryScreen()->availableGeometry();
+    // Left-aligned with the pin toolbar, directly below it.
+    const int x = qBound(avail.left(), m_toolbar->x(),
+                         qMax(avail.left(), avail.right() + 1 - strip->width()));
+    const int y = qMin(m_toolbar->y() + m_toolbar->height() + 2, avail.bottom() + 1 - strip->height());
+    strip->move(x, qMax(avail.top(), y));
+    strip->raise();
+}
+
+void PinWindow::bakeAnnotations()
+{
+    if (!m_canvas || !m_canvas->hasAnnotations()) return;
+    const QImage baked = m_canvas->composited().toImage();
+    m_canvas->clearAll();
+    // Baked pixels are display-sized and already carry processing.
+    m_originalPix = QPixmap::fromImage(baked);
+    m_rotation = 0;
+    m_flipH = m_flipV = m_inverted = false;
+    m_brightnessPercent = 100;
+    m_scale = 1.0;
+    applyProcessedImage();   // Rebuilds m_pix, clears OCR cache and text markups.
+    m_canvas->setGeometry(imageRect());
+    m_canvas->setImage(displayImage());
+}
+
+QImage PinWindow::displayImage() const
+{
+    const QSize is = imageRect().size();
+    if (m_pix.size() == is) return m_pix.toImage();
+    return m_pix.scaled(is, Qt::IgnoreAspectRatio, Qt::SmoothTransformation).toImage();
+}
+
+QPixmap PinWindow::annotatedPix() const
+{
+    return (m_canvas && m_canvas->hasAnnotations()) ? m_canvas->composited() : m_pix;
 }
 
 QMenu *PinWindow::createContextMenu()
@@ -1034,14 +1240,20 @@ void PinWindow::mouseReleaseEvent(QMouseEvent *e)
 void PinWindow::wheelEvent(QWheelEvent *e)       // Zoom with mouse-wheel input.
 {
     if (!e->angleDelta().y()) return;
+    bakeAnnotations();   // Marks composite into pixels before resampling.
     const double f = e->angleDelta().y() > 0 ? 1.1 : 1 / 1.1;
     m_scale = qBound(1.0 / qMax(m_pix.width(), m_pix.height()), m_scale * f, 32.0);
     // Keep the cursor position anchored while zooming.
     const QPoint a = e->globalPosition().toPoint();
+    const QRect ig = imageGeometry();
     const QSize ns(qMax(1, qRound(m_pix.width() * m_scale)), qMax(1, qRound(m_pix.height() * m_scale)));
-    QPoint np(a.x() - double(a.x() - x()) / width() * ns.width(),
-              a.y() - double(a.y() - y()) / height() * ns.height());
-    setGeometry(QRect(np, ns));
+    QPoint np(a.x() - double(a.x() - ig.x()) / ig.width() * ns.width(),
+              a.y() - double(a.y() - ig.y()) / ig.height() * ns.height());
+    setImageGeometry(QRect(np, ns));
+    if (m_canvas) {
+        m_canvas->setGeometry(imageRect());
+        m_canvas->setImage(displayImage());
+    }
     updateToolbarPosition();
 }
 
@@ -1049,6 +1261,7 @@ void PinWindow::mouseDoubleClickEvent(QMouseEvent *)  { close(); }
 
 PinWindow::~PinWindow()
 {
+    if (m_ocrCancel) m_ocrCancel->store(true);   // Background text recognition stops with the pin.
     if (m_selToolbar) {
         m_selToolbar->close();
         delete m_selToolbar;
@@ -1072,6 +1285,8 @@ void PinWindow::keyPressEvent(QKeyEvent *e)
             }
         }
     }
-    if (e->key() == Qt::Key_Escape)
-        close();
+    if (e->key() == Qt::Key_Escape) {
+        if (m_toolbarOn) toggleToolbar(false);   // First Esc hides the bar and disarms; marks stay.
+        else close();
+    }
 }

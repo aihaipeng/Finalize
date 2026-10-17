@@ -484,6 +484,8 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     overlay.setToolNone();
     mouse(QEvent::MouseButtonPress, n1);
     mouse(QEvent::MouseButtonRelease, n1);
+    check(overlay.m_selAnn == -1, "a deselected number is locked and cannot be picked again");
+    overlay.m_selAnn = 2;   // Fixture: delete the first number to check renumbering.
     QApplication::sendEvent(&overlay, &del);
     check(overlay.m_anns.size() == 3 && overlay.m_anns[2].text == QStringLiteral("1"),
           "numbers renumber after a deletion");
@@ -614,8 +616,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     overlay.m_anns.removeAt(0);                  // Later checks expect the marker gone, as before.
     overlay.m_selAnn = -1;
     overlay.setToolNone();
-    mouse(QEvent::MouseButtonPress, n2);
-    mouse(QEvent::MouseButtonRelease, n2);
+    overlay.m_selAnn = overlay.m_anns.size() - 1;   // Fixture: a still-selected fresh item.
     QKeyEvent escSel(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
     QApplication::sendEvent(&overlay, &escSel);
     check(overlay.m_selAnn == -1 && overlay.isVisible(),

@@ -3,6 +3,7 @@
 #include "output.h"
 #include "ocr_engine.h"
 #include "widgets.h"
+#include "capture_overlay.h"
 #include <QImage>
 #include <QPixmap>
 #include <QPoint>
@@ -33,7 +34,12 @@ public:
     static QRect fittedGeometry(const QSize &imageSize, const QRect &source, const QRect &available);
     static int testPlacement();
     QMenu *createContextMenu();
+    // The window keeps a transparent band around the image for its painted shadow.
+    static constexpr int kShadowMargin = 12;
+    QRect imageRect() const { return rect().marginsRemoved(shadowMargins()); }
+    QRect imageGeometry() const { return geometry().marginsRemoved(shadowMargins()); }
 protected:
+    void changeEvent(QEvent *e) override;
     void paintEvent(QPaintEvent *) override;
     void contextMenuEvent(QContextMenuEvent *) override;
     void mousePressEvent(QMouseEvent *e) override;
@@ -49,6 +55,11 @@ protected:
         int lineIdx = -1;
     };
 private:
+    static QMargins shadowMargins() { return QMargins(kShadowMargin, kShadowMargin, kShadowMargin, kShadowMargin); }
+    void setImageGeometry(const QRect &r) { setGeometry(r.marginsAdded(shadowMargins())); }
+    QPoint imagePos(const QPoint &windowPos) const { return windowPos - QPoint(kShadowMargin, kShadowMargin); }
+    static QImage shadowImage(const QSize &window, const QColor &color, qreal dpr);
+    QImage m_shadowCache;   // Rebuilt when size, DPR or color changes.
     void applyProcessedImage();
     void resetProcessing();
     void rotateBy(int degrees);
@@ -64,6 +75,13 @@ private:
     QString selectedText() const;
     void toggleToolbar(bool enabled);
     void updateToolbarPosition();
+    // Reopens the pinned pixels inside the pin itself: the shared annotation
+    // engine runs as a child canvas; tool is a CaptureOverlay::ATool value.
+    void armPinTool(int tool);
+    void positionStrip();                 // Option strip under the pin toolbar, left-aligned.
+    void bakeAnnotations();               // Composite marks into pixels before processing/select/OCR.
+    QPixmap annotatedPix() const;         // Display pixels including live annotations.
+    QImage displayImage() const;          // m_pix at the current window size.
     // Text markup over the OCR selection, stored per character: highlight keeps
     // its own slot while the three line marks share one (they replace each
     // other), mirroring the reference pin's per-character map<type,color>.
@@ -81,7 +99,6 @@ private:
     QPixmap m_pix;
     double m_scale;
     QPoint m_dragOff;
-    bool m_borderOn = true;
     bool m_shadowOn = true;
     int m_rotation = 0;       // 0, 90, 180, 270
     bool m_flipH = false;
@@ -113,6 +130,9 @@ private:
     // Pin toolbar support
     bool m_toolbarOn = false;
     QWidget *m_toolbar = nullptr;
+    QToolButton *m_undoBtn = nullptr;   // Pin-side undo/redo, driven by the canvas stacks.
+    QToolButton *m_redoBtn = nullptr;
+    QPointer<CaptureOverlay> m_canvas;  // Embedded annotation canvas (in-place editing).
 };
 
 // Place a slider flyout fully outside its parent; shared with tests.

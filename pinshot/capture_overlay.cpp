@@ -52,9 +52,23 @@
 
 CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
                         const WindowTargets &nativeWindows,
-                        const DetectionOptions &options, bool liveDetection)
-    : m_frames(frames), m_detectionOptions(options)
+                        const DetectionOptions &options, bool liveDetection, bool pinEdit, QWidget *embedParent)
+    : m_frames(frames), m_detectionOptions(options), m_pinEdit(pinEdit), m_embedded(embedParent != nullptr)
 {
+    if (m_embedded) {
+        // A child canvas inside the pin: no session chrome, no freeze, no
+        // foreground claim. The single frame is the pin's current pixels.
+        setParent(embedParent);
+        setMouseTracking(true);
+        setFocusPolicy(Qt::StrongFocus);
+        setGeometry(QRect(QPoint(0, 0), embedParent->size()));
+        m_shot = QPixmap(frames.isEmpty() ? QSize(1, 1) : frames.first().image.size());
+        m_shot.fill(Qt::transparent);
+        if (!frames.isEmpty()) {
+            QPainter painter(&m_shot);
+            painter.drawImage(QPoint(0, 0), frames.first().image);
+        }
+    } else {
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
     setAttribute(Qt::WA_DeleteOnClose);
     setMouseTracking(true);
@@ -89,6 +103,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         painter.drawImage(QRectF(local, size), frame.image);
     }
     painter.end();
+    }
     m_inspector = new PixelInspector(this);
 
     m_sizeTip = new QLabel(this);
@@ -108,21 +123,26 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         "QToolButton:checked{background-color:#2080f0;}"
         "QFrame#barSeparator{background-color:rgba(50,50,50,144);margin:0px 2px;border:none;}");
     m_tools->setStyleSheet(barQss);
-    auto *save = iconButton(Icon::Save, QStringLiteral("保存到文件 (Ctrl+S)"));
-    auto *copy = iconButton(Icon::Copy, QStringLiteral("复制到剪贴板 (Ctrl+C)"));
-    auto *pin = iconButton(Icon::Pin, QStringLiteral("贴在屏幕上 (Enter / 双击)"));
-    auto *scroll = iconButton(Icon::LongShot, QStringLiteral("长截图：手动滚动拼接长图"));
-    auto *ocr = iconButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)：截图与文本对照"));
-    ocr->setObjectName(QStringLiteral("ocrButton"));
-    ocr->setAccessibleName(QStringLiteral("文字识别 OCR"));
-    const QString ocrMissing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
-    if (!ocrMissing.isEmpty()) { ocr->setEnabled(false); ocr->setToolTip(ocrMissing); }
-    connect(save, &QToolButton::clicked, this, &CaptureOverlay::saveCapture);
-    connect(copy, &QToolButton::clicked, this, &CaptureOverlay::copyCapture);
-    connect(pin, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
-    connect(scroll, &QToolButton::clicked, this, &CaptureOverlay::longCapture);
-    connect(ocr, &QToolButton::clicked, this, &CaptureOverlay::ocrCapture);
-
+    // Capture output actions; a pin edit session replaces them with one
+    // confirm button that applies the result back to the pin.
+    QList<QWidget *> outputButtons;
+    if (!pinEdit) {
+        auto *save = iconButton(Icon::Save, QStringLiteral("保存到文件 (Ctrl+S)"));
+        auto *copy = iconButton(Icon::Copy, QStringLiteral("复制到剪贴板 (Ctrl+C)"));
+        auto *pin = iconButton(Icon::Pin, QStringLiteral("贴在屏幕上 (Enter / 双击)"));
+        auto *scroll = iconButton(Icon::LongShot, QStringLiteral("长截图：手动滚动拼接长图"));
+        auto *ocr = iconButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)：截图与文本对照"));
+        ocr->setObjectName(QStringLiteral("ocrButton"));
+        ocr->setAccessibleName(QStringLiteral("文字识别 OCR"));
+        const QString ocrMissing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
+        if (!ocrMissing.isEmpty()) { ocr->setEnabled(false); ocr->setToolTip(ocrMissing); }
+        connect(save, &QToolButton::clicked, this, &CaptureOverlay::saveCapture);
+        connect(copy, &QToolButton::clicked, this, &CaptureOverlay::copyCapture);
+        connect(pin, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
+        connect(scroll, &QToolButton::clicked, this, &CaptureOverlay::longCapture);
+        connect(ocr, &QToolButton::clicked, this, &CaptureOverlay::ocrCapture);
+        outputButtons = {scroll, ocr, pin, save, copy};
+    }
     // Instant annotation tools: draw inside the committed selection; every capture
     // action composes them in. One shape button covers rect / ellipse; per-tool
     // options (sub-shape, arrow style, colors, text weight) live on the strip below.
@@ -166,16 +186,21 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         m_toolBtn[int(tool)] = button;
     }
     // Drawing tools | undo, redo | capture actions ending with pin, save, copy.
-    m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
-                     m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
-                     m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)],
-                     undo, redo, scroll, ocr, pin, save, copy};
+    if (pinEdit) {
+        auto *done = iconButton(Icon::Check, QStringLiteral("完成编辑 (Enter)"));
+        connect(done, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
+        m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
+                         m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
+                         m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)], undo, redo, done};
+    } else {
+        m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
+                         m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
+                         m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)], undo, redo};
+        m_toolButtons += outputButtons;
+    }
     for (QWidget *button : m_toolButtons) button->setFocusPolicy(Qt::NoFocus);
 
-    m_toolOptions = new QWidget(this);
-    m_toolOptions->installEventFilter(this);
-    m_toolOptions->setCursor(Qt::ArrowCursor);
-    m_toolOptions->setStyleSheet(barQss + QStringLiteral(
+    const QString optionsQss = barQss + QStringLiteral(
         "QLabel{color:#323232;font-size:12px;border:none;}"
         "QComboBox{color:#323232;background:#fdfdfd;border:1px solid #d2d2d2;border-bottom-color:#bcbcbc;"
         "padding:1px 3px;font-size:12px;}"
@@ -185,12 +210,31 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         "QComboBox QAbstractItemView{outline:0px;color:#323232;background:#ffffff;border:1px solid #828790;"
         "selection-background-color:#e5f1fb;selection-color:#323232;}"
         "QLineEdit{color:#323232;background:transparent;border:none;"
-        "selection-background-color:#2080f0;selection-color:#ffffff;}"));
+        "selection-background-color:#2080f0;selection-color:#ffffff;}");
+    if (m_embedded) {
+        // The option strip detaches as a small top-level bar styled like the
+        // pin's own toolbar; the pin positions it below that toolbar.
+        m_toolOptions = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+        m_toolOptions->setObjectName(QStringLiteral("pinStrip"));
+        m_toolOptions->setAttribute(Qt::WA_StyledBackground);
+        m_toolOptions->setStyleSheet(QStringLiteral(
+            "#pinStrip{background:#f2f2f2;border:1px solid #c8c8c8;border-radius:4px;}") + optionsQss);
+    } else {
+        m_toolOptions = new QWidget(this);
+        m_toolOptions->setStyleSheet(optionsQss);
+    }
+    m_toolOptions->installEventFilter(this);
+    m_toolOptions->setCursor(Qt::ArrowCursor);
     m_toolOptions->hide();
     buildToolLayout();
     m_tools->adjustSize();
     m_tools->hide();
 
+    if (m_embedded) {
+        // Whole canvas is the committed selection; drawing works immediately.
+        presetSelection(rect(), ATool::None);
+        return;
+    }
     show();
     setWindowTargets(nativeWindows);
     // Claim foreground synchronously (hotkey handling grants activation rights)
@@ -209,24 +253,32 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     }
 }
 
-CaptureOverlay::~CaptureOverlay()  { if (m_detector) m_detector->stop(); }
+CaptureOverlay::~CaptureOverlay()
+{
+    if (m_detector) m_detector->stop();
+    if (m_embedded) delete m_toolOptions;   // The detached strip has no parent.
+}
 
 void CaptureOverlay::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
-    p.drawPixmap(0, 0, m_shot);                 // Frozen frame covers the virtual desktop.
+    // Embedded: a transparent layer of marks only; the pin paints its own
+    // pixels, border and text markups underneath, unchanged.
+    if (!m_embedded) p.drawPixmap(0, 0, m_shot);   // Frozen frame covers the virtual desktop.
     // The mask hole tracks the detected target, falling back to the committed selection.
     const QRect hole = !m_hover.isNull() ? m_hover : m_sel;
     if (hole.isNull()) {
         p.fillRect(rect(), QColor(0, 0, 0, 60));
         return;
     }
-    QPainterPath mask;                          // Dim outside the hole, leave the inside clear.
-    mask.addRect(rect());
-    mask.addRect(hole);
-    p.fillPath(mask, QColor(0, 0, 0, 120));
-    p.setPen(QPen(QColor("#2080f0"), 1));
-    p.drawRect(QRectF(hole).adjusted(0.5, 0.5, -0.5, -0.5));
+    if (!m_pinEdit) {                           // Pin editing draws on the pin as-is:
+        QPainterPath mask;                      // no dim mask and no selection frame.
+        mask.addRect(rect());
+        mask.addRect(hole);
+        p.fillPath(mask, QColor(0, 0, 0, 120));
+        p.setPen(QPen(QColor("#2080f0"), 1));
+        p.drawRect(QRectF(hole).adjusted(0.5, 0.5, -0.5, -0.5));
+    }
     const QColor snapColor(0, 229, 255);        // Magnetic-snap indicator lines.
     if (m_snapX >= 0) {
         p.setPen(QPen(snapColor, 1));
@@ -244,10 +296,7 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         && (editorActive() || (m_selAnn >= 0 && m_selAnn < m_anns.size()
                               && !m_anns[m_selAnn].mosaicBrush
                               && !(m_anns[m_selAnn].tool == ATool::Eraser && !m_anns[m_selAnn].fill)
-                              && (m_atool == ATool::None || m_spaceHeld
-                                  || (m_atool == ATool::Text && m_anns[m_selAnn].tool == ATool::Text)
-                                  || (regionItem(m_anns[m_selAnn]) && m_anns[m_selAnn].tool == m_atool
-                                      && (m_atool == ATool::Mosaic ? !m_mosaicBrush : m_eraserRect)))))) {
+                              ))) {   // The freshly drawn item keeps its handles until deselected.
         const Annotation ann = editorActive() ? editorAnnotation() : m_anns[m_selAnn];
         if (ann.tool == ATool::Mosaic) {
             paintMosaicBorder(p, ann, true);
@@ -280,10 +329,15 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         p.restore();
         }
     }
-    if (m_mode == Adjusting && !m_sel.isNull() && m_hover.isNull())  // Eight resize handles.
+    if (m_mode == Adjusting && !m_sel.isNull() && m_hover.isNull() && !m_pinEdit)  // Eight resize handles.
         for (const QRect &h : handleRects(m_sel))
             paintHandle(p, h.center() + QPoint(1, 1));
+    if (m_pinEdit && !m_embedded && !m_sel.isNull()) {   // The pin keeps its resting hairline; overlay chrome, never baked.
+        p.setPen(QPen(QColor(0, 0, 0, 90), 1));
+        p.drawRect(m_sel.adjusted(0, 0, -1, -1));
+    }
     for (QWidget *glass : {m_tools, m_toolOptions}) {   // Light fill inside a 1px theme-blue frame.
+        if (m_embedded) break;                   // Detached or unused bars paint themselves.
         if (!glass->isVisible()) continue;
         const QRect bar = glass->geometry();
         p.setPen(Qt::NoPen);
@@ -302,12 +356,16 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
     const bool wasEditing = editorActive();
     if (wasEditing) commitTextEdit();           // Canvas clicks finish input; controls keep it live.
     if (e->button() == Qt::RightButton) {       // Right click ends input, then the ladder.
+        m_eatContextMenu = m_live || wasEditing || m_selAnn >= 0 || m_atool != ATool::None;
         stopItemDrag();
         if (m_live) { m_live = false; commitAnnotation(); }
         else if (wasEditing) return;
         else if (m_selAnn >= 0) { m_selAnn = -1; updateToolOptions(); update(); }
         else if (m_atool != ATool::None) return;   // An armed tool stays; reclicking its button disarms it.
-        else if (m_mode == Adjusting) { resetSelection(); } else { close(); }
+        else if (m_mode == Adjusting) {
+            if (m_embedded) return;              // No session to reset; annotations simply stay.
+            if (m_pinEdit) close(); else resetSelection();
+        } else { close(); }
         return;
     }
     if (e->button() != Qt::LeftButton)
@@ -373,6 +431,16 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
             return;
         }
     }
+    if (m_mode == Adjusting && m_atool != ATool::None && !m_spaceHeld
+        && m_selAnn >= 0 && m_selAnn < m_anns.size()) {   // The fresh item stays adjustable with its tool armed.
+        const Handle h = annHandleAt(m_anns[m_selAnn], e->pos());
+        if (h != H_None || annotationAt(e->pos()) == m_selAnn) {
+            m_itemDrag = h == H_None ? H_Move : h;
+            m_pressAnn = m_anns[m_selAnn];
+            updateAnnotationCursor(e->pos());
+            return;
+        }
+    }
     if (m_mode == Adjusting && m_atool != ATool::None
         && !m_spaceHeld && hitHandle(e->pos()) == H_Move) { // A tool acts inside the selection.
         if (m_atool == ATool::Text) { beginTextEdit(e->pos()); return; }
@@ -427,6 +495,14 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
         return;
     }
     if (m_mode == Adjusting) {
+        if (m_embedded) {   // Nothing to draw on: the press moves the pin itself.
+            m_fwdDrag = true;
+            QMouseEvent fwd(e->type(), e->localPos(), e->windowPos(), e->screenPos(),
+                            e->button(), e->buttons(), e->modifiers());
+            QApplication::sendEvent(parent(), &fwd);
+            return;
+        }
+        if (m_pinEdit) return;   // The pin canvas is fixed: no re-selecting, moving or resizing it.
         m_drag = hitHandle(e->pos());
         m_pressSel = m_sel;
         if (m_drag != H_None && m_drag != H_Move && !m_sel.contains(e->pos())) {
@@ -450,6 +526,12 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
 
 void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
 {
+    if (m_fwdDrag && (e->buttons() & Qt::LeftButton)) {   // A forwarded pin drag continues.
+        QMouseEvent fwd(e->type(), e->localPos(), e->windowPos(), e->screenPos(),
+                        e->button(), e->buttons(), e->modifiers());
+        QApplication::sendEvent(parent(), &fwd);
+        return;
+    }
     updateInspector();
     const QPoint pos = e->pos();
     if (m_waitingClick) return;
@@ -511,6 +593,13 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
 
 void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
 {
+    if (m_fwdDrag) {                              // End of a forwarded pin drag.
+        m_fwdDrag = false;
+        QMouseEvent fwd(e->type(), e->localPos(), e->windowPos(), e->screenPos(),
+                        e->button(), e->buttons(), e->modifiers());
+        QApplication::sendEvent(parent(), &fwd);
+        return;
+    }
     if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {
         // A drag on the first press draws one arrow; otherwise vertices come from clicks.
         if (m_ann.stroke.size() == 2
@@ -568,6 +657,12 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
 
 void CaptureOverlay::wheelEvent(QWheelEvent *e)
 {
+    if (m_embedded && !editorActive() && m_atool == ATool::None && m_selAnn < 0) {
+        // Nothing armed and nothing selected: the wheel belongs to the pin
+        // (zoom / opacity), as it did before any annotation existed.
+        QApplication::sendEvent(parent(), e);
+        return;
+    }
     if (!e->angleDelta().y()) return;
     if (editorActive()) {                        // Wheel retunes the live text editor.
         editorFontStep(e->angleDelta().y() > 0 ? 1 : -1);
@@ -601,6 +696,14 @@ void CaptureOverlay::closeEvent(QCloseEvent *e)
     QWidget::closeEvent(e);
 }
 
+void CaptureOverlay::contextMenuEvent(QContextMenuEvent *e)
+{
+    // A right click that finished or deselected an item, or hit an armed tool, opens no menu;
+    // otherwise the embedding pin shows its own.
+    if (m_eatContextMenu || m_atool != ATool::None) e->accept(); else e->ignore();
+    m_eatContextMenu = false;
+}
+
 void CaptureOverlay::mouseDoubleClickEvent(QMouseEvent *e)
 {
     if (editorActive()) return;                  // A text double-click never pins the capture.
@@ -616,6 +719,11 @@ void CaptureOverlay::mouseDoubleClickEvent(QMouseEvent *e)
     }
     if (m_queryPending && (m_waitingClick || m_drag == H_New))
         m_pinAfterDetection = true;
+    else if (m_embedded) {
+        QMouseEvent fwd(e->type(), e->localPos(), e->windowPos(), e->screenPos(),
+                        e->button(), e->buttons(), e->modifiers());
+        QApplication::sendEvent(parent(), &fwd);   // The pin keeps its double-click actions.
+    }
     else if (m_mode == Adjusting && m_atool == ATool::None && m_sel.contains(e->pos()))
         pinCapture();
 }
@@ -657,14 +765,15 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
             QCursor::setPos(qBound(bounds.left(),next.x(),bounds.right()),
                             qBound(bounds.top(),next.y(),bounds.bottom()));
             if (m_drag != H_None) {
-                const QPoint local = windowHandle()->mapFromGlobal(QPointF(QCursor::pos())).toPoint();
+                const QPoint local = windowHandle() ? windowHandle()->mapFromGlobal(QPointF(QCursor::pos())).toPoint()
+                                                    : mapFromGlobal(QCursor::pos());
                 QMouseEvent move(QEvent::MouseMove,local,QCursor::pos(),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
                 mouseMoveEvent(&move);
             } else updateInspector();
             return;
         }
         if (arrow && m_mode == Adjusting && m_drag == H_None && !m_sel.isEmpty()
-            && movementModifiers == Qt::NoModifier) {
+            && movementModifiers == Qt::NoModifier && !m_pinEdit) {   // The pin canvas stays put.
             cancelDetection();
             m_sel.translate(delta);
             m_sel.moveTo(qBound(0,m_sel.x(),width()-m_sel.width()),qBound(0,m_sel.y(),height()-m_sel.height()));
@@ -676,7 +785,8 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
     }
     if ((e->modifiers() & Qt::ControlModifier)
         && !(e->modifiers() & (Qt::ShiftModifier | Qt::AltModifier | Qt::MetaModifier))) {
-        if (e->key() == Qt::Key_T && m_mode == Adjusting && !m_live && !editorActive()) {
+        if (e->key() == Qt::Key_T && m_mode == Adjusting && !m_live && !editorActive()
+            && !m_embedded) {                      // Embedded canvas has no capture outputs.
             pinCapture();                        // Pin to screen (Ctrl+T).
             return;
         }
@@ -686,6 +796,10 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
         if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) break;   // Only a right click ends it.
         if (m_live) { m_live = false; endAnnotationDrag(); }
         else if (editorActive()) commitTextEdit();
+        else if (m_embedded) {                    // The pin owns the rest: hide its bar, then close.
+            QKeyEvent fwd(e->type(), e->key(), e->modifiers(), e->text(), e->isAutoRepeat(), 1);
+            QApplication::sendEvent(parent(), &fwd);
+        }
         else if (m_atool != ATool::None) setToolNone();
         else if (m_selAnn >= 0) { stopItemDrag(); m_selAnn = -1; updateToolOptions(); update(); }
         else close();
@@ -715,7 +829,7 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
         break;
     case Qt::Key_Return:
     case Qt::Key_Enter:
-        if (m_mode == Adjusting && !m_live) pinCapture();
+        if (m_mode == Adjusting && !m_live && !m_embedded) pinCapture();
         break;
     case Qt::Key_C:
         if (e->modifiers() & Qt::ControlModifier) {
@@ -825,6 +939,7 @@ void CaptureOverlay::setWindowTargets(const WindowTargets &windows)
 QRect CaptureOverlay::localScreenRect(const QRect &global) const
 {
     if (global.isEmpty()) return {};
+    if (!windowHandle()) return QRect(mapFromGlobal(global.topLeft()), global.size());   // Embedded child canvas.
     const QPointF top = windowHandle()->mapFromGlobal(QPointF(global.topLeft()));
     const QPointF end = windowHandle()->mapFromGlobal(QPointF(global.x() + global.width(), global.y() + global.height()));
     return QRect(QPoint(qRound(top.x()), qRound(top.y())),
@@ -834,6 +949,7 @@ QRect CaptureOverlay::localScreenRect(const QRect &global) const
 QRect CaptureOverlay::globalScreenRect(const QRect &local) const
 {
     if (local.isEmpty()) return {};
+    if (!windowHandle()) return QRect(mapToGlobal(local.topLeft()), local.size());   // Embedded child canvas.
     const QPointF top = windowHandle()->mapToGlobal(QPointF(local.topLeft()));
     const QPointF end = windowHandle()->mapToGlobal(QPointF(local.x() + local.width(), local.y() + local.height()));
     return QRect(QPoint(qRound(top.x()), qRound(top.y())),
@@ -1200,6 +1316,7 @@ void CaptureOverlay::applySnap(Handle h)
 
 void CaptureOverlay::updateTip()
 {
+    if (m_pinEdit) { m_sizeTip->hide(); return; }   // Size label is capture chrome.
     const QRect r = !m_hover.isNull() ? m_hover : m_sel;
     if (r.isNull()) { m_sizeTip->hide(); return; }
     m_sizeTip->setText(QString("%1 × %2").arg(r.width()).arg(r.height()));
@@ -1224,6 +1341,7 @@ void CaptureOverlay::buildToolLayout()
 
 void CaptureOverlay::placeToolbar()
 {
+    if (m_embedded) return;   // The pin toolbar owns placement; the strip is top-level.
     const QRect old = m_tools->geometry().united(m_toolOptions->geometry());
     const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(m_sel.center()));
     const QRect avail = localScreenRect((screen ? screen : QGuiApplication::primaryScreen())->availableGeometry());
@@ -1232,7 +1350,11 @@ void CaptureOverlay::placeToolbar()
     const int width = qMax(main.width(), options.width());
     const int height = main.height() + options.height();
     const int selRight = m_sel.right() + 1, selBottom = m_sel.bottom() + 1;
-    const int x = qBound(avail.left(), selRight - width, avail.right() + 1 - width);
+    // A pin edit keeps the toolbar centered below the pin, the same spot the
+    // pin's own toolbar occupied; capture mode right-aligns under the selection.
+    const int x = m_pinEdit
+        ? qBound(avail.left(), m_sel.center().x() - width / 2, qMax(avail.left(), avail.right() + 1 - width))
+        : qBound(avail.left(), selRight - width, avail.right() + 1 - width);
     const int y = selBottom + 6 + height <= avail.bottom() + 1 ? selBottom + 6
         : m_sel.top() - 6 - height >= avail.top() ? m_sel.top() - 6 - height
         : qMax(avail.top(), avail.bottom() + 1 - height - 8);
@@ -1245,11 +1367,12 @@ void CaptureOverlay::placeToolbar()
 
 void CaptureOverlay::positionToolOptions()                      // Option strip hugs the toolbar's bottom edge.
 {
+    if (m_embedded) return;                       // The pin positions the detached strip.
     if (!m_toolOptions->isVisible() && optionsTool() == ATool::None) return;
     const QRect bar = m_tools->geometry();
     const QSize hint = m_toolOptions->sizeHint();       // Strip width follows its own contents.
-    m_toolOptions->setGeometry(qMax(0, qMin(bar.left(), bar.right() + 1 - hint.width())), bar.bottom() + 1,
-                               hint.width(), hint.height());
+    m_toolOptions->setGeometry(qBound(0, bar.left(), qMax(0, width() - hint.width())), bar.bottom() + 1,
+                               hint.width(), hint.height());   // Left-aligned with the main bar.
 }
 
 void CaptureOverlay::hideToolBars()
@@ -1267,11 +1390,30 @@ void CaptureOverlay::hideToolBars()
 
 void CaptureOverlay::showToolBars()
 {
-    m_tools->show();
+    if (!m_embedded) m_tools->show();              // Embedded pins use their own toolbar.
     if (optionsTool() != ATool::None) {
         positionToolOptions();
         m_toolOptions->show();
     }
+}
+
+void CaptureOverlay::presetSelection(const QRect &localSel, ATool tool)
+{
+    // Same state as a user-committed click selection: adjusting mode, toolbars
+    // visible, optionally a drawing tool armed. Re-annotation of an existing
+    // image (pin edit) starts here instead of a fresh region drag.
+    m_sel = localSel.normalized();
+    if (m_sel.width() < 4 || m_sel.height() < 4) { m_sel = {}; return; }
+    m_mode = Adjusting;
+    m_hover = {};
+    m_drag = H_None;
+    if (!m_pinEdit) setCursor(Qt::SizeAllCursor);   // Region moving is a capture-only gesture.
+    placeToolbar();
+    showToolBars();
+    updateTip();
+    updateInspector();
+    if (tool != ATool::None) selectTool(tool);
+    update();
 }
 
 QPixmap CaptureOverlay::cropped() const
@@ -1287,6 +1429,54 @@ QPixmap CaptureOverlay::cropped() const
         paintAnnotations(p, -QPointF(r.topLeft()) * scale, scale, QRectF(r));
     }
     return pix;
+}
+
+void CaptureOverlay::armTool(ATool tool)          // Embedded pins arm tools from their own toolbar.
+{
+    if (tool == ATool::None || tool == m_atool) {
+        stopItemDrag();
+        m_selAnn = -1;   // Leaving the tool leaves no selection handles on the pin.
+        setToolNone();
+    } else selectTool(tool);
+    if (optionsTool() == ATool::None) {
+        m_toolOptions->hide();
+    } else {
+        m_toolOptions->adjustSize();
+        m_toolOptions->show();
+        m_toolOptions->raise();
+    }
+    emit stripRebuilt();
+    setFocus(Qt::OtherFocusReason);   // Esc ladder and shortcuts reach the canvas immediately.
+}
+
+QPixmap CaptureOverlay::composited() const
+{
+    QPixmap pix = m_shot.copy(m_shot.rect());
+    pix.setDevicePixelRatio(1);
+    if (!m_anns.isEmpty() || editorActive()) {
+        QPainter p(&pix);
+        paintAnnotations(p, QPointF(0, 0), 1.0, QRectF(rect()), false);
+    }
+    return pix;
+}
+
+void CaptureOverlay::setImage(const QImage &image)
+{
+    if (image.isNull()) return;
+    m_shot = QPixmap::fromImage(image);
+    m_mosaicFrame = QImage();   // Mosaic samples the refreshed pixels.
+    if (m_embedded) m_sel = rect();   // Marks clip to the whole pin at its current size.
+    update();
+}
+
+void CaptureOverlay::clearAll()
+{
+    m_anns.clear();
+    m_undoStack.clear();
+    m_redoStack.clear();
+    m_selAnn = -1;
+    syncUndoButtons();
+    update();
 }
 
 void CaptureOverlay::ocrCapture()
