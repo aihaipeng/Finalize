@@ -35,7 +35,8 @@ QIcon makeIcon(Icon icon, int size)
         "save", "copy", "pin", "long_shot", "icons8-ocr", "cancel", "rect", "ellipse", "arrow", "pen", "marker",
         "text", "number", "mosaic", "eraser", "undo", "redo", "bold", "italic", "minimize", "maximize",
         "restore", "refresh", "fill", "dashed", "icons8-line-width", "marker_rect", "fit_view", "search",
-        "text_format", "split_columns", "split_rows", "chevron_up", "chevron_down", "chevron_right"};
+        "text_format", "split_columns", "split_rows", "chevron_up", "chevron_down", "chevron_right",
+        "icons8-wavy-line", "icons8-underline", "icons8-strikethrough"};
     QSvgRenderer svg(QStringLiteral(":/icons/%1.svg").arg(QLatin1String(names[int(icon)])));
     QIcon result;
     // Light bar language: dark glyphs, grey when disabled, white on the checked theme fill.
@@ -69,6 +70,21 @@ QToolButton *iconButton(Icon icon, const QString &tip)
     button->setAccessibleName(tip);
     button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     button->setCursor(Qt::PointingHandCursor);
+    return button;
+}
+
+QToolButton *colorButton(const QColor &color, const QString &tip, int size)
+{
+    auto *button = iconButton(Icon::Copy, tip);   // Same button setup as the toolbar tools.
+    button->setFixedSize(size, size);
+    QPixmap chip(size, size);
+    chip.fill(Qt::transparent);
+    QPainter painter(&chip);
+    const QRect box(2, 2, size - 4, size - 4);
+    painter.fillRect(box, color);
+    painter.end();
+    button->setIcon(QIcon(chip));
+    button->setIconSize(chip.size());
     return button;
 }
 
@@ -122,13 +138,12 @@ void ColorBoard::paintEvent(QPaintEvent *)
     const QRect big = currentRect();
     p.fillRect(big, QColor(0x22, 0x22, 0x22));
     p.fillRect(big.adjusted(1, 1, -1, -1), m_current);
-    // Rainbow corner marks the button that opens the full color dialog.
-    for (int y = big.bottom() - 8; y < big.bottom(); ++y)
-        for (int x = big.right() - 1 - (y - (big.bottom() - 8)); x < big.right(); ++x) {
-            const bool edge = x + y == big.right() + big.bottom() - 9;
-            int hue = qRound(180 + 20.5 * ((x - big.left()) - (y - big.top())));
-            hue = ((hue % 360) + 360) % 360;
-            p.fillRect(QRect(x, y, 1, 1), QColor::fromHsv(hue, 249, edge ? 125 : 249));
+    // A solid rainbow square marks the button that opens the full color dialog.
+    const QRect mark(big.right() - 9, big.bottom() - 9, 9, 9);
+    for (int y = mark.top(); y <= mark.bottom(); ++y)
+        for (int x = mark.left(); x <= mark.right(); ++x) {
+            const int hue = ((40 * (x - mark.left()) + 28 * (y - mark.top())) % 360 + 360) % 360;
+            p.fillRect(QRect(x, y, 1, 1), QColor::fromHsv(hue, 255, 250));
         }
     for (int i = 0; i < PresetCount; ++i) {
         const QColor &c = kPresets[i];

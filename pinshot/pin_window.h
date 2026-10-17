@@ -15,6 +15,9 @@
 #include <QWheelEvent>
 #include <QKeyEvent>
 #include <QSizeF>
+#include <QPointer>
+#include <QMap>
+#include <QPair>
 #include <QtMath>
 #include <qt_windows.h>
 
@@ -35,9 +38,11 @@ protected:
     void contextMenuEvent(QContextMenuEvent *) override;
     void mousePressEvent(QMouseEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
+    void mouseReleaseEvent(QMouseEvent *e) override;
     void wheelEvent(QWheelEvent *e) override;
     void mouseDoubleClickEvent(QMouseEvent *) override;
     void keyPressEvent(QKeyEvent *e) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
     struct CharBox {
         QChar ch;
         QRectF rect; // In image logical coordinates
@@ -55,10 +60,22 @@ private:
     void setShadowEnabled(bool enabled);
     void toggleTextSelectable(bool enabled);
     void runOcrForTextSelection();
-    int charIndexAt(const QPoint &pos) const;
+    int charIndexAt(const QPoint &pos, bool proximity = true) const;
     QString selectedText() const;
     void toggleToolbar(bool enabled);
     void updateToolbarPosition();
+    // Text markup over the OCR selection, stored per character: highlight keeps
+    // its own slot while the three line marks share one (they replace each
+    // other), mirroring the reference pin's per-character map<type,color>.
+    // Actions operate on the intersection with the selection, so selecting
+    // more or fewer characters than were marked still hits the mark.
+    enum TextDecoType { DecoHighlight = 0, DecoWavy, DecoLine, DecoStrike };
+    void ensureSelToolbar();
+    void updateSelToolbar();
+    void drawTextDeco(int type, const QColor &color);   // Applies to selected chars.
+    void clearTextDeco(int type = -1);                  // Removes from selected chars; -1 = every mark.
+    bool selectionUniformDeco(int type, const QColor &color) const;
+    void rebuildCharBoxes();                            // Rebuilds char boxes from the OCR lines.
 
     QPixmap m_originalPix;
     QPixmap m_pix;
@@ -83,6 +100,15 @@ private:
     int m_selAnchor = -1;
     int m_selLead = -1;
     bool m_selecting = false;
+    bool m_selBarOpen = false;       // Shown only after a drag finishes; the close button clears it.
+    // Per-character decorations keyed to the current OCR char boxes.
+    QMap<int, QColor> m_decoHighlight;                  // charIdx -> fill color.
+    QMap<int, QPair<int, QColor>> m_decoLine;           // charIdx -> {type, color}.
+    QWidget *m_selToolbar = nullptr; // Floating markup toolbar under the selection.
+    // Each markup tool remembers its own color (reference behavior); the last
+    // tool clicked stays "current" and is the target of color/clear actions.
+    int m_decoTool = 0;
+    QColor m_decoToolColor[4];
 
     // Pin toolbar support
     bool m_toolbarOn = false;

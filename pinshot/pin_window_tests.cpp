@@ -16,6 +16,7 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QSlider>
+#include <QClipboard>
 #include <QPainter>
 #include <QFont>
 #include <QThreadPool>
@@ -30,6 +31,9 @@
 
 int PinWindow::testPlacement()
 {
+    const bool markup = qApp->arguments().contains(QStringLiteral("--markup"));
+    QMenu *menu = nullptr;
+    QList<QAction *> actions;
     auto check = [](bool ok, const char *message) {
         if (!ok) {
             std::fprintf(stderr, "FAIL: %s\n", message);
@@ -111,24 +115,23 @@ int PinWindow::testPlacement()
     check(longPin.geometry() == beforeHorizontal, "right-button movement cannot drag a pin");
 
     // Test context menu actions and image transformations
-    QMenu *menu = longPin.createContextMenu();
+    menu = longPin.createContextMenu();
     check(menu != nullptr, "pin creates a context menu");
-    QList<QAction *> actions = menu->actions();
+    actions = menu->actions();
     check(!actions.isEmpty(), "context menu has actions");
     // Verify menu items structure
     check(actions.at(0)->text() == QStringLiteral("文本可选择") && actions.at(0)->isCheckable(),
           "first action is checkable text selection");
     actions.at(0)->trigger(); // Toggle on text selection
     check(longPin.m_textSelectable, "toggling text selection enables selectable mode");
-    check(longPin.cursor().shape() == Qt::IBeamCursor, "enabling text selection sets IBeamCursor");
+    check(longPin.cursor().shape() == Qt::ArrowCursor,
+          "text selection mode keeps the native cursor until the pointer is over text");
     actions.at(0)->trigger(); // Toggle off
     check(!longPin.m_textSelectable && longPin.cursor().shape() == Qt::SizeAllCursor,
           "disabling text selection restores SizeAllCursor");
 
-    check(actions.at(1)->text() == QStringLiteral("翻译为") && !actions.at(1)->isEnabled(),
-          "second action is disabled translation placeholder");
     // Submenu: Image processing
-    QMenu *sub = actions.at(3)->menu();
+    QMenu *sub = actions.at(2)->menu();
     check(sub != nullptr && sub->title() == QStringLiteral("图像处理"), "submenu is 图像处理");
     QList<QAction *> subActions = sub->actions();
     check(subActions.size() >= 8, "submenu has transform actions and sliders");
@@ -232,11 +235,194 @@ int PinWindow::testPlacement()
     check(longPin.charIndexAt(QPoint(10, 10)) == 0, "first char hit test matches");
     check(longPin.charIndexAt(QPoint(60, 10)) == 1, "second char hit test matches");
     check(longPin.charIndexAt(QPoint(500, 500)) == -1, "far outside point returns -1");
+    // Cursor gating: IBeam only over copyable text, native cursor elsewhere.
+    QMouseEvent hoverText(QEvent::MouseMove, QPoint(10, 10), longPin.mapToGlobal(QPoint(10, 10)),
+                          Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&longPin, &hoverText);
+    check(longPin.cursor().shape() == Qt::IBeamCursor,
+          "hovering copyable text shows the I-beam cursor");
+    QMouseEvent hoverBlank(QEvent::MouseMove, QPoint(500, 500), longPin.mapToGlobal(QPoint(500, 500)),
+                           Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&longPin, &hoverBlank);
+    check(longPin.cursor().shape() == Qt::ArrowCursor,
+          "hovering away from text restores the native cursor");
     longPin.m_selAnchor = 0;
     longPin.m_selLead = 1;
     check(longPin.selectedText() == QStringLiteral("AB"), "selection extracts combined text");
-
-    // Verify toolbar toggle
+    if (markup) {
+    // Runs only in its own process: a pin created before the live OCR section
+    // crashes that recognition intermittently.
+    QImage markImg(240, 120, QImage::Format_RGB32);
+    markImg.fill(Qt::white);
+    PinWindow markPin(QPixmap::fromImage(markImg), QRect(240, 120, 240, 120));
+    markPin.setAttribute(Qt::WA_DeleteOnClose, false);
+    menu = markPin.createContextMenu();
+    actions = menu->actions();
+    markPin.m_textSelectable = true;
+    markPin.m_ocrImgSize = QSizeF(240, 120);
+    PinWindow::CharBox mA;
+    mA.ch = QLatin1Char('A');
+    mA.rect = QRectF(20, 40, 80, 40);
+    mA.lineIdx = 0;
+    PinWindow::CharBox mB;
+    mB.ch = QLatin1Char('B');
+    mB.rect = QRectF(100, 40, 80, 40);
+    mB.lineIdx = 0;
+    markPin.m_charBoxes = {mA, mB};
+    markPin.m_selAnchor = 0;
+    markPin.m_selLead = 1;
+    markPin.m_selecting = true;
+    markPin.updateSelToolbar();
+    check(!markPin.m_selToolbar || !markPin.m_selToolbar->isVisible(),
+          "the toolbar stays hidden while the drag is still in progress");
+    markPin.m_selecting = false;
+    markPin.m_selBarOpen = true;
+    markPin.updateSelToolbar();
+    check(markPin.m_selToolbar && markPin.m_selToolbar->isVisible(),
+          "releasing the selection opens the markup toolbar");
+    QRectF sel;
+    for (const PinWindow::CharBox &box : markPin.m_charBoxes) sel = sel.united(box.rect);
+    const double scaleY = double(markPin.height()) / markPin.m_ocrImgSize.height();
+    const int selTop = markPin.y() + qRound(sel.top() * scaleY);
+    const int selBottom = markPin.y() + qRound(sel.bottom() * scaleY);
+    const QRect bar = markPin.m_selToolbar->geometry();
+    check(!bar.intersects(QRect(markPin.x(), selTop, markPin.width(), selBottom - selTop))
+              && (bar.top() >= selBottom || bar.bottom() <= selTop),
+          "markup toolbar sits clear of the selection, below it or above it");
+    const auto selButton = [&markPin](const QString &tip) -> QToolButton * {
+        const QList<QToolButton *> btns = markPin.m_selToolbar->findChildren<QToolButton *>();
+        for (QToolButton *b : btns)
+            if (b->toolTip() == tip) return b;
+        return nullptr;
+    };
+    QToolButton *selCopy = selButton(QStringLiteral("复制"));
+    QToolButton *selHighlight = selButton(QStringLiteral("荧光笔"));
+    QToolButton *selWavy = selButton(QStringLiteral("波浪线"));
+    QToolButton *selLine = selButton(QStringLiteral("直线"));
+    QToolButton *selStrike = selButton(QStringLiteral("删除线"));
+    check(selCopy && selHighlight && selWavy && selLine && selStrike,
+          "markup toolbar offers copy and the four markup tools");
+    QToolButton *swatch2 = selButton(QStringLiteral("#b89fff"));
+    QToolButton *clearMark = selButton(QStringLiteral("清除标注"));
+    QToolButton *closeBar = selButton(QStringLiteral("关闭工具栏"));
+    check(swatch2 && swatch2->isVisibleTo(markPin.m_selToolbar) && clearMark
+              && markPin.m_selToolbar->findChildren<QToolButton *>().size() == 12,
+          "five palette swatches and a clear button stay visible");
+    const int barWidth = markPin.m_selToolbar->width();
+    selHighlight->click();
+    check(markPin.m_decoHighlight.size() == 2
+              && markPin.m_decoHighlight.value(0) == QColor("#ff909c")
+              && markPin.m_decoHighlight.value(1) == QColor("#ff909c"),
+          "checking a markup tool draws immediately in its remembered color");
+    check(!selHighlight->isCheckable(),
+          "tool buttons light up only while pressed, never stay checked");
+    swatch2->click();
+    check(markPin.m_decoHighlight.value(1) == QColor("#b89fff"),
+          "picking a color recolors the selected characters");
+    swatch2->click();
+    check(markPin.m_decoHighlight.size() == 2,
+          "picking a color again never toggles the markup off");
+    selHighlight->click();
+    check(markPin.m_decoHighlight.isEmpty(),
+          "clicking the tool again on a uniform mark toggles it off");
+    selStrike->click();
+    check(markPin.m_decoLine.size() == 2
+              && markPin.m_decoLine.value(1).first == PinWindow::DecoStrike
+              && markPin.m_decoLine.value(1).second == QColor("#ff909c"),
+          "each tool remembers its own color, here the first palette entry");
+    selHighlight->click();
+    check(markPin.m_decoHighlight.size() == 2 && markPin.m_decoLine.size() == 2,
+          "highlight keeps its own slot beside a line mark");
+    selLine->click();
+    check(markPin.m_decoLine.size() == 2
+              && markPin.m_decoLine.value(0).first == PinWindow::DecoLine,
+          "switching line marks replaces the previous one, highlight stays");
+    check(markPin.m_selToolbar->width() == barWidth,
+          "switching tools keeps the toolbar width unchanged");
+    markPin.m_selAnchor = 0;
+    markPin.m_selLead = 0;   // Select fewer characters than were marked.
+    clearMark->click();
+    check(markPin.m_decoHighlight.size() == 1 && markPin.m_decoHighlight.contains(1)
+              && markPin.m_decoLine.size() == 1 && markPin.m_decoLine.contains(1),
+          "clearing an under-selection removes just the selected part of every mark");
+    markPin.m_selLead = 1;   // Select more than the remaining marks.
+    clearMark->click();
+    check(markPin.m_decoHighlight.isEmpty() && markPin.m_decoLine.isEmpty(),
+          "clearing an over-selection erases every mark it covers");
+    QToolButton *swatch3 = selButton(QStringLiteral("#74b4ff"));
+    markPin.m_selAnchor = 1;
+    markPin.m_selLead = 1;   // Recolor only the still-marked character.
+    swatch3->click();   // Current tool is still the straight line.
+    check(markPin.m_decoLine.size() == 1
+              && markPin.m_decoLine.value(1).second == QColor("#74b4ff"),
+          "recoloring after a partial clear marks only the selected characters");
+    markPin.m_selAnchor = 0;
+    markPin.m_selLead = 1;
+    selStrike->click();
+    check(markPin.m_decoLine.size() == 2
+              && markPin.m_decoLine.value(0).first == PinWindow::DecoStrike
+              && markPin.m_decoLine.value(1).first == PinWindow::DecoStrike,
+          "clicking a tool on a partially marked selection applies it to all of it");
+    selCopy->click();
+    check(QApplication::clipboard()->text() == QStringLiteral("AB")
+              && !markPin.m_selToolbar->isVisible() && markPin.m_selAnchor < 0,
+          "copy copies the text, closes the toolbar and clears the selection");
+    markPin.m_selBarOpen = true;
+    markPin.m_selAnchor = 0;
+    markPin.m_selLead = 1;
+    markPin.updateSelToolbar();
+    check(markPin.m_selToolbar->isVisible(), "the next finished selection shows the toolbar again");
+    QMouseEvent outside(QEvent::MouseButtonPress, QPointF(-500, -500), QPointF(-500, -500),
+                        QPointF(-5000, -5000), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&markPin, &outside);
+    check(!markPin.m_selToolbar->isVisible(), "a press outside the toolbar closes it");
+    markPin.m_selBarOpen = true;
+    markPin.updateSelToolbar();
+    closeBar->click();
+    check(!markPin.m_selToolbar->isVisible(), "the close button hides the toolbar");
+    markPin.m_selBarOpen = true;
+    markPin.updateSelToolbar();
+    markPin.m_selAnchor = -1;
+    markPin.updateSelToolbar();
+    check(!markPin.m_selToolbar->isVisible(), "clearing the selection hides the markup toolbar");
+    markPin.m_selAnchor = 0;
+    markPin.m_selLead = 1;
+    markPin.drawTextDeco(PinWindow::DecoHighlight, QColor("#ff909c"));
+    const QImage marked = markPin.grab().toImage();
+    const QColor hl = marked.pixelColor(120, 60);   // Inside the char boxes.
+    check(hl != Qt::white && hl != Qt::black,
+          "the multiply highlight tints the marked line while text stays visible");
+    // A "——" often comes back as its own OCR segment on the same visual row;
+    // row clustering must keep the row whole instead of cutting the selection.
+    markPin.m_decoHighlight.clear();
+    markPin.m_decoLine.clear();
+    markPin.m_ocrLines = {
+        { QStringLiteral("你好"), QPolygonF(QRectF(10, 40, 40, 20)) },
+        { QStringLiteral("——"), QPolygonF(QRectF(55, 42, 30, 16)) },
+        { QStringLiteral("世界"), QPolygonF(QRectF(10, 70, 40, 20)) },
+    };
+    markPin.rebuildCharBoxes();
+    check(markPin.m_charBoxes.size() == 6
+              && markPin.m_charBoxes.at(2).ch == QChar(0x2014)
+              && markPin.m_charBoxes.at(3).ch == QChar(0x2014)
+              && markPin.m_charBoxes.at(3).lineIdx == 0
+              && markPin.m_charBoxes.at(4).lineIdx == 1,
+          "a dash segment on the same visual row merges into that row");
+    markPin.m_selAnchor = 0;
+    markPin.m_selLead = 3;
+    check(markPin.selectedText() == QStringLiteral("你好——"),
+          "selecting across a merged dash segment copies unbroken text");
+    markPin.m_selLead = 5;
+    check(markPin.selectedText() == QStringLiteral("你好——\n世界"),
+          "a real row break still becomes a newline in the copied text");
+    markPin.toggleTextSelectable(false);
+    if (!qgetenv("PIN_TOOLBAR_SHOT").isEmpty())
+        check(markPin.m_selToolbar->grab().save(QString::fromLocal8Bit(qgetenv("PIN_TOOLBAR_SHOT"))),
+              "save the markup toolbar preview");
+    markPin.close();
+    QApplication::processEvents();
+    return 0;
+    }
     QAction *toolbarAction = actions.at(actions.size() - 2);
     check(toolbarAction->text() == QStringLiteral("显示工具条") && toolbarAction->isCheckable(),
           "toolbar action is checkable");
@@ -290,6 +476,8 @@ int PinWindow::testPlacement()
             QApplication::sendEvent(&textPin, &release);
             const QString picked = textPin.selectedText();
             check(!picked.isEmpty(), "dragging across the pin selects recognized text");
+            check(textPin.m_selToolbar && textPin.m_selToolbar->isVisible(),
+                  "the live selection opens the markup toolbar");
             std::printf("PIN OCR PICKED: [%s]\n", picked.toStdString().c_str());
             std::fflush(stdout);
         }
@@ -298,7 +486,6 @@ int PinWindow::testPlacement()
     } else {
         std::puts("SKIP: pin live OCR selection (models unavailable)");
     }
-
     std::puts("PASS: original-position pins, proportional long-capture fitting, DPI, wheel zoom, and context menu transforms");
     std::fflush(stdout);
     return 0;

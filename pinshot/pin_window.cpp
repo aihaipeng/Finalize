@@ -18,6 +18,8 @@
 #include <QSlider>
 #include <QLabel>
 #include <QHBoxLayout>
+#include <QVBoxLayout>
+#include <QButtonGroup>
 #include <QWidgetAction>
 #include <QTransform>
 #include <QtMath>
@@ -27,6 +29,7 @@
 #include <QMessageBox>
 #include <QCoreApplication>
 #include <QApplication>
+#include <algorithm>
 #include <QScreen>
 #include <QSizePolicy>
 #include <QLayout>
@@ -45,6 +48,9 @@ PinWindow::PinWindow(const QPixmap &pix, const QRect &displayRect)
     setMouseTracking(true);
     setGeometry(displayRect);
     setShadowEnabled(m_shadowOn);
+    // Every markup tool starts on the first palette color, reference behavior.
+    for (QColor &c : m_decoToolColor) c = QColor("#ff909c");
+    qApp->installEventFilter(this);   // Clicks outside the markup toolbar close it.
     show();
 }
 
@@ -93,11 +99,13 @@ void PinWindow::applyProcessedImage()
 
     m_pix = QPixmap::fromImage(img);
 
-    // Invalidate OCR cache on image transformation
+    // Invalidate OCR cache and text markups on image transformation
     m_charBoxes.clear();
     m_ocrLines.clear();
     m_selAnchor = -1;
     m_selLead = -1;
+    m_decoHighlight.clear();
+    m_decoLine.clear();
     if (m_textSelectable) {
         runOcrForTextSelection();
     }
@@ -196,6 +204,89 @@ void PinWindow::paintEvent(QPaintEvent *)
             const QRectF cr = m_charBoxes.at(i).rect;
             const QRectF vr(cr.x() * scaleX, cr.y() * scaleY, cr.width() * scaleX, cr.height() * scaleY);
             p.drawRect(vr);
+        }
+        p.restore();
+    }
+
+    // Markup is drawn after the selection so lines stay readable over the blue highlight.
+    if ((!m_decoHighlight.isEmpty() || !m_decoLine.isEmpty())
+            && !m_charBoxes.isEmpty() && !m_ocrImgSize.isEmpty()) {
+        const double scaleX = double(width()) / m_ocrImgSize.width();
+        const double scaleY = double(height()) / m_ocrImgSize.height();
+        const double dpr = devicePixelRatioF();
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const int n = m_charBoxes.size();
+        // Two passes: highlight bands first (multiply), line marks on top.
+        // Neighboring characters carrying the same mark merge into one run per
+        // OCR line, so an underline stays straight across the range.
+        auto runRect = [this, scaleX, scaleY](int a, int b) {
+            QRectF run;
+            for (int k = a; k <= b; ++k)
+                run = run.isNull() ? m_charBoxes.at(k).rect : run.united(m_charBoxes.at(k).rect);
+            const QRectF vr(run.x() * scaleX, run.y() * scaleY,
+                            run.width() * scaleX, run.height() * scaleY);
+            return vr;
+        };
+        int i = 0;
+        while (i < n && !m_decoHighlight.isEmpty()) {
+            if (!m_decoHighlight.contains(i)) { ++i; continue; }
+            const QColor c = m_decoHighlight.value(i);
+            const int line = m_charBoxes.at(i).lineIdx;
+            int j = i;
+            while (j + 1 < n && m_charBoxes.at(j + 1).lineIdx == line
+                   && m_decoHighlight.contains(j + 1) && m_decoHighlight.value(j + 1) == c)
+                ++j;
+            // A multiply-blended solid band behaves like a real marker.
+            p.save();
+            p.setCompositionMode(QPainter::CompositionMode_Multiply);
+            p.setPen(Qt::NoPen);
+            p.setBrush(c);
+            p.drawRect(runRect(i, j));
+            p.restore();
+            i = j + 1;
+        }
+        i = 0;
+        while (i < n && !m_decoLine.isEmpty()) {
+            if (!m_decoLine.contains(i)) { ++i; continue; }
+            const QPair<int, QColor> m0 = m_decoLine.value(i);
+            const int line = m_charBoxes.at(i).lineIdx;
+            int j = i;
+            while (j + 1 < n && m_charBoxes.at(j + 1).lineIdx == line
+                   && m_decoLine.contains(j + 1) && m_decoLine.value(j + 1) == m0)
+                ++j;
+            const QRectF vr = runRect(i, j);
+            const double w = vr.height() * 0.08;   // Reference pen width: 8% of the line height.
+            p.setBrush(Qt::NoBrush);
+            if (m0.first == DecoStrike) {
+                p.setPen(QPen(m0.second, w, Qt::SolidLine, Qt::RoundCap));
+                p.drawLine(QPointF(vr.left(), vr.center().y()), QPointF(vr.right(), vr.center().y()));
+            } else if (m0.first == DecoLine) {
+                const double y = vr.bottom() - w * 0.5;
+                p.setPen(QPen(m0.second, w, Qt::SolidLine, Qt::RoundCap));
+                p.drawLine(QPointF(vr.left(), y), QPointF(vr.right(), y));
+            } else if (m0.first == DecoWavy) {
+                // Wavy underline: half-period 6*dpr, control points at
+                // +-1*dpr, clipped to a tight band around the baseline.
+                const double y = vr.bottom() - dpr - w * 0.5;
+                const double half = 6.0 * dpr;
+                QPainterPath wave(QPointF(vr.left(), y));
+                double x = vr.left();
+                bool up = true;
+                while (x + half <= vr.right()) {
+                    wave.quadTo(QPointF(x + half * 0.5, up ? y - dpr : y + dpr),
+                                QPointF(x + half, y));
+                    x += half;
+                    up = !up;
+                }
+                if (x < vr.right()) wave.lineTo(vr.right(), y);
+                p.save();
+                p.setClipRect(QRectF(vr.left(), y - dpr - w, vr.width(), 2 * dpr + w));
+                p.setPen(QPen(m0.second, w, Qt::SolidLine, Qt::FlatCap));
+                p.drawPath(wave);
+                p.restore();
+            }
+            i = j + 1;
         }
         p.restore();
     }
@@ -355,13 +446,16 @@ void PinWindow::toggleTextSelectable(bool enabled)
     m_selLead = -1;
     m_selecting = false;
     if (m_textSelectable) {
-        setCursor(Qt::IBeamCursor);
+        // The I-beam appears only while the pointer is over copyable text;
+        // everywhere else the native cursor is kept.
+        setCursor(Qt::ArrowCursor);
         if (m_charBoxes.isEmpty() && !m_ocrRunning) {
             runOcrForTextSelection();
         }
     } else {
         setCursor(Qt::SizeAllCursor);
     }
+    updateSelToolbar();
     update();
 }
 
@@ -384,26 +478,8 @@ void PinWindow::runOcrForTextSelection()
         if (m_ocrCancel && m_ocrCancel->load()) return;
 
         m_ocrLines = res.lines;
-        m_charBoxes.clear();
-
-        for (int l = 0; l < m_ocrLines.size(); ++l) {
-            const OcrLine &line = m_ocrLines.at(l);
-            const QString text = line.text;
-            if (text.isEmpty()) continue;
-
-            const QRectF box = line.box.boundingRect();
-            const double charWidth = box.width() / qMax(1, text.size());
-            for (int c = 0; c < text.size(); ++c) {
-                CharBox cb;
-                cb.ch = text.at(c);
-                cb.rect = QRectF(box.left() + c * charWidth, box.top(), charWidth, box.height());
-                cb.lineIdx = l;
-                m_charBoxes.append(cb);
-            }
-        }
-        if (m_textSelectable) {
-            setCursor(Qt::IBeamCursor);
-        }
+        rebuildCharBoxes();
+        // Boxes were rebuilt; the hover handler decides the cursor from now on.
         update();
     });
 
@@ -412,7 +488,52 @@ void PinWindow::runOcrForTextSelection()
     }));
 }
 
-int PinWindow::charIndexAt(const QPoint &pos) const
+void PinWindow::rebuildCharBoxes()
+{
+    m_charBoxes.clear();
+    // OCR can split one visual row into several segments (a "——" tends to
+    // become its own line); cluster segments by vertical overlap so a row
+    // keeps a single index and selected text is not cut apart by newlines.
+    struct Seg { QRectF box; QString text; };
+    QList<Seg> segs;
+    for (const OcrLine &line : m_ocrLines) {
+        if (!line.text.isEmpty())
+            segs.append(Seg{ line.box.boundingRect(), line.text });
+    }
+    std::sort(segs.begin(), segs.end(), [](const Seg &a, const Seg &b) {
+        return a.box.top() != b.box.top() ? a.box.top() < b.box.top()
+                                          : a.box.left() < b.box.left();
+    });
+    struct Row { qreal top = 0, bottom = 0; QList<Seg> segs; };
+    QList<Row> rows;
+    for (const Seg &s : segs) {
+        const qreal cy = s.box.center().y();
+        if (!rows.isEmpty() && cy >= rows.last().top && cy <= rows.last().bottom) {
+            rows.last().segs.append(s);
+            rows.last().bottom = qMax(rows.last().bottom, s.box.bottom());
+        } else {
+            rows.append(Row{ s.box.top(), s.box.bottom(), QList<Seg>{ s } });
+        }
+    }
+    for (int r = 0; r < rows.size(); ++r) {
+        auto &list = rows[r].segs;
+        std::sort(list.begin(), list.end(), [](const Seg &a, const Seg &b) {
+            return a.box.left() < b.box.left();
+        });
+        for (const Seg &s : list) {
+            const double charWidth = s.box.width() / qMax(1, s.text.size());
+            for (int c = 0; c < s.text.size(); ++c) {
+                CharBox cb;
+                cb.ch = s.text.at(c);
+                cb.rect = QRectF(s.box.left() + c * charWidth, s.box.top(), charWidth, s.box.height());
+                cb.lineIdx = r;
+                m_charBoxes.append(cb);
+            }
+        }
+    }
+}
+
+int PinWindow::charIndexAt(const QPoint &pos, bool proximity) const
 {
     if (m_pix.isNull() || m_charBoxes.isEmpty() || m_ocrImgSize.isEmpty()) return -1;
     const double scaleX = m_ocrImgSize.width() / width();
@@ -428,7 +549,9 @@ int PinWindow::charIndexAt(const QPoint &pos) const
         if (expanded.contains(imgPt)) return i;
     }
 
-    // 2. Proximity search: find the closest character within reasonable distance
+    // 2. Proximity search: find the closest character within reasonable distance.
+    // Skipped for cursor decisions, where only a real hit counts as text.
+    if (!proximity) return -1;
     int bestIdx = -1;
     double bestDistSq = std::numeric_limits<double>::max();
     for (int i = 0; i < m_charBoxes.size(); ++i) {
@@ -464,6 +587,194 @@ QString PinWindow::selectedText() const
         lastLine = m_charBoxes.at(i).lineIdx;
     }
     return out;
+}
+
+// Reference pin's default text-highlight palette, in order. Each tool keeps
+// its own current color, initialized to the first entry.
+static const QColor kDecoColors[] = {
+    QColor("#ff909c"), QColor("#b89fff"), QColor("#74b4ff"),
+    QColor("#5ad8a6"), QColor("#f6bd16"),
+};
+
+void PinWindow::drawTextDeco(int type, const QColor &color)
+{
+    if (m_selAnchor < 0 || m_selLead < 0 || m_charBoxes.isEmpty()) return;
+    const int start = qMax(0, qMin(m_selAnchor, m_selLead));
+    const int end = qMin(m_charBoxes.size() - 1, qMax(m_selAnchor, m_selLead));
+    for (int i = start; i <= end; ++i) {
+        // Highlight keeps its own slot; a line mark lands in the shared line
+        // slot and whatever line was there is replaced (reference model).
+        if (type == DecoHighlight) m_decoHighlight.insert(i, color);
+        else m_decoLine.insert(i, qMakePair(type, color));
+    }
+    update();
+}
+
+void PinWindow::clearTextDeco(int type)
+{
+    if (m_selAnchor < 0 || m_selLead < 0) return;
+    const int start = qMax(0, qMin(m_selAnchor, m_selLead));
+    const int end = qMin(m_charBoxes.size() - 1, qMax(m_selAnchor, m_selLead));
+    // Works on the intersection with the selection: selecting more clears all
+    // covered characters, selecting fewer clears just the selected part.
+    // type < 0 clears every mark; otherwise only that tool's mark.
+    for (int i = start; i <= end; ++i) {
+        if (type == DecoHighlight || type < 0) m_decoHighlight.remove(i);
+        if (type != DecoHighlight && (type < 0 || m_decoLine.value(i).first == type))
+            m_decoLine.remove(i);
+    }
+    update();
+}
+
+bool PinWindow::selectionUniformDeco(int type, const QColor &color) const
+{
+    if (m_selAnchor < 0 || m_selLead < 0 || m_charBoxes.isEmpty()) return false;
+    const int start = qMax(0, qMin(m_selAnchor, m_selLead));
+    const int end = qMin(m_charBoxes.size() - 1, qMax(m_selAnchor, m_selLead));
+    // Uniform = every selected character carries this mark in this color; only
+    // then does clicking the tool again toggle it off (reference behavior).
+    for (int i = start; i <= end; ++i) {
+        if (type == DecoHighlight) {
+            if (m_decoHighlight.value(i) != color) return false;
+        } else if (m_decoLine.value(i) != qMakePair(type, color)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void PinWindow::ensureSelToolbar()
+{
+    if (m_selToolbar) return;
+    // Owned by the pin so it stays above the capture; an unparented Tool loses to it.
+    m_selToolbar = new QWidget(this, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    m_selToolbar->setAccessibleName(QStringLiteral("选字工具栏"));
+    m_selToolbar->setObjectName(QStringLiteral("selToolbar"));
+    // Scoped to the window: a bare QWidget selector would frame every child,
+    // which is where the stray rounded border around the palette came from.
+    m_selToolbar->setStyleSheet(QStringLiteral(
+        "#selToolbar { background: #f2f2f2; border: 1px solid #c8c8c8; border-radius: 4px; }"
+        "QToolButton { color: #323232; background: transparent; border: none; border-radius: 2px; padding: 4px; }"
+        "QToolButton:hover { background-color: #d4d4d4; }"
+        "QToolButton:pressed { background-color: #c8c8c8; }"
+    ));
+    auto *root = new QVBoxLayout(m_selToolbar);
+    root->setContentsMargins(4, 2, 4, 2);
+    root->setSpacing(0);
+    auto *row = new QHBoxLayout;
+    row->setSpacing(0);
+    root->addLayout(row);
+
+    auto *copyBtn = iconButton(Icon::Copy, QStringLiteral("复制"));
+    connect(copyBtn, &QToolButton::clicked, this, [this] {
+        if (!copyTextToClipboard(selectedText()))
+            QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+        // Reference behavior: copying also dismisses the bar and the selection.
+        m_selBarOpen = false;
+        m_selAnchor = -1;
+        m_selLead = -1;
+        update();
+        updateSelToolbar();
+    });
+    row->addWidget(copyBtn);
+
+    // A quiet line between the tools and the colors, instead of a frame around them.
+    auto *rule = new QFrame(m_selToolbar);
+    rule->setFixedHeight(1);
+    rule->setStyleSheet(QStringLiteral("background:#dcdcdc;border:none;"));
+    root->addSpacing(3);
+    root->addWidget(rule);
+    root->addSpacing(3);
+
+    auto *strip = new QWidget(m_selToolbar);
+    auto *stripLay = new QHBoxLayout(strip);
+    stripLay->setContentsMargins(0, 0, 0, 0);
+    stripLay->setSpacing(0);
+    root->addWidget(strip);
+
+    const struct { int type; Icon icon; QString tip; } markups[] = {
+        { DecoHighlight, Icon::Marker, QStringLiteral("荧光笔") },
+        { DecoWavy, Icon::WavyLine, QStringLiteral("波浪线") },
+        { DecoLine, Icon::Underline, QStringLiteral("直线") },
+        { DecoStrike, Icon::Strikethrough, QStringLiteral("删除线") },
+    };
+    for (int t = 0; t < 4; ++t) {
+        const auto &m = markups[t];
+        auto *btn = iconButton(m.icon, m.tip);
+        row->addWidget(btn);
+        // Buttons light up only while pressed (user-simplified): no persistent
+        // selection state survives a click or the next selection.
+        connect(btn, &QToolButton::clicked, this, [this, t] {
+            // Clicking a tool draws on the selection in its remembered color;
+            // clicking again when the whole selection already carries that
+            // same mark toggles it off (reference behavior).
+            m_decoTool = t;
+            if (selectionUniformDeco(t, m_decoToolColor[t])) clearTextDeco(t);
+            else drawTextDeco(t, m_decoToolColor[t]);
+        });
+    }
+    auto *closeBtn = iconButton(Icon::Cancel, QStringLiteral("关闭工具栏"));
+    connect(closeBtn, &QToolButton::clicked, this, [this] {
+        m_selBarOpen = false;   // This selection only; the next finished drag shows it again.
+        updateSelToolbar();
+    });
+    row->addWidget(closeBtn);
+
+    // Palette of the reference's five defaults plus a clear button; clicking a
+    // color re-applies the current tool in that color on the selection.
+    for (int i = 0; i < int(sizeof kDecoColors / sizeof kDecoColors[0]); ++i) {
+        auto *swatch = colorButton(kDecoColors[i], kDecoColors[i].name(), 24);
+        stripLay->addWidget(swatch);
+        connect(swatch, &QToolButton::clicked, this, [this, i] {
+            m_decoToolColor[m_decoTool] = kDecoColors[i];
+            // Pure re-apply on the selected characters: a partial selection
+            // recolors only that part, never toggling off (reference behavior).
+            drawTextDeco(m_decoTool, kDecoColors[i]);
+        });
+    }
+    auto *clearBtn = iconButton(Icon::Eraser, QStringLiteral("清除标注"));
+    stripLay->addWidget(clearBtn);
+    connect(clearBtn, &QToolButton::clicked, this, [this] {
+        // User-simplified: one tap erases every mark on the selected
+        // characters, over- or under-selection included.
+        clearTextDeco();
+    });
+}
+
+void PinWindow::updateSelToolbar()
+{
+    // Hidden while the drag is still in progress; only a finished selection opens it.
+    const bool has = m_selBarOpen && !m_selecting && m_textSelectable
+                     && m_selAnchor >= 0 && m_selLead >= 0
+                     && !m_charBoxes.isEmpty() && !m_ocrImgSize.isEmpty();
+    if (!has) {
+        if (m_selToolbar) m_selToolbar->hide();
+        return;
+    }
+    ensureSelToolbar();
+    m_selToolbar->adjustSize();
+    const double scaleX = double(width()) / m_ocrImgSize.width();
+    const double scaleY = double(height()) / m_ocrImgSize.height();
+    QRectF sel;
+    const int from = qMin(m_selAnchor, m_selLead);
+    const int to = qMax(m_selAnchor, m_selLead);
+    for (int i = from; i <= to && i < m_charBoxes.size(); ++i)
+        sel = sel.isNull() ? m_charBoxes.at(i).rect : sel.united(m_charBoxes.at(i).rect);
+    const QRectF view(sel.x() * scaleX, sel.y() * scaleY, sel.width() * scaleX, sel.height() * scaleY);
+    QPoint g = mapToGlobal(QPoint(qRound(view.center().x()), qRound(view.bottom()) + 6));
+    const QRect avail = screen() ? screen()->availableGeometry()
+                                 : QGuiApplication::primaryScreen()->availableGeometry();
+    g.setX(qBound(avail.left(), g.x() - m_selToolbar->width() / 2,
+                  qMax(avail.left(), avail.right() - m_selToolbar->width() + 1)));
+    if (g.y() + m_selToolbar->height() - 1 > avail.bottom())
+        g.setY(qMax(avail.top(), mapToGlobal(QPoint(0, qRound(view.top()))).y() - m_selToolbar->height() - 6));
+    m_selToolbar->move(g);
+    m_selToolbar->show();
+    m_selToolbar->raise();
+    // A Tool sibling of the pin is covered by it; topmost keeps the toolbar in front.
+    const HWND hwnd = reinterpret_cast<HWND>(m_selToolbar->winId());
+    if (hwnd) SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                           SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 void PinWindow::toggleToolbar(bool enabled)
@@ -522,13 +833,15 @@ void PinWindow::toggleToolbar(bool enabled)
 
 void PinWindow::updateToolbarPosition()
 {
-    if (!m_toolbar || !m_toolbarOn) return;
-    const QRect geom = geometry();
-    const QSize tSize = m_toolbar->sizeHint();
-    // Position toolbar centered below the pinned window
-    const int x = geom.left() + (geom.width() - tSize.width()) / 2;
-    const int y = geom.bottom() + 6;
-    m_toolbar->move(x, y);
+    if (m_toolbar && m_toolbarOn) {
+        const QRect geom = geometry();
+        const QSize tSize = m_toolbar->sizeHint();
+        // Position toolbar centered below the pinned window
+        const int x = geom.left() + (geom.width() - tSize.width()) / 2;
+        const int y = geom.bottom() + 6;
+        m_toolbar->move(x, y);
+    }
+    updateSelToolbar();   // The selection toolbar follows window moves and zoom too.
 }
 
 QMenu *PinWindow::createContextMenu()
@@ -547,9 +860,6 @@ QMenu *PinWindow::createContextMenu()
     textSelect->setCheckable(true);
     textSelect->setChecked(m_textSelectable);
     connect(textSelect, &QAction::toggled, this, [this](bool checked) { toggleTextSelectable(checked); });
-
-    QAction *translate = m->addAction(QStringLiteral("翻译为"));
-    translate->setEnabled(false); // Placeholder for translation functionality (not implemented yet).
 
     m->addSeparator();
 
@@ -621,9 +931,42 @@ QMenu *PinWindow::createContextMenu()
 
 void PinWindow::contextMenuEvent(QContextMenuEvent *e)
 {
+    // With text selected, right-click offers Copy only, like the reference pin.
+    if (m_textSelectable && m_selAnchor >= 0 && m_selLead >= 0 && !selectedText().isEmpty()) {
+        QMenu m;
+        m.setObjectName(QStringLiteral("selCopyMenu"));
+        if (m.exec(e->globalPos()) == m.addAction(QStringLiteral("复制"))) {
+            if (!copyTextToClipboard(selectedText()))
+                QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+            m_selBarOpen = false;
+            m_selAnchor = -1;
+            m_selLead = -1;
+            update();
+            updateSelToolbar();
+        }
+        return;
+    }
     QMenu *m = createContextMenu();
     m->setAttribute(Qt::WA_DeleteOnClose);
     m->exec(e->globalPos());
+}
+
+bool PinWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    // Any press outside the markup toolbar closes it; the press itself keeps
+    // going (e.g. starting the next selection drag), reference behavior.
+    if (m_selToolbar && m_selToolbar->isVisible() && event->type() == QEvent::MouseButtonPress) {
+        const auto *me = static_cast<const QMouseEvent *>(event);
+        const QWidget *w = qobject_cast<QWidget *>(watched);
+        if (!me->globalPosition().isNull()) {
+            const QPoint g = me->globalPosition().toPoint();
+            if (!m_selToolbar->geometry().contains(g) && !(w && m_selToolbar->isAncestorOf(w))) {
+                m_selBarOpen = false;
+                m_selToolbar->hide();
+            }
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void PinWindow::mousePressEvent(QMouseEvent *e)
@@ -640,13 +983,18 @@ void PinWindow::mousePressEvent(QMouseEvent *e)
                 m_selAnchor = idx;
                 m_selLead = idx;
                 m_selecting = true;
+                m_selBarOpen = false;   // The toolbar waits until the drag is released.
+                setCursor(Qt::IBeamCursor);
                 update();
+                updateSelToolbar();
                 return;
             } else {
                 m_selAnchor = -1;
                 m_selLead = -1;
                 m_selecting = false;
+                m_selBarOpen = false;
                 update();
+                updateSelToolbar();
             }
         }
         m_dragOff = e->globalPosition().toPoint() - pos();
@@ -668,9 +1016,18 @@ void PinWindow::mouseMoveEvent(QMouseEvent *e)
         updateToolbarPosition();
     } else {
         if (m_textSelectable) {
-            // Keep IBeam cursor when selectable to clearly signal text selection mode
-            setCursor(Qt::IBeamCursor);
+            // Static I-beam over copyable text only; native cursor elsewhere.
+            setCursor(charIndexAt(e->pos(), false) >= 0 ? Qt::IBeamCursor : Qt::ArrowCursor);
         }
+    }
+}
+
+void PinWindow::mouseReleaseEvent(QMouseEvent *e)
+{
+    if (e->button() == Qt::LeftButton && m_selecting) {
+        m_selecting = false;
+        m_selBarOpen = m_selAnchor >= 0 && m_selLead >= 0;
+        updateSelToolbar();
     }
 }
 
@@ -692,6 +1049,11 @@ void PinWindow::mouseDoubleClickEvent(QMouseEvent *)  { close(); }
 
 PinWindow::~PinWindow()
 {
+    if (m_selToolbar) {
+        m_selToolbar->close();
+        delete m_selToolbar;
+        m_selToolbar = nullptr;
+    }
     if (m_toolbar) {
         m_toolbar->close();
         delete m_toolbar;
