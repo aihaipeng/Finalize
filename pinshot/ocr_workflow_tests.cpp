@@ -263,7 +263,7 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     check(retry->text().isEmpty() && copy->text().isEmpty() && !retry->icon().isNull() && !copy->icon().isNull()
               && copy->mapTo(dialog,QPoint()).x()+copy->width()<=retry->mapTo(dialog,QPoint()).x()
               && retry->mapTo(dialog,QPoint()).y()>=textBottom && copy->mapTo(dialog,QPoint()).y()>=textBottom
-              && back->mapTo(dialog,QPoint()).x()<text->mapTo(dialog,QPoint()).x()
+              && !back
               && status->alignment().testFlag(Qt::AlignRight) && status->mapTo(dialog,QPoint()).y()>=textBottom
               && QRegularExpression(QStringLiteral("^\\d+\\.\\d{2}秒 · 平均置信度\\d+%$")).match(status->text()).hasMatch(),
           "text actions and bottom-right timing run along the bottom edge of the text block");
@@ -289,7 +289,7 @@ int CaptureOverlay::testOcr(const QString &previewPath)
           "OCR text, metadata, accent buttons, control outlines and focus cues meet their contrast budgets");
     const QList<QWidget *> tabOrder{dialog->findChild<QToolButton *>(QStringLiteral("ocrPin")),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrMinimize")),dialog->findChild<QToolButton *>(QStringLiteral("ocrMaximize")),
-        dialog->findChild<QToolButton *>(QStringLiteral("ocrClose")),dialog->findChild<QGraphicsView *>(),back,
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrClose")),dialog->findChild<QGraphicsView *>(),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrCopyImage")),dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomIn")),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomOut")),dialog->findChild<QToolButton *>(QStringLiteral("ocrFit")),
         text,copy,dialog->findChild<QToolButton *>(QStringLiteral("ocrLayout")),
@@ -309,11 +309,11 @@ int CaptureOverlay::testOcr(const QString &previewPath)
             && panelRect.contains(QRect(retry->mapTo(panel,QPoint()),retry->size()))
             && panelRect.contains(QRect(copy->mapTo(panel,QPoint()),copy->size()))
             && copy->mapTo(dialog,QPoint()).x()+copy->width()<=retry->mapTo(dialog,QPoint()).x()
-            && text->height()>100 && back->width()>=back->sizeHint().width();
+            && text->height()>100 && copy->width()>=copy->sizeHint().width();
     };
     if (dialog->size()!=dialog->minimumSize() || !controlsFit())
-        std::fprintf(stderr,"MIN: back=%d/%d dialog=%dx%d min=%dx%d hint=%dx%d text-height=%d retry=(%d,%d) copy=(%d,%d)\n",
-            back->width(),back->sizeHint().width(),dialog->width(),dialog->height(),dialog->minimumWidth(),dialog->minimumHeight(),
+        std::fprintf(stderr,"MIN: copy=%d/%d dialog=%dx%d min=%dx%d hint=%dx%d text-height=%d retry=(%d,%d) copy=(%d,%d)\n",
+            copy->width(),copy->sizeHint().width(),dialog->width(),dialog->height(),dialog->minimumWidth(),dialog->minimumHeight(),
             dialog->minimumSizeHint().width(),dialog->minimumSizeHint().height(),text->height(),
             retry->mapTo(dialog,QPoint()).x(),retry->mapTo(dialog,QPoint()).y(),copy->mapTo(dialog,QPoint()).x(),copy->mapTo(dialog,QPoint()).y());
     check(dialog->size()==dialog->minimumSize() && controlsFit(),"minimum OCR window retains both panes and every primary action without overlap");
@@ -330,10 +330,10 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     for (int pass=0;pass<3;++pass) QApplication::processEvents();
     check(retry->font().pointSizeF()>=13 && text->font().pointSizeF()>=15,
           "the enlarged-font preview actually increases both interface and reading fonts");
-    if (!controlsFit()) std::fprintf(stderr,"LAYOUT: dialog=%dx%d panel=%dx%d retry=(%d,%d %dx%d) copy=(%d,%d %dx%d) text-height=%d back-width=%d back-hint=%d\n",
+    if (!controlsFit()) std::fprintf(stderr,"LAYOUT: dialog=%dx%d panel=%dx%d retry=(%d,%d %dx%d) copy=(%d,%d %dx%d) text-height=%d\n",
         dialog->width(),dialog->height(),retry->parentWidget()->width(),retry->parentWidget()->height(),
         retry->x(),retry->y(),retry->width(),retry->height(),
-        copy->x(),copy->y(),copy->width(),copy->height(),text->height(),back->width(),back->sizeHint().width());
+        copy->x(),copy->y(),copy->width(),copy->height(),text->height());
     check(controlsFit(),"OCR controls tolerate an application-level twenty-five percent font enlargement at minimum size");
     if (!previewPath.isEmpty()) check(dialog->grab().save(previewPath+QStringLiteral("-large-font.png")),"save enlarged-interface-font OCR preview");
     for (const auto &entry:savedFonts) entry.first->setFont(entry.second);
@@ -367,10 +367,46 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     while (dialog->geometry()!=dialog->screen()->availableGeometry() && maximizeTimer.elapsed()<2000) {
         QApplication::processEvents(); QThread::msleep(10);
     }
-    check(dialog->isMaximized() && IsZoomed(cardHwnd) && maximize->toolTip()==QStringLiteral("还原")
+    check(dialog->m_maximized && maximize->toolTip()==QStringLiteral("还原")
               && dialog->geometry()==dialog->screen()->availableGeometry(),"maximize fills the work area and changes to a restore control");
+    // Maximized by geometry: the edges still resize and empty chrome still drags.
+    const auto mouse = [&](QEvent::Type type,const QPoint &local,Qt::MouseButtons buttons) {
+        QMouseEvent event(type,QPointF(local),QPointF(dialog->mapToGlobal(local)),
+                          type==QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,buttons,Qt::NoModifier);
+        QApplication::sendEvent(dialog,&event);
+    };
+    const QRect maxed=dialog->geometry();
+    const QPoint rightEdge(dialog->width()-3,dialog->height()/2);
+    mouse(QEvent::MouseMove,rightEdge,Qt::NoButton);
+    const bool edgeCursor=dialog->cursor().shape()==Qt::SizeHorCursor;
+    mouse(QEvent::MouseButtonPress,rightEdge,Qt::LeftButton);
+    mouse(QEvent::MouseMove,rightEdge-QPoint(120,0),Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease,rightEdge-QPoint(120,0),Qt::NoButton);
+    QApplication::processEvents();
+    check(edgeCursor && !dialog->m_maximized && dialog->width()==maxed.width()-120 && dialog->x()==maxed.x()
+              && maximize->toolTip()==QStringLiteral("最大化"),
+          "a maximized card still resizes from its edge and drops the maximized state");
+    const QPoint titleSpot=dialog->m_header->geometry().center();
+    const QPoint startPos=dialog->pos();
+    mouse(QEvent::MouseButtonPress,titleSpot,Qt::LeftButton);
+    mouse(QEvent::MouseMove,titleSpot+QPoint(40,30),Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease,titleSpot+QPoint(40,30),Qt::NoButton);
+    check(dialog->pos()==startPos+QPoint(40,30),"dragging the empty title bar moves the card");
+    QMouseEvent twice(QEvent::MouseButtonDblClick,QPointF(titleSpot),QPointF(dialog->mapToGlobal(titleSpot)),
+                      Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+    QApplication::sendEvent(dialog,&twice);
+    check(dialog->m_maximized && dialog->geometry()==maxed,"double-clicking the title bar maximizes again");
+    const QPoint maxSpot=dialog->m_header->geometry().center();
+    mouse(QEvent::MouseButtonPress,maxSpot,Qt::LeftButton);
+    mouse(QEvent::MouseMove,maxSpot+QPoint(25,0),Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease,maxSpot+QPoint(25,0),Qt::NoButton);
+    check(dialog->pos()==maxed.topLeft()+QPoint(25,0),"a maximized card can still be dragged");
+    const QPoint inner(dialog->width()/2,dialog->height()-3), deep(dialog->width()/2,dialog->height()-12);
+    check(dialog->resizeEdges(inner)==Qt::BottomEdge && !dialog->resizeEdges(deep)
+              && dialog->resizeEdges(QPoint(2,2))==(Qt::LeftEdge|Qt::TopEdge),
+          "the resize band covers the outer half of the edge padding and combines corners");
     maximize->click(); QApplication::processEvents();
-    check(!dialog->isMaximized() && text->toPlainText()==expectedText,"restoring the card keeps the recognized text");
+    check(!dialog->m_maximized && text->toPlainText()==expectedText,"restoring the card keeps the recognized text");
     dialog->findChild<QToolButton *>(QStringLiteral("ocrMinimize"))->click(); QApplication::processEvents();
     check(dialog->isMinimized() && !overlay.isVisible(),"minimizing OCR does not restore the global frozen overlay");
     dialog->showNormal(); QApplication::processEvents();
@@ -396,17 +432,21 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     check(!pin->isChecked() && !(GetWindowLongPtrW(cardHwnd,GWL_EXSTYLE)&WS_EX_TOPMOST)
               && pin->toolTip()==QStringLiteral("置顶 OCR 卡片") && dialog->geometry()==cardGeometry,
           "clicking pin again returns the OCR card to normal window stacking");
-    back->click();
+    dialog->findChild<QToolButton *>(QStringLiteral("ocrClose"))->click();
+    QApplication::processEvents();
     QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
-    check(overlay.m_sel==selection && overlay.cropped().toImage()==before && overlay.isVisible(),
-          "closing OCR restores the untouched screenshot selection and output");
+    check(!overlay.isVisible() && overlay.m_sel==selection && overlay.cropped().toImage()==before,
+          "closing OCR ends the capture and leaves the selection and output untouched");
+    overlay.show(); overlay.placeToolbar(); overlay.showToolBars();
     button->click();
     dialog = overlay.m_ocrDialog;
     QApplication::processEvents();
-    dialog->findChild<QToolButton *>(QStringLiteral("ocrBack"))->click();
+    dialog->findChild<QToolButton *>(QStringLiteral("ocrClose"))->click();
+    QApplication::processEvents();                       // Runs the queued capture close before showing it again.
     QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
     QThreadPool::globalInstance()->waitForDone();
-    check(!engine.busy.load(),"closing during recognition cancels cooperatively and releases the single-job slot");
+    check(!engine.busy.load() && !overlay.isVisible(),"closing during recognition cancels cooperatively and releases the single-job slot");
+    overlay.show(); overlay.placeToolbar(); overlay.showToolBars();
     for (QScreen *screen:QGuiApplication::screens()) {
         const QRect area=screen->availableGeometry();
         const QRect anchor(area.topLeft()+QPoint(30,30),QSize(100,80));

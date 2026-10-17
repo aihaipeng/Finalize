@@ -52,17 +52,22 @@
 #include <QApplication>
 #include <QPushButton>
 #include <QFrame>
+#include <QAbstractButton>
+#include <QAbstractSpinBox>
+#include <QAbstractSlider>
+#include <QAbstractScrollArea>
+#include <QSplitterHandle>
 #include <QStylePainter>
 #include <QStyleOptionComboBox>
 #include <atomic>
 #include <memory>
 
+// Child-free padding along every card edge; its outer half grabs a resize.
+constexpr int ResizeBand = 16;
+
 static OcrDialog *presentCard(OcrDialog *dialog, QWidget *source)
 {
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    if (source) QObject::connect(dialog,&QDialog::accepted,source,[source] {
-        if (source->isVisible()) { source->raise(); source->activateWindow(); source->setFocus(); }
-    });
     if (source) QObject::connect(source,&QObject::destroyed,dialog,&QObject::deleteLater);
     // A source still on screen (a pin) stays visible next to the card instead of under it.
     if (source && source->isVisible()) {
@@ -260,7 +265,8 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         "QToolTip{background:%1;color:%4;border:1px solid %6;padding:6px;}"
     ).arg(surface,panel,hover,foreground,muted,outline,accent,selected,thumb));
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(1,1,1,1);         // Inside the 1px window border.
+    // Child-free padding along every edge: the card itself sees the cursor there and resizes.
+    layout->setContentsMargins(ResizeBand,ResizeBand,ResizeBand,ResizeBand);
     layout->setSpacing(0);
     const auto iconButton = [this](Icon icon,const QString &name,const QString &tip) {
         auto *button = new QToolButton(this);
@@ -279,9 +285,9 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     };
     auto *header = new QWidget;
     header->setObjectName(QStringLiteral("ocrHeader"));
-    header->installEventFilter(this);
+    m_header = header;
     auto *headerLayout = new QHBoxLayout(header);
-    headerLayout->setContentsMargins(16,0,10,0);
+    headerLayout->setContentsMargins(0,0,0,0);
     headerLayout->setSpacing(6);
     auto *title = new QLabel(windowTitle());
     title->setObjectName(QStringLiteral("ocrTitle"));
@@ -289,7 +295,6 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     titleFont.setPointSizeF(qMax(12.0,interfaceFont.pointSizeF()));
     titleFont.setWeight(QFont::Medium);
     title->setFont(titleFont);
-    title->installEventFilter(this);
     headerLayout->addWidget(title);
     headerLayout->addStretch();
     auto *pin = iconButton(Icon::CardPin,QStringLiteral("ocrPin"),QStringLiteral("置顶 OCR 卡片"));
@@ -311,15 +316,12 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     connect(minimize,&QToolButton::clicked,this,&QWidget::showMinimized);
     headerLayout->addWidget(minimize);
     m_maximize = iconButton(Icon::CardMaximize,QStringLiteral("ocrMaximize"),QStringLiteral("最大化"));
-    // Qt flags the frameless card maximized without Windows zooming it, so drive the native show state.
-    connect(m_maximize,&QToolButton::clicked,this,[this] {
-        ShowWindow(reinterpret_cast<HWND>(winId()), isMaximized() ? SW_RESTORE : SW_MAXIMIZE);
-    });
+    connect(m_maximize,&QToolButton::clicked,this,&OcrDialog::toggleMaximize);
     headerLayout->addWidget(m_maximize);
     auto *close = iconButton(Icon::CardClose,QStringLiteral("ocrClose"),QStringLiteral("关闭 (Esc)"));
     connect(close,&QToolButton::clicked,this,&QDialog::reject);
     headerLayout->addWidget(close);
-    header->setFixedHeight(44);
+    header->setFixedHeight(28);
     layout->addWidget(header);
     // Translate card: one toolbar under the title for the pickers and the view controls.
     QHBoxLayout *tools = nullptr;
@@ -327,7 +329,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         auto *toolbar = new QWidget;
         toolbar->setObjectName(QStringLiteral("translateToolbar"));
         tools = new QHBoxLayout(toolbar);
-        tools->setContentsMargins(12,0,12,8);
+        tools->setContentsMargins(0,8,0,8);
         tools->setSpacing(8);
         layout->addWidget(toolbar);
     }
@@ -361,13 +363,6 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     QWidget *imageBar;
     QHBoxLayout *imageActions;
     std::tie(imageBar,imageActions) = actionRow(QStringLiteral("ocrImageBar"));
-    // The translate card has no way back into the capture: closing it is the way out.
-    QToolButton *back = nullptr;
-    if (!m_translate) {
-        back = iconButton(Icon::CardBack,QStringLiteral("ocrBack"),QStringLiteral("返回截图"));
-        connect(back,&QToolButton::clicked,this,&QDialog::accept);
-        imageActions->addWidget(back);
-    }
     auto *copyImage = iconButton(Icon::CardCopy,QStringLiteral("ocrCopyImage"),QStringLiteral("复制图片"));
     connect(copyImage,&QToolButton::clicked,this,[this] {
         m_status->setText(copyImageToClipboard(m_image) ? QStringLiteral("已复制图片")
@@ -728,15 +723,13 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     m_split->setStretchFactor(0,1); m_split->setStretchFactor(1,1);
     auto *content = new QWidget;
     auto *contentLayout = new QVBoxLayout(content);
-    contentLayout->setContentsMargins(12,0,12,12);
+    contentLayout->setContentsMargins(0,m_translate ? 0 : 8,0,0);
     contentLayout->addWidget(m_split);
     layout->addWidget(content,1);
     // Tab follows the visual order: window actions, toolbar, image block, then text block(s).
     QList<QWidget *> order{pin,minimize,m_maximize,close};
     if (m_translate) order << m_source << m_target << m_provider << m_layout << m_view << m_again << m_retry;
-    order << imageView;
-    if (back) order << back;
-    order << copyImage << zoomIn << zoomOut << fit;
+    order << imageView << copyImage << zoomIn << zoomOut << fit;
     if (m_translate) order << m_sourcePane << sourceCopy << m_text << m_copy;
     else order << m_text << m_copy << m_layout << m_format << search << m_retry;
     for (int i = 1; i < order.size(); ++i) setTabOrder(order[i-1],order[i]);
@@ -788,7 +781,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
             m_text->document()->setModified(m_previousModified);
             m_status->setText(result.error);
             m_text->setReadOnly(m_text->toPlainText().isEmpty());
-            m_text->setPlaceholderText(QStringLiteral("识别未完成，可重试或返回截图"));
+            m_text->setPlaceholderText(QStringLiteral("识别未完成，可点击重新识别"));
             return;
         }
         if (m_translate) {
@@ -800,10 +793,10 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         m_raw = result.text();
         m_text->setPlainText(m_raw);
         m_autoFormat->setChecked(true);
-        m_text->setPlaceholderText(QStringLiteral("未识别到文字。可返回截图调整选区，或在此输入文本。"));
+        m_text->setPlaceholderText(QStringLiteral("未识别到文字，可在此输入文本。"));
         double confidence=0;
         for (const OcrLine &line:result.lines) confidence+=line.score;
-        m_status->setText(result.lines.isEmpty() ? QStringLiteral("未识别到文字，可返回截图调整选区")
+        m_status->setText(result.lines.isEmpty() ? QStringLiteral("未识别到文字")
             : QStringLiteral("%1秒 · 平均置信度%2%").arg(result.elapsed/1000.0,0,'f',2)
                 .arg(confidence*100/result.lines.size(),0,'f',0));
         m_text->setToolTip(QStringLiteral("置信度不等于准确率，请对照原图校对"));
@@ -1220,55 +1213,128 @@ bool OcrDialog::eventFilter(QObject *object,QEvent *event)  {
         if (event->type()==QEvent::Resize && m_mask) m_mask->setGeometry(m_text->rect());
         return QDialog::eventFilter(object,event);
     }
-    if (event->type()==QEvent::MouseButtonDblClick) {
-        auto *mouse = static_cast<QMouseEvent *>(event);
-        if (mouse->button()==Qt::LeftButton) { m_maximize->click(); return true; }
-    } else if (event->type()==QEvent::MouseButtonPress) {
-        auto *mouse = static_cast<QMouseEvent *>(event);
-        if (mouse->button()==Qt::LeftButton && windowHandle()) {
-            windowHandle()->startSystemMove(); return true;
-        }
-    }
     return QDialog::eventFilter(object,event);
 }
 
-void OcrDialog::changeEvent(QEvent *event)  {
-    QDialog::changeEvent(event);
-    if (event->type()==QEvent::WindowStateChange && m_maximize) {
-        m_maximize->setIcon(cardIcon(isMaximized() ? Icon::CardRestore : Icon::CardMaximize));
-        const QString tip = isMaximized() ? QStringLiteral("还原") : QStringLiteral("最大化");
-        m_maximize->setToolTip(tip); m_maximize->setAccessibleName(tip);
-    }
-}
-
 void OcrDialog::mousePressEvent(QMouseEvent *event)  {
-    const Qt::Edges edges = resizeEdges(event->position().toPoint());
-    if (event->button()==Qt::LeftButton && edges && windowHandle() && windowHandle()->startSystemResize(edges)) {
-        event->accept(); return;
+    if (event->button()==Qt::LeftButton) {
+        const QPoint at = event->position().toPoint();
+        if (const Qt::Edges edges = resizeEdges(at)) {
+            // Resizing works maximized too: the card leaves the maximized state and keeps its current frame.
+            if (m_maximized) { m_maximized = false; updateMaximizeButton(); }
+            m_resizing = edges;
+            m_pressGlobal = event->globalPosition().toPoint();
+            m_pressGeometry = geometry();
+            event->accept(); return;
+        }
+        if (dragsWindow(at)) {
+            m_dragging = true;
+            m_dragOffset = event->globalPosition().toPoint() - frameGeometry().topLeft();
+            event->accept(); return;
+        }
     }
     QDialog::mousePressEvent(event);
 }
 
 void OcrDialog::mouseMoveEvent(QMouseEvent *event)  {
-    const Qt::Edges edges = resizeEdges(event->position().toPoint());
-    const bool horizontal = edges.testFlag(Qt::LeftEdge)||edges.testFlag(Qt::RightEdge);
-    const bool vertical = edges.testFlag(Qt::TopEdge)||edges.testFlag(Qt::BottomEdge);
-    if (horizontal && vertical)
-        setCursor((edges.testFlag(Qt::LeftEdge)==edges.testFlag(Qt::TopEdge)) ? Qt::SizeFDiagCursor : Qt::SizeBDiagCursor);
-    else if (horizontal) setCursor(Qt::SizeHorCursor);
-    else if (vertical) setCursor(Qt::SizeVerCursor);
-    else unsetCursor();
+    const QPoint global = event->globalPosition().toPoint();
+    if (m_resizing) {
+        // Opposite edges stay put; the moving edge stops where the card reaches its minimum size.
+        const QSize least = minimumSize().expandedTo(minimumSizeHint());
+        const QPoint delta = global - m_pressGlobal;
+        QRect next = m_pressGeometry;
+        if (m_resizing & Qt::LeftEdge) next.setLeft(qMin(m_pressGeometry.left()+delta.x(),m_pressGeometry.right()+1-least.width()));
+        if (m_resizing & Qt::RightEdge) next.setRight(qMax(m_pressGeometry.right()+delta.x(),m_pressGeometry.left()+least.width()-1));
+        if (m_resizing & Qt::TopEdge) next.setTop(qMin(m_pressGeometry.top()+delta.y(),m_pressGeometry.bottom()+1-least.height()));
+        if (m_resizing & Qt::BottomEdge) next.setBottom(qMax(m_pressGeometry.bottom()+delta.y(),m_pressGeometry.top()+least.height()-1));
+        setGeometry(next);
+        event->accept(); return;
+    }
+    if (m_dragging && (event->buttons() & Qt::LeftButton)) {
+        move(global - m_dragOffset);
+        event->accept(); return;
+    }
+    updateResizeCursor(resizeEdges(event->position().toPoint()));
     QDialog::mouseMoveEvent(event);
 }
 
-void OcrDialog::leaveEvent(QEvent *event)  { unsetCursor(); QDialog::leaveEvent(event); }
+void OcrDialog::mouseReleaseEvent(QMouseEvent *event)  {
+    if (event->button()!=Qt::LeftButton) { QDialog::mouseReleaseEvent(event); return; }
+    const bool resized = bool(m_resizing);
+    m_resizing = {};
+    m_dragging = false;
+    if (resized) updateResizeCursor(resizeEdges(mapFromGlobal(QCursor::pos())));
+    event->accept();
+}
+
+void OcrDialog::mouseDoubleClickEvent(QMouseEvent *event)  {
+    // Only the title bar maximizes; a double click anywhere else keeps its own meaning.
+    const QPoint at = event->position().toPoint();
+    if (event->button()==Qt::LeftButton && m_header->geometry().contains(at) && dragsWindow(at)) {
+        m_resizing = {};
+        m_dragging = false;
+        toggleMaximize();
+        event->accept(); return;
+    }
+    QDialog::mouseDoubleClickEvent(event);
+}
+
+void OcrDialog::leaveEvent(QEvent *event)  {
+    if (!m_resizing) unsetCursor();
+    QDialog::leaveEvent(event);
+}
 
 Qt::Edges OcrDialog::resizeEdges(const QPoint &point) const {
+    // The outer half of the child-free margin reacts; corners combine two edges.
+    const int band = qMax(1,ResizeBand/2);
     Qt::Edges edges;
-    if (isMaximized()) return edges;
-    if (point.x()<6) edges|=Qt::LeftEdge;
-    else if (point.x()>=width()-6) edges|=Qt::RightEdge;
-    if (point.y()<6) edges|=Qt::TopEdge;
-    else if (point.y()>=height()-6) edges|=Qt::BottomEdge;
+    if (!rect().contains(point)) return edges;
+    if (point.x() < band) edges |= Qt::LeftEdge;
+    else if (point.x() > width()-1-band) edges |= Qt::RightEdge;
+    if (point.y() < band) edges |= Qt::TopEdge;
+    else if (point.y() > height()-1-band) edges |= Qt::BottomEdge;
     return edges;
+}
+
+void OcrDialog::updateResizeCursor(Qt::Edges edges) {
+    const bool horizontal = edges & (Qt::LeftEdge|Qt::RightEdge), vertical = edges & (Qt::TopEdge|Qt::BottomEdge);
+    if (horizontal && vertical)
+        setCursor(bool(edges & Qt::LeftEdge) == bool(edges & Qt::TopEdge) ? Qt::SizeFDiagCursor : Qt::SizeBDiagCursor);
+    else if (horizontal) setCursor(Qt::SizeHorCursor);
+    else if (vertical) setCursor(Qt::SizeVerCursor);
+    else unsetCursor();
+}
+
+bool OcrDialog::dragsWindow(const QPoint &point) const {
+    // Empty chrome, labels and block backgrounds move the card; controls keep their own drags.
+    for (QWidget *widget = childAt(point); widget && widget != this; widget = widget->parentWidget())
+        if (widget->property("NoWindowDrag").toBool() || qobject_cast<QAbstractButton *>(widget)
+            || qobject_cast<QAbstractSpinBox *>(widget) || qobject_cast<QLineEdit *>(widget)
+            || qobject_cast<QComboBox *>(widget) || qobject_cast<QAbstractSlider *>(widget)
+            || qobject_cast<QAbstractScrollArea *>(widget) || qobject_cast<QSplitterHandle *>(widget))
+            return false;
+    return rect().contains(point);
+}
+
+void OcrDialog::toggleMaximize() {
+    // Fills the work area of the card's screen by geometry and keeps the frame resizable and draggable.
+    if (!m_maximized) {
+        const QScreen *screen = QGuiApplication::screenAt(frameGeometry().center());
+        if (!screen) screen = QGuiApplication::screenAt(QCursor::pos());
+        if (!screen) screen = QGuiApplication::primaryScreen();
+        if (!screen) return;
+        m_restoreGeometry = geometry();
+        setGeometry(screen->availableGeometry());
+        m_maximized = true;
+    } else {
+        if (m_restoreGeometry.isValid()) setGeometry(m_restoreGeometry);
+        m_maximized = false;
+    }
+    updateMaximizeButton();
+}
+
+void OcrDialog::updateMaximizeButton() {
+    m_maximize->setIcon(cardIcon(m_maximized ? Icon::CardRestore : Icon::CardMaximize));
+    const QString tip = m_maximized ? QStringLiteral("还原") : QStringLiteral("最大化");
+    m_maximize->setToolTip(tip); m_maximize->setAccessibleName(tip);
 }

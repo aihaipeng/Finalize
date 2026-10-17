@@ -47,7 +47,7 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
         "restore", "refresh", "fill", "dashed", "icons8-line-width", "marker_rect", "fit_view", "search",
         "text_format", "split_columns", "split_rows", "chevron_up", "chevron_down", "chevron_right",
         "icons8-wavy-line", "icons8-underline", "icons8-strikethrough", "check", "icons8-data-transfer", "card-view",
-        "card-fit", "card-split", "card-translate", "card-reload", "card-copy", "card-columns", "card-back",
+        "card-fit", "card-split", "card-translate", "card-reload", "card-copy", "card-columns",
         "card-zoom-in", "card-zoom-out", "card-actual", "card-pin", "card-minimize", "card-maximize",
         "card-restore", "card-close", "card-search", "card-up", "card-down", "card-right", "card-format"};
     QSvgRenderer svg(QStringLiteral(":/icons/%1.svg").arg(QLatin1String(names[int(icon)])));
