@@ -24,7 +24,7 @@ enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, 
                   Number, Mosaic, Eraser, Undo, Redo, Bold, Italic, Minimize, Maximize, Restore, Refresh,
                   Fill, Dashed, LineWidth, MarkerRect, FitView, Search, TextFormat, SplitColumns, SplitRows,
                   ChevronUp, ChevronDown, ChevronRight, WavyLine, Underline, Strikethrough, Check, Translate, View,
-                  CardFit, CardSplit, CardTranslate, CardReload, CardCopy, CardColumns, CardBack, CardZoomIn,
+                  CardFit, CardSplit, CardTranslate, CardReload, CardCopy, CardColumns, CardZoomIn,
                   CardZoomOut, CardActual, CardPin, CardMinimize, CardMaximize, CardRestore, CardClose, CardSearch,
                   CardUp, CardDown, CardRight, CardFormat };
 

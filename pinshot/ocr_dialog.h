@@ -66,9 +66,12 @@ private:
 
 enum class TextFormat { Auto, JoinLines, RemoveSpaces, FullWidth, HalfWidth };
 
+class CaptureOverlay;
+
 class OcrDialog : public QDialog
 {
     Q_OBJECT
+    friend class CaptureOverlay;   // Its OCR workflow test drives the card frame directly.
 public:
     // translate mode: recognized lines go through the aggregating translation
     // gateway and the pane shows the translated text instead of the raw OCR.
@@ -85,12 +88,17 @@ public:
     static int testTranslate();
 protected:
     bool eventFilter(QObject *object,QEvent *event) override;
-    void changeEvent(QEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
     void leaveEvent(QEvent *event) override;
 private:
     Qt::Edges resizeEdges(const QPoint &point) const;
+    void updateResizeCursor(Qt::Edges edges);
+    bool dragsWindow(const QPoint &point) const;
+    void toggleMaximize();
+    void updateMaximizeButton();
     void translateResult(const OcrResult &result);
     void translateLines();
     void populateLanguages(const QString &source, const QString &target);
@@ -130,6 +138,12 @@ private:
     QSplitter *m_texts = nullptr;             // Original above (or left of) the translation.
     QWidget *m_mask = nullptr;                // Haze over a translation the edited original no longer matches.
     QString m_translatedSource;               // Original text the shown translation was requested for.
+    // Card-drawn window frame: edge resize, drag from any empty spot, maximize to the work area.
+    Qt::Edges m_resizing;
+    bool m_dragging = false, m_maximized = false;
+    QPoint m_pressGlobal, m_dragOffset;
+    QRect m_pressGeometry, m_restoreGeometry;
+    QWidget *m_header = nullptr;
     int m_match = -1, m_mode = 0;
     bool m_previousModified = false, m_rows = false, m_closed = false, m_translate = false, m_textRows = true;
 };

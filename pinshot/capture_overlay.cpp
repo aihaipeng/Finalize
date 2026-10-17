@@ -1504,14 +1504,8 @@ void CaptureOverlay::openTextCard(bool translate)
     hide();
     auto *dialog = translate ? showTranslate(image,this,captureRect) : showOcr(image,this,captureRect);
     m_ocrDialog=dialog;
-    connect(dialog,&QDialog::finished,this,[this](int result) {
-        if (result==QDialog::Accepted) {
-            show(); placeToolbar(); showToolBars(); activateWindow(); setFocus();
-            updateInspector();
-        } else {
-            QTimer::singleShot(0,this,&QWidget::close);
-        }
-    });
+    // The card has no way back into the capture: closing it ends the capture.
+    connect(dialog,&QDialog::finished,this,[this] { QTimer::singleShot(0,this,&QWidget::close); });
 }
 
 void CaptureOverlay::undoAnnotation()
