@@ -75,9 +75,12 @@ int ColorBoard::testRendering()
     check(pixel(cell.topLeft() - QPoint(1, 1)) == QColor(0x40, 0x40, 0x40),
           "the hovered cell grows by 1px with a darker frame");
     board.setCurrentColor(QColor("#3f48cc"));
+    const QColor mark = pixel(QPoint(23, 23));
     check(board.currentColor() == QColor("#3f48cc") && pixel(QPoint(6, 6)) == QColor("#3f48cc")
-              && pixel(QPoint(1, 1)) == QColor(0x22, 0x22, 0x22),
-          "the current square repaints the new color inside a dark frame");
+              && pixel(QPoint(1, 1)) == QColor(0x22, 0x22, 0x22) && mark.hsvSaturation() > 180,
+          "the current square repaints the new color, with a rainbow square marking the dialog");
+    if (!qgetenv("COLOR_BOARD_SHOT").isEmpty())
+        check(board.grab().save(QString::fromLocal8Bit(qgetenv("COLOR_BOARD_SHOT"))), "save the color board preview");
     std::printf("PASS: color board geometry, hit testing, presets, custom request, and hover at DPR %.2f\n", double(dpr));
     return 0;
 }

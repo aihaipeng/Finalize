@@ -23,11 +23,14 @@
 enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, Pen, Marker, Text,
                   Number, Mosaic, Eraser, Undo, Redo, Bold, Italic, Minimize, Maximize, Restore, Refresh,
                   Fill, Dashed, LineWidth, MarkerRect, FitView, Search, TextFormat, SplitColumns, SplitRows,
-                  ChevronUp, ChevronDown, ChevronRight };
+                  ChevronUp, ChevronDown, ChevronRight, WavyLine, Underline, Strikethrough };
 
 QIcon makeIcon(Icon icon, int size = 16);
 
 QToolButton *iconButton(Icon icon, const QString &tip);
+
+// A toolbar button with a solid color chip; checkable by the caller.
+QToolButton *colorButton(const QColor &color, const QString &tip, int size = 32);
 
 // Grey groove, theme-blue fill, white ring handle. Shared by mosaic and pin sliders.
 extern const QString lightSliderQss;

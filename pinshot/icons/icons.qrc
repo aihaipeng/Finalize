@@ -35,5 +35,8 @@
         <file>chevron_up.svg</file>
         <file>chevron_down.svg</file>
         <file>chevron_right.svg</file>
+        <file>icons8-wavy-line.svg</file>
+        <file>icons8-underline.svg</file>
+        <file>icons8-strikethrough.svg</file>
     </qresource>
 </RCC>
