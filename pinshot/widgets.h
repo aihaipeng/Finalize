@@ -23,9 +23,16 @@
 enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, Pen, Marker, Text,
                   Number, Mosaic, Eraser, Undo, Redo, Bold, Italic, Minimize, Maximize, Restore, Refresh,
                   Fill, Dashed, LineWidth, MarkerRect, FitView, Search, TextFormat, SplitColumns, SplitRows,
-                  ChevronUp, ChevronDown, ChevronRight, WavyLine, Underline, Strikethrough, Check };
+                  ChevronUp, ChevronDown, ChevronRight, WavyLine, Underline, Strikethrough, Check, Translate, View,
+                  CardFit, CardSplit, CardTranslate, CardReload, CardCopy, CardColumns, CardBack, CardZoomIn,
+                  CardZoomOut, CardActual, CardPin, CardMinimize, CardMaximize, CardRestore, CardClose, CardSearch,
+                  CardUp, CardDown, CardRight, CardFormat };
 
-QIcon makeIcon(Icon icon, int size = 16);
+// dark: glyphs for a dark surface (light ink) instead of the light bars.
+QIcon makeIcon(Icon icon, int size = 16, bool dark = false);
+
+// Text-card glyphs: muted ink, accent when hovered (QIcon::Active) or checked, dim when disabled.
+QIcon cardIcon(Icon icon, int size = 16);
 
 QToolButton *iconButton(Icon icon, const QString &tip);
 

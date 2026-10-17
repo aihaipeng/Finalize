@@ -134,9 +134,26 @@ int PinWindow::testPlacement()
     actions.at(0)->trigger(); // Toggle back on
     check(longPin.m_textSelectable, "toggling text selection re-enables selectable mode");
 
-    // Submenu: Image processing
-    QMenu *sub = actions.at(2)->menu();
-    check(sub != nullptr && sub->title() == QStringLiteral("图像处理"), "submenu is 图像处理");
+    // Submenu: Image processing. Located by title: the translate action sits
+    // between text selection and the separator before this submenu.
+    QMenu *sub = nullptr;
+    for (QAction *candidate : actions)
+        if (candidate->menu() && candidate->menu()->title() == QStringLiteral("图像处理")) sub = candidate->menu();
+    check(actions.at(1)->text() == QStringLiteral("翻译"), "translate row sits below text selection");
+    check(sub != nullptr, "submenu is 图像处理");
+
+    // The translate row dispatches to a translate-mode card. The engine slot
+    // stays busy so the card opens without starting recognition work.
+    OcrEngine::instance().busy.store(true);
+    for (QAction *candidate : actions)
+        if (candidate->text() == QStringLiteral("翻译")) { candidate->trigger(); break; }
+    OcrDialog *card = nullptr;
+    for (QWidget *top : QApplication::topLevelWidgets())
+        if (top->windowTitle() == QStringLiteral("Finalize 翻译")) card = qobject_cast<OcrDialog *>(top);
+    check(card != nullptr, "translate row opens a translate-mode card");
+    if (card) { card->reject(); card->deleteLater(); }
+    OcrEngine::instance().busy.store(false);
+
     QList<QAction *> subActions = sub->actions();
     check(subActions.size() >= 8, "submenu has transform actions and sliders");
     // Trigger rotate right (90 deg)
@@ -496,11 +513,41 @@ int PinWindow::testPlacement()
     editPin.setAttribute(Qt::WA_DeleteOnClose, false);
     editPin.toggleToolbar(true);
     const auto barButtons = editPin.m_toolbar->findChildren<QToolButton *>();
-    check(barButtons.size() == 14, "pin toolbar shows eight tools, undo/redo, three actions and done");
+    check(barButtons.size() == 15, "pin toolbar shows eight tools, undo/redo, four actions and done");
     QToolButton *shapeBtn = nullptr;
-    for (QToolButton *b : barButtons)
+    QToolButton *translateBtn = nullptr;
+    for (QToolButton *b : barButtons) {
         if (b->toolTip() == QStringLiteral("形状：矩形/椭圆")) shapeBtn = b;
+        if (b->toolTip() == QStringLiteral("翻译：识别并翻译为中文")) translateBtn = b;
+    }
     check(shapeBtn != nullptr && shapeBtn->isCheckable(), "the shape tool sits on the pin toolbar");
+    check(translateBtn != nullptr, "the translate tool sits on the pin toolbar");
+    {
+        // Translating takes the pin's place: pin and bar hide, the card centres on it,
+        // and closing the card brings both back where they were.
+        PinWindow host(flat, QRect(400, 300, 240, 160));
+        host.setAttribute(Qt::WA_DeleteOnClose, false);
+        host.show();
+        host.toggleToolbar(true);
+        QApplication::processEvents();
+        const QRect hostRect = host.imageGeometry();
+        host.openTranslate();
+        QApplication::processEvents();
+        OcrDialog *card = nullptr;
+        for (QWidget *w : QApplication::topLevelWidgets())
+            if (auto *d = qobject_cast<OcrDialog *>(w); d && d->isVisible()) card = d;
+        check(card && !host.isVisible() && !host.m_toolbar->isVisible(),
+              "translating hides the pin and its toolbar while the card is open");
+        check(card && (card->geometry().center() - hostRect.center()).manhattanLength() <= 2,
+              "the translate card is centred where the pin was");
+        if (card) card->reject();
+        QApplication::processEvents();
+        check(host.isVisible() && host.m_toolbar->isVisible() && host.imageGeometry() == hostRect,
+              "closing the translate card brings the pin and its toolbar back in place");
+        QThreadPool::globalInstance()->waitForDone();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        host.toggleToolbar(false);
+    }
     check(!editPin.m_undoBtn->isEnabled() && !editPin.m_redoBtn->isEnabled(),
           "undo/redo start disabled");
     const QRect pinBefore = editPin.imageGeometry();

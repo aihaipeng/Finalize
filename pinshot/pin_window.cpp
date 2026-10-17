@@ -33,6 +33,7 @@
 #include <QApplication>
 #include <algorithm>
 #include <QScreen>
+#include <QGuiApplication>
 #include <QSizePolicy>
 #include <QLayout>
 #include <QtConcurrent>
@@ -931,6 +932,10 @@ void PinWindow::toggleToolbar(bool enabled)
             });
             lay->addWidget(ocrBtn);
 
+            auto *translateBtn = iconButton(Icon::Translate, QStringLiteral("翻译：识别并翻译为中文"));
+            connect(translateBtn, &QToolButton::clicked, this, &PinWindow::openTranslate);
+            lay->addWidget(translateBtn);
+
             // Done: hides the bar like the first Esc; the pin and its marks stay.
             auto *doneBtn = iconButton(Icon::Check, QStringLiteral("完成"));
             doneBtn->setFocusPolicy(Qt::NoFocus);
@@ -945,6 +950,26 @@ void PinWindow::toggleToolbar(bool enabled)
         if (m_canvas) m_canvas->armTool(CaptureOverlay::ATool::None);   // Marks stay; the strip closes.
         if (m_toolbar) m_toolbar->hide();
     }
+}
+
+void PinWindow::openTranslate()
+{
+    const QRect pin = imageGeometry();
+    OcrDialog *card = showTranslate(annotatedPix().toImage(), nullptr, pin);
+    if (!card) return;
+    const QScreen *screen = QGuiApplication::screenAt(pin.center());
+    card->setGeometry(OcrDialog::centered(pin, (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry()));
+    // The pin and its floating bars step aside until the card closes, however it closes.
+    QList<QPointer<QWidget>> hidden;
+    for (QWidget *w : {static_cast<QWidget *>(this), m_toolbar, m_selToolbar,
+                       m_canvas ? m_canvas->optionsStrip() : nullptr})
+        if (w && w->isVisible()) { hidden.append(w); w->hide(); }
+    connect(this, &QObject::destroyed, card, &QWidget::close);
+    connect(card, &QDialog::finished, this, [hidden] {
+        for (const QPointer<QWidget> &w : hidden)
+            if (w) w->show();
+        if (!hidden.isEmpty() && hidden.first()) { hidden.first()->raise(); hidden.first()->activateWindow(); }
+    });
 }
 
 void PinWindow::updateToolbarPosition()
@@ -1066,6 +1091,9 @@ QMenu *PinWindow::createContextMenu()
     textSelect->setCheckable(true);
     textSelect->setChecked(m_textSelectable);
     connect(textSelect, &QAction::toggled, this, [this](bool checked) { toggleTextSelectable(checked); });
+
+    QAction *translate = m->addAction(QStringLiteral("翻译"));
+    connect(translate, &QAction::triggered, this, &PinWindow::openTranslate);
 
     m->addSeparator();
 

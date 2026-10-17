@@ -136,12 +136,16 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         ocr->setAccessibleName(QStringLiteral("文字识别 OCR"));
         const QString ocrMissing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
         if (!ocrMissing.isEmpty()) { ocr->setEnabled(false); ocr->setToolTip(ocrMissing); }
+        auto *translate = iconButton(Icon::Translate, QStringLiteral("翻译：识别并翻译为中文"));
+        translate->setAccessibleName(QStringLiteral("翻译"));
+        if (!ocrMissing.isEmpty()) { translate->setEnabled(false); translate->setToolTip(ocrMissing); }
         connect(save, &QToolButton::clicked, this, &CaptureOverlay::saveCapture);
         connect(copy, &QToolButton::clicked, this, &CaptureOverlay::copyCapture);
         connect(pin, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
         connect(scroll, &QToolButton::clicked, this, &CaptureOverlay::longCapture);
         connect(ocr, &QToolButton::clicked, this, &CaptureOverlay::ocrCapture);
-        outputButtons = {scroll, ocr, pin, save, copy};
+        connect(translate, &QToolButton::clicked, this, &CaptureOverlay::translateCapture);
+        outputButtons = {scroll, ocr, translate, pin, save, copy};
     }
     // Instant annotation tools: draw inside the committed selection; every capture
     // action composes them in. One shape button covers rect / ellipse; per-tool
@@ -1479,18 +1483,26 @@ void CaptureOverlay::clearAll()
     update();
 }
 
-void CaptureOverlay::ocrCapture()
+void CaptureOverlay::ocrCapture() { openTextCard(false); }
+
+void CaptureOverlay::translateCapture() { openTextCard(true); }
+
+void CaptureOverlay::openTextCard(bool translate)
 {
     stopItemDrag();
     commitTextEdit();
     const QImage image = cropped().toImage();
-    if (image.isNull()) { showOutputError(QStringLiteral("识别失败，请先选择有效截图区域")); return; }
+    if (image.isNull()) {
+        showOutputError(translate ? QStringLiteral("翻译失败，请先选择有效截图区域")
+                                  : QStringLiteral("识别失败，请先选择有效截图区域"));
+        return;
+    }
     const QRect captureRect=globalScreenRect(m_sel.normalized());
     cancelDetection();
     if (m_colorDialog) m_colorDialog->close();
     m_tools->hide(); m_toolOptions->hide(); m_inspector->hide();
     hide();
-    auto *dialog = showOcr(image,this,captureRect);
+    auto *dialog = translate ? showTranslate(image,this,captureRect) : showOcr(image,this,captureRect);
     m_ocrDialog=dialog;
     connect(dialog,&QDialog::finished,this,[this](int result) {
         if (result==QDialog::Accepted) {

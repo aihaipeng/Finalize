@@ -243,17 +243,34 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     auto *copy=dialog->findChild<QToolButton *>(QStringLiteral("ocrCopy"));
     auto *back=dialog->findChild<QToolButton *>(QStringLiteral("ocrBack"));
     auto *status=dialog->findChild<QLabel *>(QStringLiteral("ocrStatus"));
+    auto *zoomView=static_cast<OcrImageView *>(dialog->findChild<QGraphicsView *>());
+    auto *zoomLevel=dialog->findChild<QLabel *>(QStringLiteral("ocrZoomLevel"));
+    auto *zoomFit=dialog->findChild<QToolButton *>(QStringLiteral("ocrFit"));
+    const bool fittedAtFirst=zoomView->fitted();
+    zoomFit->click();                                     // Fitted: the toggle shows one-to-one.
+    const bool actual=zoomView->percent()==100 && zoomLevel->text()==QStringLiteral("100%") && !zoomView->fitted();
+    dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomIn"))->click();
+    const bool larger=zoomView->percent()==110 && zoomLevel->text()==QStringLiteral("110%");
+    dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomOut"))->click();
+    dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomOut"))->click();
+    const bool smaller=zoomView->percent()==90;
+    zoomFit->click();                                     // Zoomed: the same toggle fits again.
+    check(fittedAtFirst && actual && larger && smaller && zoomView->fitted() && zoomFit->toolTip().contains(QStringLiteral("1:1")),
+          "image block zooms in ten-point steps, shows the percentage and toggles between fit and one-to-one");
+    check(dialog->findChild<QLabel *>(QStringLiteral("ocrCharacterCount"))->text()==QString::number(text->toPlainText().toUcs4().size()),
+          "the text block counts the characters it holds");
+    const int textBottom=text->mapTo(dialog,QPoint()).y()+text->height();
     check(retry->text().isEmpty() && copy->text().isEmpty() && !retry->icon().isNull() && !copy->icon().isNull()
-              && retry->mapTo(dialog,QPoint()).x()+retry->width()<=copy->mapTo(dialog,QPoint()).x()
-              && retry->mapTo(dialog,QPoint()).y()<text->mapTo(dialog,QPoint()).y()
+              && copy->mapTo(dialog,QPoint()).x()+copy->width()<=retry->mapTo(dialog,QPoint()).x()
+              && retry->mapTo(dialog,QPoint()).y()>=textBottom && copy->mapTo(dialog,QPoint()).y()>=textBottom
               && back->mapTo(dialog,QPoint()).x()<text->mapTo(dialog,QPoint()).x()
-              && status->alignment().testFlag(Qt::AlignRight) && status->mapTo(dialog,QPoint()).y()>text->mapTo(dialog,QPoint()).y()
+              && status->alignment().testFlag(Qt::AlignRight) && status->mapTo(dialog,QPoint()).y()>=textBottom
               && QRegularExpression(QStringLiteral("^\\d+\\.\\d{2}秒 · 平均置信度\\d+%$")).match(status->text()).hasMatch(),
-          "compact pane actions and bottom-right timing replace redundant headings and result metadata");
+          "text actions and bottom-right timing run along the bottom edge of the text block");
     if (!previewPath.isEmpty()) check(dialog->grab().save(previewPath+QStringLiteral("-comparison.png")),"save comparison window preview");
-    check(text->font().pointSizeF()>=12 && dialog->font().pointSizeF()>=10.5 && copy->size()==QSize(40,40)
-              && retry->size()==copy->size(),
-          "OCR uses readable point-sized system fonts and consistent forty-pixel action targets");
+    check(text->font().pointSizeF()>=12 && dialog->font().pointSizeF()>=10.5 && copy->size()==QSize(28,28)
+              && retry->size()==copy->size() && copy->iconSize()==QSize(16,16),
+          "OCR uses readable point-sized system fonts and consistent 16px glyphs on 28px action targets");
     const auto contrast = [](const QColor &a,const QColor &b) {
         const auto luminance = [](const QColor &color) {
             const auto linear=[](double value) { return value<=0.04045 ? value/12.92 : std::pow((value+0.055)/1.055,2.4); };
@@ -272,10 +289,11 @@ int CaptureOverlay::testOcr(const QString &previewPath)
           "OCR text, metadata, accent buttons, control outlines and focus cues meet their contrast budgets");
     const QList<QWidget *> tabOrder{dialog->findChild<QToolButton *>(QStringLiteral("ocrPin")),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrMinimize")),dialog->findChild<QToolButton *>(QStringLiteral("ocrMaximize")),
-        dialog->findChild<QToolButton *>(QStringLiteral("ocrClose")),back,dialog->findChild<QToolButton *>(QStringLiteral("ocrFit")),
-        dialog->findChild<QGraphicsView *>(),dialog->findChild<QToolButton *>(QStringLiteral("ocrLayout")),
-        dialog->findChild<QToolButton *>(QStringLiteral("ocrFormat")),dialog->findChild<QToolButton *>(QStringLiteral("ocrSearch")),
-        retry,copy,text};
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrClose")),dialog->findChild<QGraphicsView *>(),back,
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrCopyImage")),dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomIn")),
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomOut")),dialog->findChild<QToolButton *>(QStringLiteral("ocrFit")),
+        text,copy,dialog->findChild<QToolButton *>(QStringLiteral("ocrLayout")),
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrFormat")),dialog->findChild<QToolButton *>(QStringLiteral("ocrSearch")),retry};
     tabOrder.first()->setFocus();
     for (int i=1;i<tabOrder.size();++i) {
         QKeyEvent tab(QEvent::KeyPress,Qt::Key_Tab,Qt::NoModifier);
@@ -290,9 +308,14 @@ int CaptureOverlay::testOcr(const QString &previewPath)
         return dialog->rect().contains(QRect(panel->mapTo(dialog,QPoint()),panel->size()))
             && panelRect.contains(QRect(retry->mapTo(panel,QPoint()),retry->size()))
             && panelRect.contains(QRect(copy->mapTo(panel,QPoint()),copy->size()))
-            && retry->mapTo(dialog,QPoint()).x()+retry->width()<=copy->mapTo(dialog,QPoint()).x()
+            && copy->mapTo(dialog,QPoint()).x()+copy->width()<=retry->mapTo(dialog,QPoint()).x()
             && text->height()>100 && back->width()>=back->sizeHint().width();
     };
+    if (dialog->size()!=dialog->minimumSize() || !controlsFit())
+        std::fprintf(stderr,"MIN: back=%d/%d dialog=%dx%d min=%dx%d hint=%dx%d text-height=%d retry=(%d,%d) copy=(%d,%d)\n",
+            back->width(),back->sizeHint().width(),dialog->width(),dialog->height(),dialog->minimumWidth(),dialog->minimumHeight(),
+            dialog->minimumSizeHint().width(),dialog->minimumSizeHint().height(),text->height(),
+            retry->mapTo(dialog,QPoint()).x(),retry->mapTo(dialog,QPoint()).y(),copy->mapTo(dialog,QPoint()).x(),copy->mapTo(dialog,QPoint()).y());
     check(dialog->size()==dialog->minimumSize() && controlsFit(),"minimum OCR window retains both panes and every primary action without overlap");
     if (!previewPath.isEmpty()) check(dialog->grab().save(previewPath+QStringLiteral("-compact.png")),"save minimum-size OCR preview");
     QVector<QPair<QWidget *,QFont>> savedFonts;

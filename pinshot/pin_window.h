@@ -75,6 +75,7 @@ private:
     QString selectedText() const;
     void toggleToolbar(bool enabled);
     void updateToolbarPosition();
+    void openTranslate();   // The card takes the pin's place; the pin returns when it closes.
     // Reopens the pinned pixels inside the pin itself: the shared annotation
     // engine runs as a child canvas; tool is a CaptureOverlay::ATool value.
     void armPinTool(int tool);

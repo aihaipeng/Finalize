@@ -39,5 +39,27 @@
         <file>icons8-underline.svg</file>
         <file>icons8-strikethrough.svg</file>
         <file>check.svg</file>
+        <file>icons8-data-transfer.svg</file>
+        <file>card-view.svg</file>
+        <file>card-fit.svg</file>
+        <file>card-split.svg</file>
+        <file>card-translate.svg</file>
+        <file>card-reload.svg</file>
+        <file>card-copy.svg</file>
+        <file>card-columns.svg</file>
+        <file>card-back.svg</file>
+        <file>card-zoom-in.svg</file>
+        <file>card-zoom-out.svg</file>
+        <file>card-actual.svg</file>
+        <file>card-pin.svg</file>
+        <file>card-minimize.svg</file>
+        <file>card-maximize.svg</file>
+        <file>card-restore.svg</file>
+        <file>card-close.svg</file>
+        <file>card-search.svg</file>
+        <file>card-up.svg</file>
+        <file>card-down.svg</file>
+        <file>card-right.svg</file>
+        <file>card-format.svg</file>
     </qresource>
 </RCC>

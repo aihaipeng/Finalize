@@ -30,12 +30,15 @@ const QString lightSliderQss = QStringLiteral(
     "QSlider::handle:horizontal:hover{background:#2080f0;width:7px;margin:-4px 0px -4px 0px;border:1px solid #2080f0;}"
     "QSlider::sub-page:horizontal{border-radius:1px;background:#2080f0;margin:3px 0px 3px 0px;}");
 
-QIcon makeIcon(Icon icon, int size)
+namespace {
+struct IconVariant { QColor color; QIcon::State state; QList<QIcon::Mode> modes; };
+
+QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVariant> variants)
 {
-    // Rendering one icon parses the SVG and rasterizes 12 variant pixmaps;
-    // toolbars ask for the same set on every build, so cache by icon and size.
+    // Rendering one icon parses the SVG and rasterizes up to 12 variant pixmaps;
+    // toolbars ask for the same set on every build, so cache by icon, size and style.
     static QHash<qint64, QIcon> cache;
-    const qint64 key = qint64(icon) * 1000 + size;
+    const qint64 key = (qint64(icon) * 1000 + size) * 4 + style;
     const auto cached = cache.constFind(key);
     if (cached != cache.constEnd()) return *cached;
     static const char *const names[] = {
@@ -43,16 +46,12 @@ QIcon makeIcon(Icon icon, int size)
         "text", "number", "mosaic", "eraser", "undo", "redo", "bold", "italic", "minimize", "maximize",
         "restore", "refresh", "fill", "dashed", "icons8-line-width", "marker_rect", "fit_view", "search",
         "text_format", "split_columns", "split_rows", "chevron_up", "chevron_down", "chevron_right",
-        "icons8-wavy-line", "icons8-underline", "icons8-strikethrough", "check"};
+        "icons8-wavy-line", "icons8-underline", "icons8-strikethrough", "check", "icons8-data-transfer", "card-view",
+        "card-fit", "card-split", "card-translate", "card-reload", "card-copy", "card-columns", "card-back",
+        "card-zoom-in", "card-zoom-out", "card-actual", "card-pin", "card-minimize", "card-maximize",
+        "card-restore", "card-close", "card-search", "card-up", "card-down", "card-right", "card-format"};
     QSvgRenderer svg(QStringLiteral(":/icons/%1.svg").arg(QLatin1String(names[int(icon)])));
     QIcon result;
-    // Light bar language: dark glyphs, grey when disabled, white on the checked theme fill.
-    const struct { QColor color; QIcon::State state; QList<QIcon::Mode> modes; } variants[] = {
-        {QColor(0x32, 0x32, 0x32), QIcon::Off, {QIcon::Normal, QIcon::Active, QIcon::Selected}},
-        {QColor(0x7b, 0x7b, 0x7b), QIcon::Off, {QIcon::Disabled}},
-        {QColor(0x7b, 0x7b, 0x7b), QIcon::On, {QIcon::Disabled}},
-        {QColor(Qt::white), QIcon::On, {QIcon::Normal, QIcon::Active, QIcon::Selected}},
-    };
     for (const auto &variant : variants)
     for (int px : {size, size * 3 / 2, size * 2}) {   // 1x / 1.5x / 2x variants of one logical size.
         QPixmap pm(px, px);
@@ -67,6 +66,33 @@ QIcon makeIcon(Icon icon, int size)
     }
     cache.insert(key, result);
     return result;
+}
+}
+
+QIcon makeIcon(Icon icon, int size, bool dark)
+{
+    // Light bar language: dark glyphs, grey when disabled, white on the checked theme fill.
+    const QColor ink = dark ? QColor(0xe3, 0xe3, 0xe3) : QColor(0x32, 0x32, 0x32);
+    const QColor off = dark ? QColor(0x66, 0x66, 0x66) : QColor(0x7b, 0x7b, 0x7b);
+    return renderIcon(icon, size, dark, {
+        {ink, QIcon::Off, {QIcon::Normal, QIcon::Active, QIcon::Selected}},
+        {off, QIcon::Off, {QIcon::Disabled}},
+        {off, QIcon::On, {QIcon::Disabled}},
+        {QColor(Qt::white), QIcon::On, {QIcon::Normal, QIcon::Active, QIcon::Selected}},
+    });
+}
+
+QIcon cardIcon(Icon icon, int size)
+{
+    // Card palette: muted zinc ink, accent blue on hover and when checked.
+    const QColor muted(0xa1, 0xa1, 0xaa), accent(0x04, 0x85, 0xf7), off(0x52, 0x52, 0x5b);
+    return renderIcon(icon, size, 2, {
+        {muted, QIcon::Off, {QIcon::Normal, QIcon::Selected}},
+        {accent, QIcon::Off, {QIcon::Active}},
+        {off, QIcon::Off, {QIcon::Disabled}},
+        {off, QIcon::On, {QIcon::Disabled}},
+        {accent, QIcon::On, {QIcon::Normal, QIcon::Active, QIcon::Selected}},
+    });
 }
 
 QToolButton *iconButton(Icon icon, const QString &tip)
