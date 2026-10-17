@@ -36,6 +36,8 @@ int main(int argc, char **argv)
         app.installTranslator(&qtTranslator);
     if (app.arguments().contains(QStringLiteral("--test-ocr-lifetime")))
         return OcrDialog::testLifetime();
+    if (app.arguments().contains(QStringLiteral("--test-translate")))
+        return OcrDialog::testTranslate();
     if (app.arguments().contains(QStringLiteral("--test-ocr-languages")))
         return OcrEngine::testLanguages(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-ocr-languages"))+1));
     if (app.arguments().contains(QStringLiteral("--test-ocr")))

@@ -255,6 +255,7 @@ private:
     QPixmap cropped() const;
 private slots:
     void ocrCapture();
+    void translateCapture();
     void saveCapture();
     bool saveCaptureTo(const QString &path);
     void copyCapture();
@@ -262,6 +263,7 @@ private slots:
     void pinCapture();
     void longCapture();
 private:
+    void openTextCard(bool translate);
     enum Mode { Selecting, Adjusting };
     QPixmap m_shot;
     QPointer<OcrDialog> m_ocrDialog;
