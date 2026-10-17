@@ -237,9 +237,7 @@ int CaptureOverlay::testSelectionBorders()
         const QImage output = overlay.cropped().toImage();
         overlay.m_selAnn = 0;
         const QImage active = render();
-        const bool editable = tool == ATool::Text || tool == ATool::Mosaic;
-        check(editable ? active != plain : active == plain,
-              "only directly editable text and mosaic show controls while a drawing tool is active");
+        check(active != plain, "the selected item keeps its controls while its drawing tool stays armed");
         if (previews) active.save(prefix + QString::number(t) + QStringLiteral("-drawing.png"));
         overlay.m_atool = ATool::None;
         const QImage selected = render();

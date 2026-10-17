@@ -17,6 +17,7 @@
 #include <QtMath>
 #include <QThread>
 #include <QElapsedTimer>
+#include <QMutex>
 #include <QFileInfo>
 #include <QDir>
 #include <QPolygonF>
@@ -118,6 +119,9 @@ QSize OcrEngine::detectionSize(const QSize &source) {
 }
 
 OcrResult OcrEngine::recognize(QImage image, const OcrCancel &cancel) {
+    // Pins recognize in the background as soon as they open; lazy load/reset is not reentrant.
+    static QMutex serial;
+    const QMutexLocker lock(&serial);
     OcrResult result;
     QElapsedTimer timer;
     timer.start();

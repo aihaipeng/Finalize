@@ -16,6 +16,7 @@
 #include <QKeyEvent>
 #include <QtMath>
 #include <QToolButton>
+#include <QHash>
 #include <QStylePainter>
 #include <QStyleOptionComboBox>
 #include <QFrame>
@@ -31,12 +32,18 @@ const QString lightSliderQss = QStringLiteral(
 
 QIcon makeIcon(Icon icon, int size)
 {
+    // Rendering one icon parses the SVG and rasterizes 12 variant pixmaps;
+    // toolbars ask for the same set on every build, so cache by icon and size.
+    static QHash<qint64, QIcon> cache;
+    const qint64 key = qint64(icon) * 1000 + size;
+    const auto cached = cache.constFind(key);
+    if (cached != cache.constEnd()) return *cached;
     static const char *const names[] = {
         "save", "copy", "pin", "long_shot", "icons8-ocr", "cancel", "rect", "ellipse", "arrow", "pen", "marker",
         "text", "number", "mosaic", "eraser", "undo", "redo", "bold", "italic", "minimize", "maximize",
         "restore", "refresh", "fill", "dashed", "icons8-line-width", "marker_rect", "fit_view", "search",
         "text_format", "split_columns", "split_rows", "chevron_up", "chevron_down", "chevron_right",
-        "icons8-wavy-line", "icons8-underline", "icons8-strikethrough"};
+        "icons8-wavy-line", "icons8-underline", "icons8-strikethrough", "check"};
     QSvgRenderer svg(QStringLiteral(":/icons/%1.svg").arg(QLatin1String(names[int(icon)])));
     QIcon result;
     // Light bar language: dark glyphs, grey when disabled, white on the checked theme fill.
@@ -58,6 +65,7 @@ QIcon makeIcon(Icon icon, int size)
         p.end();
         for (QIcon::Mode mode : variant.modes) result.addPixmap(pm, mode, variant.state);
     }
+    cache.insert(key, result);
     return result;
 }
 

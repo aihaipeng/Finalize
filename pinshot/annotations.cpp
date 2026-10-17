@@ -338,10 +338,10 @@ bool CaptureOverlay::annotationHit(const Annotation &ann, const QPoint &pos)
 
 int CaptureOverlay::annotationAt(const QPoint &pos) const        // Topmost annotation first.
 {
-    for (int i = m_anns.size() - 1; i >= 0; --i)
-        // Erasures are finished once deselected: clicks never pick them up again.
-        if (!m_anns[i].mosaicBrush && m_anns[i].tool != ATool::Eraser
-            && annotationHit(m_anns[i], mapToLocal(m_anns[i], pos))) return i;
+    // Deselecting locks an item into the image: only the still-selected one can be picked.
+    const int i = m_selAnn;
+    if (i >= 0 && i < m_anns.size() && !m_anns[i].mosaicBrush && m_anns[i].tool != ATool::Eraser
+        && annotationHit(m_anns[i], mapToLocal(m_anns[i], pos))) return i;
     return -1;
 }
 
@@ -549,6 +549,7 @@ void CaptureOverlay::syncUndoButtons()                           // Buttons foll
 {
     if (m_undoButton) m_undoButton->setEnabled(!m_undoStack.isEmpty());
     if (m_redoButton) m_redoButton->setEnabled(!m_redoStack.isEmpty());
+    if (m_embedded) emit undoAvailability(!m_undoStack.isEmpty(), !m_redoStack.isEmpty());
 }
 
 void CaptureOverlay::normalizeNumbers()                          // Sequence numbers follow list order.
@@ -725,6 +726,14 @@ bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
     if ((obj == m_tools || obj == m_toolOptions)
         && (ev->type() == QEvent::Enter || ev->type() == QEvent::Leave))
         updateInspector();
+    if (m_embedded && obj == m_toolOptions && ev->type() == QEvent::KeyPress) {
+        // The detached strip is its own window: keys its controls leave
+        // unhandled belong to the canvas, which takes focus back.
+        window()->activateWindow();
+        setFocus(Qt::OtherFocusReason);
+        keyPressEvent(static_cast<QKeyEvent *>(ev));
+        return true;
+    }
     if ((obj == m_mosaicSlider || obj == m_mosaicStrengthLabel || obj == m_mosaicPreview)
         && ev->type() == QEvent::Wheel) {
         const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
@@ -1645,6 +1654,7 @@ void CaptureOverlay::updateToolOptions()
     const ATool tool = optionsTool();
     if (tool == ATool::None) {
         m_toolOptions->hide();
+        if (m_embedded) { emit stripRebuilt(); return; }
         update(old);
         return;
     }
@@ -1989,6 +1999,12 @@ void CaptureOverlay::updateToolOptions()
     }
     for (int i = 0; i < lay->count(); ++i) lay->itemAt(i)->widget()->show();
     m_toolOptions->show();
+    if (m_embedded) {                             // Detached strip: the pin repositions it.
+        m_toolOptions->adjustSize();
+        m_toolOptions->raise();
+        emit stripRebuilt();
+        return;
+    }
     placeToolbar();
     m_toolOptions->raise();
     update(old.united(m_toolOptions->geometry()).adjusted(-1, -1, 1, 1));

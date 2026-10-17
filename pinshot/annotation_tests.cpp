@@ -318,8 +318,8 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
         const QRect rectanglePreview = annotationRect(overlay.m_anns.first()).adjusted(-30, -30, 30, 30);
         const QImage selectedRectangle = overlay.grab(rectanglePreview).toImage();
         overlay.m_selAnn = -1;
-        check(overlay.grab(rectanglePreview).toImage() == selectedRectangle,
-              "brush mode hides rectangle controls that cannot be operated in that mode");
+        check(overlay.grab(rectanglePreview).toImage() != selectedRectangle,
+              "a selected rectangle mosaic keeps its controls with the brush armed");
         overlay.m_atool = ATool::None;
         overlay.m_selAnn = 0;
         const QImage editingRectangle = overlay.grab(rectanglePreview).toImage();
@@ -477,8 +477,8 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
         check(overlay.m_anns[1].rect == lockedRect, "an unselected mosaic no longer follows mouse movement");
         mouse(QEvent::MouseButtonPress, lockedRect.center() - origin);
         mouse(QEvent::MouseButtonRelease, lockedRect.center() - origin);
-        check(overlay.m_selAnn == 1 && overlay.m_anns.size() == countBeforeMove,
-              "clicking the region again restores its editable border without adding a mosaic");
+        check(overlay.m_selAnn == -1 && overlay.m_anns[1].rect == lockedRect && overlay.m_anns.size() == countBeforeMove,
+              "a deselected region is locked: clicking it again does not reopen or move it");
         if (!previewPath.isEmpty()) {
             check(overlay.cropped().save(previewPath + QString(".%1.png").arg(dpr)), "save mosaic pixel preview");
             if (dpr == 1)

@@ -48,8 +48,27 @@ class CaptureOverlay : public QWidget
 public:
     explicit CaptureOverlay(const QVector<ScreenFrame> &frames,
                             const WindowTargets &nativeWindows = {},
-                            const DetectionOptions &options = DetectionOptions(), bool liveDetection = false);
+                            const DetectionOptions &options = DetectionOptions(), bool liveDetection = false,
+                            bool pinEdit = false, QWidget *embedParent = nullptr);
     ~CaptureOverlay() override;
+    // Instant annotation tools, shared with callers that reopen existing
+    // pixels (pin edit) in this overlay.
+    enum class ATool { None, Rect, Ellipse, Arrow, Pen, Marker, Text, Number, Mosaic, Eraser };
+    // Embedded mode: the same annotation engine as a child canvas inside a pin
+    // window. The pin toolbar arms tools; the option strip detaches as a small
+    // top-level bar the pin positions below its own toolbar.
+    void armTool(ATool tool);                 // Arm / disarm and rebuild the strip.
+    ATool armedTool() const { return m_atool; }
+    QPixmap composited() const;               // Pin pixels with annotations painted in.
+    void setImage(const QImage &image);       // Refresh canvas pixels after a bake.
+    void clearAll();                          // Drop annotations and history after a bake.
+    bool hasAnnotations() const { return !m_anns.isEmpty() || editorActive(); }
+    QWidget *optionsStrip() const { return m_toolOptions; }
+    void undoAnnotation();
+    void redoAnnotation();
+    // Enters the overlay with an already committed selection (used for
+    // re-annotating an existing image) and optionally arms a drawing tool.
+    void presetSelection(const QRect &localSel, ATool tool = ATool::None);
     static int testOcr(const QString &previewPath);
     static int testSelection();
     static int testColorPicker(const QString &previewPath);
@@ -60,6 +79,8 @@ public:
 signals:
     void grabbed(const QPixmap &pix, const QRect &globalRegion);
     void longRequested(const QRect &globalRegion);
+    void undoAvailability(bool canUndo, bool canRedo);   // Embedded pin toolbar buttons.
+    void stripRebuilt();                                 // Strip contents changed; reposition it.
 protected:
     void paintEvent(QPaintEvent *) override;
     void mousePressEvent(QMouseEvent *e) override;
@@ -70,11 +91,12 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent *e) override;
     void keyPressEvent(QKeyEvent *e) override;
     void keyReleaseEvent(QKeyEvent *e) override;
+    void contextMenuEvent(QContextMenuEvent *e) override;
 private:
+    bool m_eatContextMenu = false;                   // The right press already acted (finish/deselect).
     enum Handle { H_None = 0, H_New, H_Move, H_TL, H_TR, H_BL, H_BR, H_L, H_R, H_T, H_B, H_Rotate };
 
     // ---------- instant annotation ----------
-    enum class ATool { None, Rect, Ellipse, Arrow, Pen, Marker, Text, Number, Mosaic, Eraser };
     struct Annotation {
         ATool tool = ATool::None;
         QColor color;
@@ -233,8 +255,6 @@ private:
     QPixmap cropped() const;
 private slots:
     void ocrCapture();
-    void undoAnnotation();
-    void redoAnnotation();
     void saveCapture();
     bool saveCaptureTo(const QString &path);
     void copyCapture();
@@ -281,6 +301,9 @@ private:
     QVector<Annotation> m_anns;
     Annotation m_ann;                                // Annotation under construction.
     bool m_live = false;
+    bool m_pinEdit = false;                            // Re-annotating a pin: canvas fixed, no capture chrome.
+    bool m_embedded = false;                           // Child canvas inside a pin window, no session at all.
+    bool m_fwdDrag = false;                            // Embedded: this drag moves the pin window.
     int m_selAnn = -1;                               // Annotation selected for editing.
     Annotation m_pressAnn;                           // Snapshot for move/resize drags.
     Handle m_itemDrag = H_None;

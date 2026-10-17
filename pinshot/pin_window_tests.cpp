@@ -14,6 +14,7 @@
 #include <QSize>
 #include <QApplication>
 #include <QMouseEvent>
+#include <QWindow>
 #include <QWheelEvent>
 #include <QSlider>
 #include <QClipboard>
@@ -24,6 +25,7 @@
 #include <QGuiApplication>
 #include <QScreen>
 #include <QSizePolicy>
+#include <QDeadlineTimer>
 #include <QtMath>
 #include <qt_windows.h>
 #include <cstdio>
@@ -75,15 +77,15 @@ int PinWindow::testPlacement()
     pixels.fill(Qt::green);
     PinWindow pin(pixels, source);
     pin.setAttribute(Qt::WA_DeleteOnClose, false);
-    check(pin.geometry() == source && pin.m_pix.size() == pixels.size()
+    check(pin.imageGeometry() == source && pin.m_pix.size() == pixels.size()
               && qAbs(pin.m_scale - 2.0 / 3.0) < 0.000001,
           "ordinary pins keep the source geometry and original pixels without automatic fitting");
     const QPoint anchor = source.center();
     QWheelEvent wheel(QPointF(anchor - source.topLeft()), QPointF(anchor), QPoint(), QPoint(0, 120),
                       Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
     QApplication::sendEvent(&pin, &wheel);
-    check(pin.size() == QSize(660, 440)
-              && qAbs(double(anchor.x() - pin.x()) / pin.width()
+    check(pin.imageRect().size() == QSize(660, 440)
+              && qAbs(double(anchor.x() - pin.imageGeometry().x()) / pin.imageGeometry().width()
                        - double(anchor.x() - source.x()) / source.width()) < 0.003,
           "wheel zoom starts from the displayed DPI scale and retains the cursor anchor");
     pin.close();
@@ -91,15 +93,15 @@ int PinWindow::testPlacement()
     longPixels.fill(Qt::green);
     PinWindow longPin(longPixels, fittedGeometry(longPixels.size(), source, available));
     longPin.setAttribute(Qt::WA_DeleteOnClose, false);
-    const QSize fitted = longPin.size();
+    const QSize fitted = longPin.imageRect().size();
     const QPoint longAnchor = longPin.geometry().center();
     QWheelEvent shrink(QPointF(longAnchor - longPin.pos()), QPointF(longAnchor), QPoint(), QPoint(0, -120),
                        Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
     QApplication::sendEvent(&longPin, &shrink);
-    check(longPin.width() < fitted.width() && longPin.height() < fitted.height(),
+    check(longPin.imageRect().width() < fitted.width() && longPin.imageRect().height() < fitted.height(),
           "shrinking a long pin below five percent never enlarges it");
     for (int i = 0; i < 100; ++i) QApplication::sendEvent(&longPin, &shrink);
-    check(longPin.width() >= 1 && longPin.height() >= 1,
+    check(longPin.imageRect().width() >= 1 && longPin.imageRect().height() >= 1,
           "very small pins retain nonzero dimensions");
     QWheelEvent horizontal(QPointF(), QPointF(longPin.pos()), QPoint(), QPoint(120, 0),
                            Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
@@ -122,13 +124,15 @@ int PinWindow::testPlacement()
     // Verify menu items structure
     check(actions.at(0)->text() == QStringLiteral("文本可选择") && actions.at(0)->isCheckable(),
           "first action is checkable text selection");
-    actions.at(0)->trigger(); // Toggle on text selection
-    check(longPin.m_textSelectable, "toggling text selection enables selectable mode");
+    check(actions.at(0)->isChecked() && longPin.m_textSelectable,
+          "new pins start with text selection on");
     check(longPin.cursor().shape() == Qt::ArrowCursor,
           "text selection mode keeps the native cursor until the pointer is over text");
     actions.at(0)->trigger(); // Toggle off
     check(!longPin.m_textSelectable && longPin.cursor().shape() == Qt::SizeAllCursor,
           "disabling text selection restores SizeAllCursor");
+    actions.at(0)->trigger(); // Toggle back on
+    check(longPin.m_textSelectable, "toggling text selection re-enables selectable mode");
 
     // Submenu: Image processing
     QMenu *sub = actions.at(2)->menu();
@@ -136,13 +140,13 @@ int PinWindow::testPlacement()
     QList<QAction *> subActions = sub->actions();
     check(subActions.size() >= 8, "submenu has transform actions and sliders");
     // Trigger rotate right (90 deg)
-    const QSize origSize = longPin.size();
+    const QSize origSize = longPin.imageRect().size();
     subActions.at(1)->trigger(); // Rotate right
-    check(longPin.width() == origSize.height() && longPin.height() == origSize.width(),
+    check(longPin.imageRect().width() == origSize.height() && longPin.imageRect().height() == origSize.width(),
           "rotating 90 degrees swaps width and height");
     // Trigger reset
     subActions.last()->trigger(); // Reset all processing
-    check(longPin.size() == origSize, "reset restores original size and orientation");
+    check(longPin.imageRect().size() == origSize, "reset restores original size and orientation");
 
     // Opacity/brightness open aligned flyout sub-columns on hover
     QMenu *opacityMenu = nullptr;
@@ -215,14 +219,63 @@ int PinWindow::testPlacement()
         check(osliders.first()->value() > osliders.first()->minimum()
                   && osliders.first()->value() <= 100, "wheel up keeps opacity inside its range");
     }
-    // Verify shadow toggle
-    QAction *shadowAction = actions.last();
-    check(shadowAction->text() == QStringLiteral("窗口阴影") && shadowAction->isCheckable(),
+    check(actions.last()->text() == QStringLiteral("窗口阴影") && actions.last()->isCheckable(),
           "shadow action is checkable");
+    {   // The shadow is painted into a transparent band around the image, never a system shadow.
+        const int m = PinWindow::kShadowMargin;
+        QPixmap gray(320, 200);
+        gray.fill(Qt::gray);
+        PinWindow shadowPin(gray, QRect(400, 300, 320, 200));
+        shadowPin.setAttribute(Qt::WA_DeleteOnClose, false);
+        QMenu *shadowMenu = shadowPin.createContextMenu();
+        QAction *shadowAction = shadowMenu->actions().last();
+        check(shadowAction->text() == QStringLiteral("窗口阴影") && shadowAction->isChecked(),
+              "a new pin starts with its shadow on");
+        check(shadowPin.testAttribute(Qt::WA_TranslucentBackground)
+                  && shadowPin.geometry() == QRect(400, 300, 320, 200).marginsAdded(QMargins(m, m, m, m))
+                  && !(GetClassLongPtrW(reinterpret_cast<HWND>(shadowPin.winId()), GCL_STYLE) & CS_DROPSHADOW),
+              "the pin window is the image plus a 12px painted shadow band");
+        const auto bandAlpha = [&](int d) {   // d px outside the left image edge, mid height.
+            const QImage shot = shadowPin.grab().toImage();
+            const qreal dpr = shot.devicePixelRatio();
+            return qAlpha(shot.pixel(int((m - d + 0.5) * dpr), int(shadowPin.height() / 2.0 * dpr)));
+        };
+        const QRect g = shadowPin.geometry();
+        const HWND hwndBefore = reinterpret_cast<HWND>(shadowPin.winId());
+        const QString shotPrefix = qEnvironmentVariable("PIN_SHADOW_SHOT");
+        const auto screenShot = [&](const QString &tag) {   // The composited desktop, as a user sees it.
+            if (shotPrefix.isEmpty()) return;
+            const QDeadlineTimer settle(400);
+            while (!settle.hasExpired()) QApplication::processEvents(QEventLoop::AllEvents, 20);
+            shadowPin.screen()->grabWindow(0, g.x() - 8, g.y() - 8, g.width() + 16, g.height() + 16)
+                .save(shotPrefix + tag + QStringLiteral(".png"));
+        };
+        screenShot(QStringLiteral("-inactive"));
+        if (!shotPrefix.isEmpty()) {
+            shadowPin.activateWindow();
+            screenShot(QStringLiteral("-active"));
+        }
+        check(bandAlpha(1) > 80 && bandAlpha(1) < 255 && bandAlpha(4) > 0 && bandAlpha(4) < bandAlpha(1)
+                  && bandAlpha(12) <= 2,
+              "the shadow fades out across the band");
+        shadowAction->trigger();
+        QApplication::processEvents();
+        check(!shadowPin.m_shadowOn && bandAlpha(1) == 0 && shadowPin.isVisible() && shadowPin.geometry() == g
+                  && reinterpret_cast<HWND>(shadowPin.winId()) == hwndBefore,
+              "turning the shadow off clears the band by repainting; the pin is not moved or re-shown");
+        screenShot(QStringLiteral("-off"));
+        shadowAction->trigger();
+        QApplication::processEvents();
+        check(shadowPin.m_shadowOn && bandAlpha(1) > 80 && shadowPin.geometry() == g,
+              "turning the shadow back on paints it again");
+        delete shadowMenu;
+        shadowPin.close();
+    }
     // Verify text box hit test and selection
     longPin.m_textSelectable = true;
-    const double sx = double(longPin.m_pix.width()) / longPin.width();
-    const double sy = double(longPin.m_pix.height()) / longPin.height();
+    const double sx = double(longPin.m_pix.width()) / longPin.imageRect().width();
+    const double sy = double(longPin.m_pix.height()) / longPin.imageRect().height();
+    const QPoint io = longPin.imageRect().topLeft();   // Event positions are window coordinates.
     PinWindow::CharBox cb1;
     cb1.ch = QLatin1Char('A');
     cb1.rect = QRectF(0, 0, 50 * sx, 50 * sy);
@@ -232,16 +285,16 @@ int PinWindow::testPlacement()
     cb2.rect = QRectF(50 * sx, 0, 50 * sx, 50 * sy);
     cb2.lineIdx = 0;
     longPin.m_charBoxes = {cb1, cb2};
-    check(longPin.charIndexAt(QPoint(10, 10)) == 0, "first char hit test matches");
-    check(longPin.charIndexAt(QPoint(60, 10)) == 1, "second char hit test matches");
-    check(longPin.charIndexAt(QPoint(500, 500)) == -1, "far outside point returns -1");
+    check(longPin.charIndexAt(io + QPoint(10, 10)) == 0, "first char hit test matches");
+    check(longPin.charIndexAt(io + QPoint(60, 10)) == 1, "second char hit test matches");
+    check(longPin.charIndexAt(io + QPoint(500, 500)) == -1, "far outside point returns -1");
     // Cursor gating: IBeam only over copyable text, native cursor elsewhere.
-    QMouseEvent hoverText(QEvent::MouseMove, QPoint(10, 10), longPin.mapToGlobal(QPoint(10, 10)),
+    QMouseEvent hoverText(QEvent::MouseMove, io + QPoint(10, 10), longPin.mapToGlobal(io + QPoint(10, 10)),
                           Qt::NoButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(&longPin, &hoverText);
     check(longPin.cursor().shape() == Qt::IBeamCursor,
           "hovering copyable text shows the I-beam cursor");
-    QMouseEvent hoverBlank(QEvent::MouseMove, QPoint(500, 500), longPin.mapToGlobal(QPoint(500, 500)),
+    QMouseEvent hoverBlank(QEvent::MouseMove, io + QPoint(500, 500), longPin.mapToGlobal(io + QPoint(500, 500)),
                            Qt::NoButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(&longPin, &hoverBlank);
     check(longPin.cursor().shape() == Qt::ArrowCursor,
@@ -282,11 +335,12 @@ int PinWindow::testPlacement()
           "releasing the selection opens the markup toolbar");
     QRectF sel;
     for (const PinWindow::CharBox &box : markPin.m_charBoxes) sel = sel.united(box.rect);
-    const double scaleY = double(markPin.height()) / markPin.m_ocrImgSize.height();
-    const int selTop = markPin.y() + qRound(sel.top() * scaleY);
-    const int selBottom = markPin.y() + qRound(sel.bottom() * scaleY);
+    const QRect mig = markPin.imageGeometry();
+    const double scaleY = double(mig.height()) / markPin.m_ocrImgSize.height();
+    const int selTop = mig.y() + qRound(sel.top() * scaleY);
+    const int selBottom = mig.y() + qRound(sel.bottom() * scaleY);
     const QRect bar = markPin.m_selToolbar->geometry();
-    check(!bar.intersects(QRect(markPin.x(), selTop, markPin.width(), selBottom - selTop))
+    check(!bar.intersects(QRect(mig.x(), selTop, mig.width(), selBottom - selTop))
               && (bar.top() >= selBottom || bar.bottom() <= selTop),
           "markup toolbar sits clear of the selection, below it or above it");
     const auto selButton = [&markPin](const QString &tip) -> QToolButton * {
@@ -389,7 +443,7 @@ int PinWindow::testPlacement()
     markPin.m_selLead = 1;
     markPin.drawTextDeco(PinWindow::DecoHighlight, QColor("#ff909c"));
     const QImage marked = markPin.grab().toImage();
-    const QColor hl = marked.pixelColor(120, 60);   // Inside the char boxes.
+    const QColor hl = marked.pixelColor(QPoint(120, 60) * marked.devicePixelRatio() + markPin.imageRect().topLeft() * marked.devicePixelRatio());   // Inside the char boxes.
     check(hl != Qt::white && hl != Qt::black,
           "the multiply highlight tints the marked line while text stays visible");
     // A "——" often comes back as its own OCR segment on the same visual row;
@@ -433,6 +487,199 @@ int PinWindow::testPlacement()
     check(!longPin.m_toolbarOn && !longPin.m_toolbar->isVisible(),
           "disabling toolbar hides floating toolbar widget");
 
+    // The pin toolbar carries the full annotation tool set; a tool arms an
+    // in-place canvas inside the pin: no session window, the pin and its
+    // toolbar stay as they are, and the option strip opens under the toolbar.
+    QPixmap flat(240, 160);
+    flat.fill(Qt::white);
+    PinWindow editPin(flat, QRect(200, 200, 240, 160));
+    editPin.setAttribute(Qt::WA_DeleteOnClose, false);
+    editPin.toggleToolbar(true);
+    const auto barButtons = editPin.m_toolbar->findChildren<QToolButton *>();
+    check(barButtons.size() == 14, "pin toolbar shows eight tools, undo/redo, three actions and done");
+    QToolButton *shapeBtn = nullptr;
+    for (QToolButton *b : barButtons)
+        if (b->toolTip() == QStringLiteral("形状：矩形/椭圆")) shapeBtn = b;
+    check(shapeBtn != nullptr && shapeBtn->isCheckable(), "the shape tool sits on the pin toolbar");
+    check(!editPin.m_undoBtn->isEnabled() && !editPin.m_redoBtn->isEnabled(),
+          "undo/redo start disabled");
+    const QRect pinBefore = editPin.imageGeometry();
+    const QRect barBefore = editPin.m_toolbar->geometry();
+    const int topLevelsBefore = QApplication::topLevelWidgets().size();
+    const QImage lookBefore = editPin.grab().toImage();
+    check(editPin.m_toolbar->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus),
+          "the pin toolbar never takes keyboard focus from the pin");
+    shapeBtn->click();
+    QApplication::processEvents();
+    check(editPin.grab().toImage() == lookBefore,
+          "arming a tool leaves every pin pixel unchanged, border included");
+    check(editPin.m_canvas && editPin.m_canvas->parentWidget() == &editPin && editPin.m_canvas->isVisible(),
+          "a tool click arms a child canvas inside the pin");
+    check(editPin.isVisible() && editPin.imageGeometry() == pinBefore
+              && editPin.m_toolbar->isVisible() && editPin.m_toolbar->geometry() == barBefore,
+          "the pin and its toolbar do not move, hide or change");
+    {
+        bool overlayWindow = false;
+        for (QWidget *w : QApplication::topLevelWidgets())
+            if (qobject_cast<CaptureOverlay *>(w) && w->isVisible()) overlayWindow = true;
+        check(!overlayWindow, "no capture session window opens");
+    }
+    QWidget *strip = editPin.m_canvas->optionsStrip();
+    check(strip && strip->isVisible() && strip->isWindow()
+              && strip->x() == editPin.m_toolbar->x()
+              && strip->y() >= editPin.m_toolbar->geometry().bottom(),
+          "the option strip opens left-aligned directly below the pin toolbar");
+    check(QApplication::topLevelWidgets().size() == topLevelsBefore + 1,
+          "the strip is the only new top-level widget");
+    check(shapeBtn->isChecked(), "the armed tool button shows as checked");
+
+    QWidget *canvas = editPin.m_canvas.data();
+    const auto canvasMouse = [canvas](QEvent::Type type, const QPoint &local) {
+        QMouseEvent event(type, QPointF(local), QPointF(canvas->mapToGlobal(local)),
+                          Qt::LeftButton, type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+                          Qt::NoModifier);
+        QApplication::sendEvent(canvas, &event);
+    };
+    canvasMouse(QEvent::MouseButtonPress, QPoint(30, 30));
+    canvasMouse(QEvent::MouseMove, QPoint(180, 120));
+    canvasMouse(QEvent::MouseButtonRelease, QPoint(180, 120));
+    QApplication::processEvents();
+    check(editPin.m_canvas->hasAnnotations() && editPin.m_undoBtn->isEnabled(),
+          "drawing on the pin creates a live annotation and enables undo");
+    check(editPin.imageGeometry() == pinBefore, "drawing does not move the pin");
+    {
+        const QImage shown = editPin.grab(editPin.imageRect()).toImage();
+        check(QColor(shown.pixel(105, 30)) != Qt::white && QColor(shown.pixel(10, 10)) == Qt::white,
+              "the rectangle shows on the pin in place");
+        const QImage out = editPin.annotatedPix().toImage();
+        check(QColor(out.pixel(105, 30)) != Qt::white, "copy/save/OCR pixels carry the marks");
+    }
+    {   // The fresh mark stays editable; a right click locks it in and opens no menu.
+        const QImage withHandles = editPin.grab(editPin.imageRect()).toImage();
+        const QPoint at(200, 140);
+        QMouseEvent rpress(QEvent::MouseButtonPress, QPointF(at), QPointF(canvas->mapToGlobal(at)),
+                           Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+        QApplication::sendEvent(canvas, &rpress);
+        QContextMenuEvent menuEvent(QContextMenuEvent::Mouse, at, canvas->mapToGlobal(at));
+        menuEvent.ignore();
+        QApplication::sendEvent(canvas, &menuEvent);
+        check(withHandles != editPin.grab(editPin.imageRect()).toImage() && menuEvent.isAccepted(),
+              "first right click hides the fresh mark's handles and opens no menu");
+        const QImage locked = editPin.grab(editPin.imageRect()).toImage();
+        shapeBtn->click();   // Disarm, then click the old mark: it stays part of the image.
+        QApplication::processEvents();
+        canvasMouse(QEvent::MouseButtonPress, QPoint(105, 30));
+        canvasMouse(QEvent::MouseButtonRelease, QPoint(105, 30));
+        check(editPin.grab(editPin.imageRect()).toImage() == locked, "a locked mark cannot be picked again");
+        struct MenuCatcher : QObject {   // Stands in for the pin's modal menu.
+            bool reached = false;
+            bool eventFilter(QObject *, QEvent *ev) override {
+                if (ev->type() != QEvent::ContextMenu) return false;
+                reached = true;
+                return true;
+            }
+        } catcher;
+        editPin.installEventFilter(&catcher);
+        QApplication::sendEvent(canvas, &rpress);
+        QContextMenuEvent menuEvent2(QContextMenuEvent::Mouse, at, canvas->mapToGlobal(at));
+        QApplication::sendEvent(canvas, &menuEvent2);
+        editPin.removeEventFilter(&catcher);
+        check(catcher.reached, "with nothing to finish the right click reaches the pin menu");
+        shapeBtn->click();
+        QApplication::processEvents();
+    }
+    editPin.m_undoBtn->click();
+    QApplication::processEvents();
+    check(!editPin.m_canvas->hasAnnotations() && editPin.m_redoBtn->isEnabled()
+              && QColor(editPin.grab(editPin.imageRect()).toImage().pixel(105, 30)) == Qt::white,
+          "pin undo removes the mark");
+    editPin.m_redoBtn->click();
+    QApplication::processEvents();
+    check(editPin.m_canvas->hasAnnotations() && QColor(editPin.grab(editPin.imageRect()).toImage().pixel(105, 30)) != Qt::white,
+          "pin redo restores the mark");
+
+    {   // Disarming with the cursor over the pin maps it through the child canvas, never a null window.
+        const QPoint restore = QCursor::pos();
+        QCursor::setPos(canvas->mapToGlobal(QPoint(60, 60)));
+        QApplication::processEvents();
+        shapeBtn->click();
+        QApplication::processEvents();
+        check(editPin.isVisible() && editPin.m_canvas->armedTool() == CaptureOverlay::ATool::None,
+              "disarming over the pin is safe");
+        QCursor::setPos(restore);
+        shapeBtn->click();
+        QApplication::processEvents();
+    }
+    QKeyEvent esc1(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    // First Esc, even from the detached strip: the bar and strip hide, the
+    // tool disarms, the pin and its marks stay.
+    QApplication::sendEvent(strip, &esc1);
+    QApplication::processEvents();
+    check(editPin.m_canvas->armedTool() == CaptureOverlay::ATool::None && !strip->isVisible()
+              && !editPin.m_toolbar->isVisible() && !shapeBtn->isChecked()
+              && editPin.m_canvas->hasAnnotations() && editPin.isVisible(),
+          "first Esc hides the toolbar and strip and disarms; marks stay on the pin");
+    editPin.toggleToolbar(true);
+    QApplication::processEvents();
+    QToolButton *doneBtn = nullptr;
+    for (QToolButton *b : editPin.m_toolbar->findChildren<QToolButton *>())
+        if (b->toolTip() == QStringLiteral("完成")) doneBtn = b;
+    check(doneBtn && editPin.m_toolbar->layout()->indexOf(doneBtn) == editPin.m_toolbar->layout()->count() - 1,
+          "the done button closes the pin toolbar row");
+    shapeBtn->click();
+    QApplication::processEvents();
+    doneBtn->click();
+    QApplication::processEvents();
+    check(!editPin.m_toolbar->isVisible() && !strip->isVisible()
+              && editPin.m_canvas->armedTool() == CaptureOverlay::ATool::None
+              && editPin.m_canvas->hasAnnotations() && editPin.isVisible(),
+          "done hides the toolbar and strip, disarms, keeps the pin and marks");
+    editPin.toggleToolbar(true);
+    QApplication::processEvents();
+    shapeBtn->click();
+    QApplication::processEvents();
+    shapeBtn->click();   // Reclicking the armed tool disarms it.
+    QApplication::processEvents();
+    check(!shapeBtn->isChecked() && !strip->isVisible(), "reclicking the armed tool closes the strip");
+
+    QWheelEvent zoom(QPointF(120, 80), QPointF(canvas->mapToGlobal(QPoint(120, 80))), QPoint(),
+                     QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(canvas, &zoom);   // Nothing armed: the wheel zooms the pin.
+    QApplication::processEvents();
+    check(editPin.imageRect().width() > pinBefore.width() && !editPin.m_canvas->hasAnnotations()
+              && editPin.m_canvas->geometry() == editPin.imageRect(),
+          "zoom bakes the marks and resizes the canvas with the pin");
+    {
+        const QImage baked = editPin.m_pix.toImage();
+        const int bx = qRound(105.0 * baked.width() / pinBefore.width());
+        const int by = qRound(30.0 * baked.height() / pinBefore.height());
+        check(QColor(baked.pixel(bx, by)) != Qt::white, "baked pixels keep the rectangle");
+    }
+    shapeBtn->click();
+    QApplication::processEvents();
+    {   // The enlarged pin accepts marks beyond its old size.
+        const QPoint a(canvas->width() - 30, canvas->height() - 30), b(canvas->width() - 6, canvas->height() - 6);
+        canvasMouse(QEvent::MouseButtonPress, a);
+        canvasMouse(QEvent::MouseMove, b);
+        canvasMouse(QEvent::MouseButtonRelease, b);
+        QApplication::processEvents();
+        check(editPin.m_canvas->hasAnnotations()
+                  && QColor(editPin.grab(editPin.imageRect()).toImage().pixel(a.x() + 12, a.y())) != Qt::white,
+              "after zoom the canvas clips marks to the whole pin, not its old size");
+    }
+    {   // Esc ladder end to end: bar first, then the pin.
+        QKeyEvent escA(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(canvas, &escA);
+        QApplication::processEvents();
+        check(editPin.isVisible() && !editPin.m_toolbar->isVisible(), "Esc with the bar open only hides the bar");
+        QKeyEvent escB(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(canvas, &escB);
+        QApplication::processEvents();
+        check(!editPin.isVisible(), "the next Esc closes the pin");
+    }
+    editPin.close();
+    QApplication::processEvents();
+
     delete menu;
     longPin.close();
 
@@ -460,8 +707,9 @@ int PinWindow::testPlacement()
         if (!textPin.m_charBoxes.isEmpty()) {
             const auto viewPos = [&textPin](int idx) {
                 const QRectF r = textPin.m_charBoxes.at(idx).rect;
-                return QPointF(r.center().x() * textPin.width() / textPin.m_ocrImgSize.width(),
-                               r.center().y() * textPin.height() / textPin.m_ocrImgSize.height()).toPoint();
+                return QPointF(r.center().x() * textPin.imageRect().width() / textPin.m_ocrImgSize.width(),
+                               r.center().y() * textPin.imageRect().height() / textPin.m_ocrImgSize.height()).toPoint()
+                       + textPin.imageRect().topLeft();
             };
             const int last = textPin.m_charBoxes.size() - 1;
             const QPoint p0 = viewPos(0), p1 = viewPos(last);
