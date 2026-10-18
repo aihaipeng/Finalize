@@ -7,6 +7,7 @@
 #include <QGuiApplication>
 #include <QApplication>
 #include <QImage>
+#include <QPainter>
 #include <QPixmap>
 #include <QPoint>
 #include <QRect>
@@ -186,6 +187,18 @@ int CaptureOverlay::testSmartErase(const QString &previewPath)
             mouse(QEvent::MouseButtonRelease, QPoint(250, 180));
             check(overlay.m_anns.size() == 1 && overlay.m_anns[0].mosaicSmart,
                   "a released rectangle commits a smart annotation");
+            {   // Until the fill arrives the extent shows as a marker-style wash in the current colour.
+                const QImage pending = overlay.cropped().toImage();
+                const QPoint c(qRound((200 - 40) * dpr), qRound((140 - 40) * dpr));
+                QColor wash = overlay.m_anns[0].color;
+                wash.setAlpha(110);
+                QImage expect = original.convertToFormat(QImage::Format_ARGB32);
+                QPainter(&expect).fillRect(QRect(c, QSize(1, 1)), wash);
+                const QRgb got = pending.pixel(c), want = expect.pixel(c);
+                check(overlay.m_anns[0].smartPending && qAbs(qRed(got) - qRed(want)) <= 2
+                          && qAbs(qGreen(got) - qGreen(want)) <= 2 && qAbs(qBlue(got) - qBlue(want)) <= 2,
+                      "a pending erase shows the translucent wash");
+            }
             auto settle = [&overlay, check] {
                 QElapsedTimer guard;
                 guard.start();

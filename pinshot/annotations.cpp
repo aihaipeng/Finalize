@@ -2511,8 +2511,10 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
             if (ann.smartPending || stale) {
                 if (!ann.smartPending && index >= 0)
                     const_cast<CaptureOverlay *>(this)->scheduleSmartErase(index, source);
-                // The area stays recognizable but dimmed until the offline model answers.
-                p.fillRect(area, QColor(0, 0, 0, 38));
+                // Marker-style wash shows the erase extent while drawing and until the fill is ready.
+                QColor wash = ann.color;
+                wash.setAlpha(110);
+                p.fillRect(area, wash);
                 break;
             }
             p.setRenderHint(QPainter::SmoothPixmapTransform, false);
