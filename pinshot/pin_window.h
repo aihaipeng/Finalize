@@ -38,6 +38,11 @@ public:
     static constexpr int kShadowMargin = 12;
     QRect imageRect() const { return rect().marginsRemoved(shadowMargins()); }
     QRect imageGeometry() const { return geometry().marginsRemoved(shadowMargins()); }
+    // Shows the pin toolbar with the annotation canvas armed, as if editing had just been chosen;
+    // canGoBack adds a back button before done that discards this pin.
+    void openEditor(bool canGoBack = false) { m_canGoBack = canGoBack; toggleToolbar(true); armPinTool(-1); }
+signals:
+    void editorLeft(bool back);   // Only for openEditor(true): back pressed, or done/Esc kept the pin.
 protected:
     void changeEvent(QEvent *e) override;
     void paintEvent(QPaintEvent *) override;
@@ -134,6 +139,8 @@ private:
     QToolButton *m_undoBtn = nullptr;   // Pin-side undo/redo, driven by the canvas stacks.
     QToolButton *m_redoBtn = nullptr;
     QPointer<CaptureOverlay> m_canvas;  // Embedded annotation canvas (in-place editing).
+    QToolButton *m_backBtn = nullptr;
+    bool m_canGoBack = false;
 };
 
 // Place a slider flyout fully outside its parent; shared with tests.

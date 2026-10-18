@@ -1,5 +1,7 @@
 #include "long_capture.h"
+#include "ocr_engine.h"
 #include <QGuiApplication>
+#include <QCoreApplication>
 #include <QImage>
 #include <QPixmap>
 #include <QVector>
@@ -11,6 +13,7 @@
 #include <QLabel>
 #include <QtMath>
 #include <QToolButton>
+#include <QComboBox>
 #include <QHBoxLayout>
 #include <QFileDialog>
 #include <QStandardPaths>
@@ -18,7 +21,103 @@
 #include <QEventLoop>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QCursor>
+#include <QPainter>
+#include <QLinearGradient>
+#include <QMouseEvent>
+#include <QMessageBox>
+#include <QToolTip>
+#include <QCheckBox>
+#include <QSettings>
+#include <QSignalBlocker>
+#include <QFutureWatcher>
+#include <QtConcurrent>
 #include <qt_windows.h>
+
+namespace {
+constexpr int kPreviewPad = 4, kPreviewGap = 15, kPreviewCross = 200, kPreviewTopMargin = 50;
+constexpr int kBorder = 3;                      // Selection outline, drawn outside the region.
+constexpr int kMaxGatedLength = 29001;          // Edit, OCR, pin and copy accept shorter images only.
+const QColor kMatchColor(0x95, 0xec, 0x69);
+
+QIcon rotatedIcon(const QIcon &icon, int size)
+{
+    QIcon out;
+    for (QIcon::Mode mode : {QIcon::Normal, QIcon::Disabled, QIcon::Active, QIcon::Selected})
+        for (QIcon::State state : {QIcon::Off, QIcon::On})
+            for (qreal scale : {1.0, 1.5, 2.0}) {
+                QPixmap pm = icon.pixmap(QSize(size, size), scale, mode, state).transformed(QTransform().rotate(-90));
+                pm.setDevicePixelRatio(scale);
+                out.addPixmap(pm, mode, state);
+            }
+    return out;
+}
+
+QScreen *screenFor(const QRect &region)
+{
+    QScreen *screen = QGuiApplication::screenAt(region.center());
+    return screen ? screen : QGuiApplication::primaryScreen();
+}
+}
+
+LongPreview::LongPreview()
+    : QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint
+                           | Qt::WindowTransparentForInput | Qt::WindowDoesNotAcceptFocus)
+{
+    setAttribute(Qt::WA_TranslucentBackground);
+    setAttribute(Qt::WA_ShowWithoutActivating);
+}
+
+void LongPreview::paintEvent(QPaintEvent *)
+{
+    if (image.isNull()) return;
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    QImage shown = image;
+    if (!atStart || !atEnd) {                    // Fades mark the ends that continue past the slice.
+        const QSize logical = (QSizeF(shown.size()) / shown.devicePixelRatio()).toSize();
+        const int fade = qMax(1, qRound((vertical ? logical.height() : logical.width()) * 0.2));
+        const QColor dark(0, 0, 0, 0xa0), clear(0, 0, 0, 0);
+        QPainter ip(&shown);
+        const auto band = [&](bool start) {
+            const int from = start ? 0 : qMax(0, (vertical ? logical.height() : logical.width()) - fade);
+            QLinearGradient g = vertical ? QLinearGradient(0, from, 0, from + fade) : QLinearGradient(from, 0, from + fade, 0);
+            g.setColorAt(0, start ? dark : clear);
+            g.setColorAt(1, start ? clear : dark);
+            ip.fillRect(vertical ? QRect(0, from, logical.width(), fade) : QRect(from, 0, fade, logical.height()), g);
+        };
+        if (!atStart) band(true);
+        if (!atEnd) band(false);
+    }
+    p.drawImage(imageRect, shown);
+    const QRect outline = imageRect.marginsAdded(QMargins(kPreviewPad / 2, kPreviewPad / 2, kPreviewPad / 2, kPreviewPad / 2));
+    QPen pen(Bar::accent, kPreviewPad, Qt::SolidLine, Qt::FlatCap, Qt::MiterJoin);
+    p.setPen(pen);
+    p.drawRect(outline);
+    // Chevrons point toward content beyond the slice.
+    const auto chevron = [&](bool start) {
+        const int along = vertical ? outline.width() : outline.height();
+        const int across = vertical ? outline.height() : outline.width();
+        const int half = qMax(4, qMin(10, along / 14)), depth = qMax(4, qMin(10, across / 18));
+        p.setPen(QPen(Qt::white, kPreviewPad, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        const QPoint c = outline.center();
+        if (vertical) {
+            const int tip = start ? outline.top() + depth : outline.bottom() - depth;
+            const int wing = start ? tip + depth : tip - depth;
+            p.drawPolyline(QPolygon{QPoint(c.x() - half, wing), QPoint(c.x(), tip), QPoint(c.x() + half, wing)});
+        } else {
+            const int tip = start ? outline.left() + depth : outline.right() - depth;
+            const int wing = start ? tip + depth : tip - depth;
+            p.drawPolyline(QPolygon{QPoint(wing, c.y() - half), QPoint(tip, c.y()), QPoint(wing, c.y() + half)});
+        }
+    };
+    if (!atStart) chevron(true);
+    if (!atEnd) chevron(false);
+    if (showFrame) {
+        p.setPen(QPen(kMatchColor, kPreviewPad, Qt::SolidLine, Qt::FlatCap, Qt::MiterJoin));
+        p.drawRect(frameRect.marginsAdded(QMargins(kPreviewPad / 2, kPreviewPad / 2, kPreviewPad / 2, kPreviewPad / 2)));
+    }
+}
 
 LongCapture::LongCapture(const QRect &globalRegion) : m_region(globalRegion) {}
 
@@ -28,6 +127,62 @@ void LongCapture::start()
     captureFrame();                             // Capture the initial frame immediately.
 }
 
+int LongCapture::autoScrollStep(int extent)
+{
+    return extent < 300 ? 25 : extent < 500 ? 35 : extent < 700 ? 45 : extent < 900 ? 55 : 65;
+}
+
+QVector<int> LongCapture::ocrCuts(const QImage &image, int limit)
+{
+    QVector<int> ends;
+    const int H = image.height(), W = image.width();
+    const auto uniform = [&](int y) {
+        const QRgb *row = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+        for (int x = 1; x < W; ++x)
+            if (row[x] != row[0]) return false;
+        return true;
+    };
+    int y = 0;
+    while (H - y > limit) {
+        int cut = y + limit;                    // Fall back to a hard split when no blank row is near the limit.
+        for (int r = y + limit - 1; r > y + limit * 2 / 3; --r)
+            if (uniform(r)) { cut = r + 1; break; }
+        ends.append(cut);
+        y = cut;
+    }
+    ends.append(H);
+    return ends;
+}
+
+QRect LongCapture::editorGeometry(const QSize &pixels, qreal dpr, const QRect &available)
+{
+    if (pixels.isEmpty() || available.isEmpty()) return {};
+    constexpr int kBarRoom = 48;                 // Pin toolbar height plus its gap under the image.
+    const int margin = PinWindow::kShadowMargin;
+    const QRect room = available.adjusted(margin, margin, -margin, -margin - kBarRoom);
+    const QSizeF logical = QSizeF(pixels) / qMax(1.0, dpr);
+    const double scale = qMin(1.0, qMin(room.width() / logical.width(), room.height() / logical.height()));
+    QRect r(QPoint(), QSize(qMax(1, qFloor(logical.width() * scale)), qMax(1, qFloor(logical.height() * scale))));
+    r.moveCenter(available.center());
+    if (r.bottom() > room.bottom()) r.moveBottom(room.bottom());   // The bar below must stay on screen.
+    if (r.top() < room.top()) r.moveTop(room.top());
+    return r;
+}
+
+QImage LongCapture::transposed(const QImage &src)
+{
+    QImage dst(src.height(), src.width(), QImage::Format_RGB32);
+    if (dst.isNull() || src.isNull()) return QImage();
+    uchar *bits = dst.bits();
+    const qsizetype bpl = dst.bytesPerLine();
+    for (int y = 0; y < src.height(); ++y) {
+        const QRgb *row = reinterpret_cast<const QRgb *>(src.constScanLine(y));
+        for (int x = 0; x < src.width(); ++x)
+            reinterpret_cast<QRgb *>(bits + x * bpl)[y] = row[x];
+    }
+    return dst;
+}
+
 bool LongCapture::matchFullRes(const QImage &f, int &bestK) const
 {
     bestK = 0;
@@ -35,7 +190,7 @@ bool LongCapture::matchFullRes(const QImage &f, int &bestK) const
     if (f == m_lastFrame) return true;
     const int H = f.height(), W = f.width();
     const int minOverlap = qMin(H, qMax(24, H / 8)), maxOff = H - minOverlap;
-    const double dpr = m_region.width() > 0 ? double(W) / m_region.width() : 1.0;
+    const double dpr = crossExtent() > 0 ? double(W) / crossExtent() : 1.0;
     const int horizontal = qMax(3, qRound(3 * dpr)), vertical = qMax(2, qRound(2 * dpr));
     struct Feature { int x, y; bool repeated; };
     auto signature = [=](const QImage &image, int x, int y) {
@@ -140,23 +295,59 @@ void LongCapture::captureFrame()
         return;
     QElapsedTimer frameClock;
     frameClock.start();
-    setUiVisible(false);
-    QApplication::processEvents();
-    if (m_done) return;
-    const QImage f = grabScreen(m_region).toImage().convertToFormat(QImage::Format_RGB32);
-    setUiVisible(true);
-    if (m_done) return;
-    const bool wasLost = m_alignmentLost;
-    const int oldRows = m_rowEnd - m_rowStart;
-    m_alignmentLost = !addFrame(f) && !m_storageFull;
-    if (oldRows != m_rowEnd - m_rowStart
-        && (!m_previewClock.isValid() || m_previewClock.elapsed() >= 100)) {
-        updateUi();
-        m_previewClock.restart();
-    } else if (oldRows != m_rowEnd - m_rowStart || wasLost != m_alignmentLost || m_storageFull) {
-        updateLabel();
+    if (!m_paused && !m_suspended) {
+        // Wheel input goes to whatever lies under the cursor, so only scroll while it rests on the selection.
+        if (m_autoScroll && (!m_scrollClock.isValid() || m_scrollClock.elapsed() >= 100)
+            && m_region.contains(QCursor::pos())) {
+            INPUT input{};
+            input.type = INPUT_MOUSE;
+            input.mi.dwFlags = m_vertical ? MOUSEEVENTF_WHEEL : MOUSEEVENTF_HWHEEL;
+            const int step = autoScrollStep(m_vertical ? m_region.height() : m_region.width());
+            input.mi.mouseData = DWORD(m_vertical ? -step : step);   // Down, or right.
+            SendInput(1, &input, sizeof(input));
+            m_scrollClock.restart();
+        }
+        setUiVisible(false);
+        if (m_done) return;
+        const QImage raw = grabScreen(m_region).toImage().convertToFormat(QImage::Format_RGB32);
+        setUiVisible(true);
+        if (m_done) return;
+        const int oldStart = m_rowStart, oldEnd = m_rowEnd, oldFrame = m_frameRow;
+        const bool wasLost = m_alignmentLost;
+        const bool aligned = ingest(raw);
+        m_alignmentLost = !aligned && !m_storageFull;
+        if (aligned && oldStart != oldEnd)
+            autoCrop(m_rowStart < oldStart ? -1 : m_rowEnd > oldEnd ? 1 : 0);
+        if (oldStart != m_rowStart || oldEnd != m_rowEnd || oldFrame != m_frameRow
+            || wasLost != m_alignmentLost || m_storageFull)
+            m_pending = true;
+        if (m_pending && (!m_previewClock.isValid() || m_previewClock.elapsed() >= 100)) {
+            updateUi();
+            m_previewClock.restart();
+            m_pending = false;
+        }
+        if (!m_alignmentLost) m_failClock.invalidate();
+        else if (!m_failClock.isValid()) m_failClock.start();
+        else if (!m_failWarned && m_failClock.elapsed() >= 3000) {
+            m_failWarned = true;
+            notice(QStringLiteral("匹配失败"),
+                   QStringLiteral("图片匹配失败，可能原因：\n1. 滚动速度过快。\n2. 截图过程中切换了其他窗口。\n"
+                                  "3. 截图背景为动态图像。\n\n请尝试返回最后一次成功匹配的帧后继续截图。"),
+                   QStringLiteral("LongShot/MatchFailWarningNoAsk"));
+        }
+        if (m_storageFull && !m_storageWarned) {
+            m_storageWarned = true;
+            updateUi();
+            notice(QStringLiteral("长截图"),
+                   QStringLiteral("当前截图已达到最大拼接范围，无法继续拼接。\n请保存或贴图。"), QString());
+        }
     }
     nextTick(int(frameClock.elapsed()));
+}
+
+bool LongCapture::ingest(const QImage &raw)
+{
+    return addFrame(m_vertical ? raw : transposed(raw));
 }
 
 bool LongCapture::addFrame(const QImage &f)
@@ -183,6 +374,131 @@ bool LongCapture::addFrame(const QImage &f)
     m_frameRow = row;
     m_lastFrame = f;
     return true;
+}
+
+void LongCapture::resetCapture()
+{
+    m_lastFrame = QImage();
+    m_buf = QImage();
+    m_frameRow = m_bufStart = m_rowStart = m_rowEnd = m_headPad = m_tailPad = 0;
+    m_sliceStart = m_sliceFrame = 0;
+    m_alignmentLost = m_storageFull = m_storageWarned = false;
+    m_cropState = m_cropBase = 0;
+    m_failClock.invalidate();
+    if (m_preview) { m_preview->image = QImage(); m_preview->hide(); }
+    updateUi();
+}
+
+bool LongCapture::cropRows(int from, int to)
+{
+    const int len = logicalLength();
+    if (from < 0 || from >= to || to > len) return false;
+    // Rows stay in the buffer; only the coverage shrinks.
+    m_headPad += from;
+    m_tailPad += len - to;
+    m_rowEnd = m_rowStart + to;
+    m_rowStart += from;
+    // The reference frame must lie inside the kept rows; when it was cut away, the kept rows become the reference,
+    // so frames of the removed part fail to match instead of landing at a wrong offset.
+    const int frameRows = m_lastFrame.isNull() ? 0 : m_lastFrame.height();
+    const int frameRow = qBound(m_rowStart, m_frameRow, qMax(m_rowStart, m_rowEnd - frameRows));
+    if (frameRow != m_frameRow && frameRows && frameRows <= m_rowEnd - m_rowStart)
+        m_lastFrame = m_buf.copy(0, frameRow - m_bufStart, m_width, frameRows);
+    m_frameRow = frameRow;
+    m_cropBase = m_frameRow - m_rowStart;
+    m_alignmentLost = false;
+    m_failClock.invalidate();
+    if (m_storageFull) {                          // Freed room lets capturing continue.
+        m_storageFull = m_storageWarned = false;
+        nextTick(0);
+    }
+    if (m_bar) updateUi();
+    return true;
+}
+
+void LongCapture::cropBefore()
+{
+    const int len = logicalLength(), extent = m_lastFrame.height(), offset = m_frameRow - m_rowStart;
+    int from = offset;
+    if (from < 1) {                               // Already at the start: keep the last frame's worth.
+        if (len <= extent) return;
+        from = len - extent;
+    }
+    cropRows(from, len);
+}
+
+void LongCapture::cropAfter()
+{
+    const int end = m_frameRow - m_rowStart + m_lastFrame.height();
+    if (end < logicalLength()) cropRows(0, end);
+}
+
+void LongCapture::autoCrop(int growth)
+{
+    if (!m_autoCrop || m_lastFrame.isNull()) return;
+    const int len = logicalLength(), extent = m_lastFrame.height(), offset = m_frameRow - m_rowStart;
+    if (qAbs(len - extent) < 5 && m_cropState) { m_cropState = 0; m_cropBase = offset; }
+    if (!m_cropState) {                           // The first growth sets the direction being captured.
+        if (growth) m_cropState = growth;
+        m_cropBase = offset;
+        return;
+    }
+    const int moved = growth ? growth : (offset > m_cropBase) - (offset < m_cropBase);
+    if (moved && moved != m_cropState) {          // Scrolling turned back: drop what lies past the frame.
+        if (m_cropState == 1 && offset + extent < len) { cropRows(0, offset + extent); return; }
+        if (m_cropState == -1 && offset > 0) { cropRows(offset, len); return; }
+    }
+    m_cropBase = offset;
+}
+
+void LongCapture::setAutoCrop(bool on)
+{
+    m_autoCrop = on;
+    QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot")).setValue(QStringLiteral("LongShot/AutoCrop"), on);
+    if (m_autoCropBox && m_autoCropBox->isChecked() != on) {
+        const QSignalBlocker block(m_autoCropBox);
+        m_autoCropBox->setChecked(on);
+    }
+    if (on) { m_cropState = 0; m_cropBase = m_frameRow - m_rowStart; }
+}
+
+void LongCapture::updateCropDirection()
+{
+    if (!m_cropStart || !m_cropEnd) return;
+    for (QToolButton *b : {m_cropStart, m_cropEnd}) {
+        const bool start = b == m_cropStart;
+        const QString tip = m_vertical ? (start ? QStringLiteral("裁剪顶部") : QStringLiteral("裁剪底部"))
+                                       : (start ? QStringLiteral("裁剪左侧") : QStringLiteral("裁剪右侧"));
+        b->setToolTip(tip);
+        b->setAccessibleName(tip);
+    }
+    m_cropStart->setIcon(m_vertical ? barIcon(Icon::CropStart) : rotatedIcon(barIcon(Icon::CropStart), Bar::icon));
+    m_cropEnd->setIcon(m_vertical ? barIcon(Icon::CropEnd) : rotatedIcon(barIcon(Icon::CropEnd), Bar::icon));
+}
+
+void LongCapture::refreshCropPanel()
+{
+    // Visible changes apply at once from hidden and after a short delay from shown.
+    if (m_cropTimer) m_cropTimer->start(m_cropPanel && m_cropPanel->isVisible() ? 200 : 0);
+}
+
+void LongCapture::placeCropPanel()
+{
+    if (!m_cropPanel || !m_crop || !m_bar) return;
+    const QRect av = screenFor(m_region)->availableGeometry();
+    m_cropPanel->adjustSize();
+    const QSize s = m_cropPanel->size();
+    const QRect bar = m_bar->geometry();
+    // Centered under the crop button, above the bar when there is no room below.
+    const int x = m_crop->mapToGlobal(QPoint(m_crop->width() / 2, 0)).x() - s.width() / 2;
+    int y = bar.bottom() + 1 + 4;
+    if (y + s.height() > av.bottom() + 1) y = bar.top() - 4 - s.height();
+    m_cropPanel->move(qBound(av.left(), x, qMax(av.left(), av.right() + 1 - s.width())), y);
+}
+
+int LongCapture::logicalLength() const
+{
+    return m_rowEnd - m_rowStart;
 }
 
 void LongCapture::initTiles(int width)
@@ -244,118 +560,490 @@ QImage LongCapture::toImage() const
     return m_buf.copy(0, m_rowStart - m_bufStart, m_width, m_rowEnd - m_rowStart);
 }
 
+QImage LongCapture::exportImage() const
+{
+    const QImage rows = toImage();
+    return m_vertical || rows.isNull() ? rows : transposed(rows);
+}
+
 void LongCapture::buildUi()
 {
-    const QString barQss =
-        "QWidget{background:#f2f2f2;border:none;}"
-        "QLabel{color:#323232;font-size:13px;padding:0 8px;}"
-        "QToolButton{background:transparent;border:none;border-radius:0px;padding:4px;}"
-        "QToolButton:hover{background-color:#d4d4d4;}"
-        "QWidget#longCaptureBar{border:1px solid #2080f0;}";   // Same 1px theme frame as the capture bars.
-    m_bar = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    const QScreen *scr = screenFor(m_region);
+
+    // Full-screen dim layer with a clear hole and an accent outline; input passes through to the page.
+    m_mask = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint
+                                   | Qt::WindowTransparentForInput | Qt::WindowDoesNotAcceptFocus);
+    m_mask->setAttribute(Qt::WA_TranslucentBackground);
+    m_mask->setAttribute(Qt::WA_ShowWithoutActivating);
+    m_mask->setGeometry(scr->geometry());
+    m_mask->installEventFilter(this);
+    m_mask->show();
+
+    m_bar = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint
+                                  | Qt::WindowDoesNotAcceptFocus);
     m_bar->setObjectName(QStringLiteral("longCaptureBar"));
-    m_bar->setAttribute(Qt::WA_StyledBackground);
-    m_bar->setStyleSheet(barQss);
+    m_bar->setAttribute(Qt::WA_TranslucentBackground);
+    m_bar->setAttribute(Qt::WA_ShowWithoutActivating);
+    m_bar->installEventFilter(this);
+    m_bar->setStyleSheet(QStringLiteral(
+        "QToolButton{color:#fcfcfc;background:transparent;border:none;border-radius:4px;padding:5px;}"
+        "QToolButton:hover{background-color:#26262a;}"
+        "QToolButton:pressed{background-color:#27272a;}"
+        "QToolButton:checked{background:transparent;}"
+        "QToolButton:checked:hover{background-color:#26262a;}"
+        "QFrame#barSeparator{background-color:#232326;margin:0px 6px;border:none;}"
+        "QLabel{color:#a1a1aa;font-size:13px;background:transparent;padding:0px 4px;}"
+        "QComboBox{color:#fcfcfc;background:#060607;border:none;border-radius:12px;"
+        "padding:1px 4px 1px 12px;font-size:12px;}"
+        "QComboBox:hover{background:#0c0c0e;}"
+        "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
+        "QComboBox::down-arrow{image:none;width:0px;height:0px;}"
+        "QComboBox QAbstractItemView{outline:0px;color:#fcfcfc;background:#262626;border:1px solid #3c3c3c;"
+        "padding:4px;selection-background-color:#3388ff;selection-color:#fcfcfc;}"));
     auto *lay = new QHBoxLayout(m_bar);
-    lay->setContentsMargins(6, 1, 4, 1);
+    lay->setContentsMargins(7, 6, 7, 7);             // 42px surface inside a 1px rim.
+    lay->setSpacing(4);
+    m_grip = new QWidget;
+    m_grip->setFixedSize(16, Bar::button);
+    m_grip->setCursor(Qt::SizeAllCursor);
+    m_grip->installEventFilter(this);
     m_label = new QLabel;
-    auto *save = iconButton(Icon::Save, QStringLiteral("保存到文件"));
-    auto *copy = iconButton(Icon::Copy, QStringLiteral("复制到剪贴板"));
-    auto *pin = iconButton(Icon::Pin, QStringLiteral("贴在屏幕上"));
-    auto *no = iconButton(Icon::Cancel, QStringLiteral("取消 (Esc)"));
+    m_axis = new QWidget;
+    m_axis->setFixedSize(Bar::button, Bar::button);
+    m_axis->setToolTip(QStringLiteral("移动截图区域"));
+    m_axis->setCursor(Qt::SizeVerCursor);
+    m_axis->installEventFilter(this);
+    m_dir = flatComboBox();
+    m_dir->addItems({QStringLiteral("纵向"), QStringLiteral("横向")});
+    m_dir->setFixedSize(98, 24);
+    m_dir->setFocusPolicy(Qt::NoFocus);
+    m_auto = barButton(Icon::LongShot, QStringLiteral("自动滚动截图"));
+    m_auto->setCheckable(true);
+    m_crop = barButton(Icon::Crop, QStringLiteral("裁剪"));
+    m_crop->installEventFilter(this);
+    // Hover panel under the crop button: crop to the current frame at either end, and the auto crop switch.
+    m_cropPanel = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint
+                                           | Qt::WindowDoesNotAcceptFocus);
+    m_cropPanel->setObjectName(QStringLiteral("longCaptureCropPanel"));
+    m_cropPanel->setAttribute(Qt::WA_TranslucentBackground);
+    m_cropPanel->setAttribute(Qt::WA_ShowWithoutActivating);
+    m_cropPanel->installEventFilter(this);
+    m_cropPanel->setStyleSheet(QStringLiteral(
+        "QToolButton{background:transparent;border:none;border-radius:4px;padding:5px;}"
+        "QToolButton:hover{background-color:#26262a;}"
+        "QToolButton:pressed{background-color:#27272a;}"
+        "QFrame#barSeparator{background-color:#232326;margin:0px 6px;border:none;}"
+        "QCheckBox{color:#fcfcfc;font-size:13px;background:transparent;spacing:6px;}"));
+    auto *cropLay = new QHBoxLayout(m_cropPanel);
+    cropLay->setContentsMargins(8, 4, 8, 4);
+    cropLay->setSpacing(4);
+    m_cropStart = barButton(Icon::CropStart, QString());
+    m_cropEnd = barButton(Icon::CropEnd, QString());
+    m_autoCropBox = new QCheckBox(QStringLiteral("自动裁剪"));
+    m_autoCropBox->setToolTip(QStringLiteral("自动裁剪"));
+    m_autoCropBox->setCursor(Qt::PointingHandCursor);
+    for (QWidget *w : {static_cast<QWidget *>(m_cropStart), static_cast<QWidget *>(m_cropEnd),
+                       barSeparator(true), static_cast<QWidget *>(m_autoCropBox)}) {
+        w->setFocusPolicy(Qt::NoFocus);
+        cropLay->addWidget(w);
+    }
+    m_autoCrop = QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot"))
+                     .value(QStringLiteral("LongShot/AutoCrop"), false).toBool();
+    m_autoCropBox->setChecked(m_autoCrop);
+    updateCropDirection();
+    m_cropTimer = new QTimer(this);
+    m_cropTimer->setSingleShot(true);
+    connect(m_cropTimer, &QTimer::timeout, this, [this] {
+        if (!m_cropPanel || m_hidCropPanel) return;
+        const bool show = (m_cropHover || m_panelHover) && m_crop && m_crop->isEnabled() && !m_suspended;
+        if (show == m_cropPanel->isVisible()) return;
+        if (show) { placeCropPanel(); m_cropPanel->show(); m_cropPanel->raise(); }
+        else m_cropPanel->hide();
+    });
+    connect(m_cropStart, &QToolButton::clicked, this, &LongCapture::cropBefore);
+    connect(m_cropEnd, &QToolButton::clicked, this, &LongCapture::cropAfter);
+    connect(m_autoCropBox, &QCheckBox::toggled, this, &LongCapture::setAutoCrop);
+    auto *edit = barButton(Icon::Pen, QStringLiteral("编辑"));
+    m_ocr = barButton(Icon::Ocr, QStringLiteral("复制识别到的文字"));
+    m_ocrMissing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
+    if (!m_ocrMissing.isEmpty()) m_ocr->setToolTip(m_ocrMissing);
+    auto *pin = barButton(Icon::Pin, QStringLiteral("贴图"));
+    auto *save = barButton(Icon::Save, QStringLiteral("保存"));
+    auto *close = barButton(Icon::Cancel, QStringLiteral("关闭"));
+    auto *copy = barButton(Icon::Copy, QStringLiteral("复制并关闭"));
+    m_gated = {edit, m_ocr, pin, copy};
+    m_save = save;
+    lay->addWidget(m_grip);
     lay->addWidget(m_label);
-    lay->addWidget(save);
-    lay->addWidget(copy);
-    lay->addWidget(pin);
-    lay->addWidget(no);
+    lay->addWidget(m_axis);
+    lay->addWidget(barSeparator(true));
+    lay->addWidget(m_dir);
+    for (QToolButton *b : {m_auto, m_crop, edit, m_ocr, pin, save, close, copy}) {
+        b->setFocusPolicy(Qt::NoFocus);
+        lay->addWidget(b);
+    }
+    connect(m_dir, &QComboBox::currentIndexChanged, this, [this](int index) { setVertical(index == 0); });
+    connect(m_auto, &QToolButton::toggled, this, &LongCapture::setAutoScroll);
+    connect(edit, &QToolButton::clicked, this, [this] { finish(true); });
+    connect(m_ocr, &QToolButton::clicked, this, &LongCapture::ocrCopy);
+    connect(pin, &QToolButton::clicked, this, [this] { finish(false); });
     connect(save, &QToolButton::clicked, this, &LongCapture::saveCapture);
+    connect(close, &QToolButton::clicked, this, &LongCapture::cancel);
     connect(copy, &QToolButton::clicked, this, &LongCapture::copyCapture);
-    connect(pin, &QToolButton::clicked, this, &LongCapture::finish);
-    connect(no, &QToolButton::clicked, this, &LongCapture::cancel);
     updateLabel();
-    // Keep the toolbar below the selection and the preview alongside it on the same screen.
-    const QScreen *scr = QGuiApplication::screenAt(m_region.center());
-    const QRect av = (scr ? scr : QGuiApplication::primaryScreen())->availableGeometry();
-    m_bar->adjustSize();
-    int bx = qBound(av.left(), m_region.center().x() - m_bar->width() / 2,
-                    av.right() - m_bar->width());
-    int by = m_region.bottom() + 8;
-    if (by + m_bar->height() > av.bottom())      // No room below: place above the selection.
-        by = m_region.top() - m_bar->height() - 8;
-    m_bar->move(bx, qBound(av.top(), by, av.bottom() - m_bar->height()));
+    updateButtons();
     m_bar->show();
+}
 
-    m_preview = new QLabel(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
-    m_preview->setStyleSheet("background:#f2f2f2;border:1px solid #2080f0;");
-    m_preview->setAlignment(Qt::AlignCenter);
-    const int ph = int(av.height() * 0.6);
-    const int pw = 200;
-    m_preview->resize(pw, ph);
-    int px = m_region.right() + 8;                // Place the preview alongside the selection.
-    if (px + pw > av.right())                     // No room on the right: use the left side.
-        px = m_region.left() - 8 - pw;
-    m_preview->move(qBound(av.left(), px, av.right() - pw),
-                    qBound(av.top(), av.center().y() - ph / 2, av.bottom() - ph));
-    m_preview->show();
-    QApplication::processEvents();
-    // Test capture exclusion; hide the preview during capture if unsupported.
-    m_affinityOk = SetWindowDisplayAffinity(reinterpret_cast<HWND>(m_preview->winId()),
-                                            WDA_EXCLUDEFROMCAPTURE);
-
-    // Input-transparent 2 px blue border outside the selection; scrolling passes through.
-    m_frame = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint
-                                    | Qt::WindowTransparentForInput);
-    m_frame->setStyleSheet("background:#2080f0;");
-    m_frame->setGeometry(m_region.adjusted(-2, -2, 2, 2));
-    const QRect fr = m_frame->rect();
-    m_frame->setMask(QRegion(fr) - QRegion(fr.adjusted(2, 2, -2, -2)));
-    m_frame->show();
+void LongCapture::placeBar()
+{
+    if (!m_bar || m_barMoved) return;
+    const QRect av = screenFor(m_region)->availableGeometry();
+    m_bar->adjustSize();
+    const QSize s = m_bar->size();
+    // Right-aligned below the outline; above it when there is no room, inside the bottom edge as a last resort.
+    const int x = qBound(av.left(), m_region.right() + 2 - s.width(), qMax(av.left(), av.right() + 1 - s.width()));
+    int y = m_region.bottom() + 1 + kBorder + 4;
+    if (y + s.height() > av.bottom() + 1) {
+        y = m_region.top() - kBorder - 4 - s.height();
+        if (y < av.top()) y = m_region.bottom() + 1 - 8 - s.height();
+    }
+    m_bar->move(x, qBound(av.top(), y, qMax(av.top(), av.bottom() + 1 - s.height())));
 }
 
 void LongCapture::setUiVisible(bool v)
 {
-    m_bar->setVisible(v);
-    if (!m_affinityOk) m_preview->setVisible(v);
-    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    // Capture-excluded windows stay up; the rest step aside only when they overlap the grabbed region.
+    bool changed = false;
+    const auto apply = [&](QWidget *w, bool excluded, bool &hidden) {
+        if (!w) return;
+        if (!v && !excluded && w->isVisible() && w->geometry().intersects(m_region)) {
+            w->hide(); hidden = true; changed = true;
+        } else if (v && hidden) {
+            w->show(); hidden = false; changed = true;
+        }
+    };
+    // The mask's hole is fully transparent over the region, so it never needs to step aside.
+    apply(m_bar, m_barAffinity, m_hidBar);
+    apply(m_preview, m_previewAffinity, m_hidPreview);
+    const bool panelAside = m_hidCropPanel;
+    apply(m_cropPanel, false, m_hidCropPanel);
+    if (panelAside && !m_hidCropPanel) refreshCropPanel();   // Hover may have ended during the grab.
+    if (changed) QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 }
 
 void LongCapture::updateLabel()
 {
-    if (m_label)
-        m_label->setText(m_storageFull ? QStringLiteral("内存不足或达到安全上限，已暂停延伸，请保存或贴图")
-            : m_alignmentLost ? QStringLiteral("无法对齐，请缓慢滚回上一位置")
-                              : QStringLiteral("● 长截图 · %1 px").arg(m_rowEnd - m_rowStart));
-    if (m_bar)
-        m_bar->adjustSize();
+    if (!m_label) return;
+    const int rows = logicalLength();
+    const QSize size = rows <= 0 ? m_region.size() : m_vertical ? QSize(m_width, rows) : QSize(rows, m_width);
+    m_label->setText(QStringLiteral("%1 x %2").arg(size.width()).arg(size.height()));
+    placeBar();
+}
+
+void LongCapture::updateButtons()
+{
+    const int length = logicalLength();
+    const bool bounded = length > 0 && length < kMaxGatedLength;
+    for (QToolButton *b : m_gated) b->setEnabled(bounded && (b != m_ocr || m_ocrMissing.isEmpty()));
+    if (m_save) m_save->setEnabled(length > 0);
+    if (m_crop) m_crop->setEnabled(length > 0 && !m_ocrCancel);
+    if (m_cropPanel && m_cropPanel->isVisible()) placeCropPanel();
+}
+
+void LongCapture::updatePreview()
+{
+    const int total = logicalLength();
+    if (m_done || total <= 0 || m_width <= 0) return;
+    if (!m_preview) m_preview = new LongPreview;
+    const QScreen *scr = screenFor(m_region);
+    const QRect screen = scr->geometry(), av = scr->availableGeometry();
+    const qreal dpr = scr->devicePixelRatio();
+    // The preview sits after the selection (and the bar, when they overlap) on the cross side.
+    QRect anchor = m_region;
+    if (m_bar && m_bar->isVisible()) {
+        const QRect b = m_bar->geometry();
+        const bool overlap = m_vertical ? b.intersects(m_region)
+                                        : b.left() <= m_region.right() && m_region.left() <= b.right();
+        if (overlap) anchor = anchor.united(b);
+    }
+    const int cross = qMin(kPreviewCross - 2 * kPreviewPad, crossExtent());
+    const int windowCross = cross + 2 * kPreviewPad;
+    int side = 0;                                // 0 after the selection, 1 before it, 2 inside it.
+    QRect win;
+    if (m_vertical) {
+        win = QRect(anchor.right() + kPreviewGap, screen.top() - kPreviewPad, windowCross, screen.height() + 2 * kPreviewPad);
+        if (win.right() > av.right()) {
+            win.moveLeft(anchor.left() - kPreviewGap - win.width());
+            side = 1;
+            if (win.left() < av.left()) { win = QRect(m_region.left(), m_region.top(), qMin(windowCross, m_region.width()), m_region.height()); side = 2; }
+        }
+    } else {
+        win = QRect(screen.left() - kPreviewPad, anchor.bottom() + kPreviewGap, screen.width() + 2 * kPreviewPad, windowCross);
+        if (win.bottom() > av.bottom()) {
+            win.moveTop(anchor.top() - kPreviewGap - win.height());
+            side = 1;
+            if (win.top() < av.top()) { win = QRect(m_region.left(), m_region.top(), m_region.width(), qMin(windowCross, m_region.height())); side = 2; }
+        }
+    }
+    // Slice length: from the selection's far edge back toward the screen edge, less a margin.
+    const double scale = double(cross) / m_width;          // Preview logical pixels per stored row.
+    const int avail = m_vertical ? m_region.bottom() + 1 - 2 * kPreviewPad - (kPreviewTopMargin + screen.top())
+                                 : m_region.right() + 1 - 2 * kPreviewPad - (kPreviewTopMargin + screen.left());
+    const int len = qMin(total, qMax(1, int(qMax(1, avail) / scale)));
+    const int frameTop = m_frameRow - m_rowStart, frameRows = m_lastFrame.isNull() ? total : m_lastFrame.height();
+    int start = m_sliceStart - m_rowStart;
+    if (m_rowStart < m_previewHead) start = 0;                       // Grown at the head: show the head.
+    else if (m_rowEnd > m_previewTail) start = total - len;          // Grown at the tail: show the tail.
+    else {                                                           // Within range: follow the frame.
+        const int center = frameTop + frameRows / 2, dir = m_frameRow - m_sliceFrame;
+        if ((dir < 0 && center < start + len / 2) || (dir > 0 && center > start + len / 2)) start = center - len / 2;
+    }
+    if (start > frameTop) start = frameTop;
+    if (start + len < frameTop + frameRows) start = frameTop + frameRows - len;
+    start = qBound(0, start, total - len);
+    m_sliceStart = m_rowStart + start;
+    m_sliceFrame = m_frameRow;
+    m_previewHead = m_rowStart;
+    m_previewTail = m_rowEnd;
+
+    const QImage view(m_buf.constScanLine(m_headPad + start), m_width, len, m_bytesPerLine, QImage::Format_RGB32);
+    const int along = qMax(1, qRound(len * scale));
+    QImage slice = (m_vertical ? view : transposed(view))
+        .scaled(qMax(1, qRound((m_vertical ? cross : along) * dpr)), qMax(1, qRound((m_vertical ? along : cross) * dpr)),
+                Qt::IgnoreAspectRatio, Qt::FastTransformation);
+    slice.setDevicePixelRatio(dpr);
+    QRect image;
+    if (m_vertical) {
+        const int x = side == 1 ? win.width() - kPreviewPad - cross : kPreviewPad;
+        image = QRect(x, m_region.bottom() + 1 - kPreviewPad - win.top() - along, cross, along);
+    } else {
+        const int y = side == 1 ? win.height() - kPreviewPad - cross : kPreviewPad;
+        image = QRect(m_region.right() + 1 - kPreviewPad - win.left() - along, y, along, cross);
+    }
+    const int frameOffset = qRound((frameTop - start) * scale), frameAlong = qMax(1, qRound(frameRows * scale));
+    m_preview->vertical = m_vertical;
+    m_preview->image = slice;
+    m_preview->imageRect = image;
+    m_preview->frameRect = m_vertical ? QRect(image.left(), image.top() + frameOffset, cross, frameAlong)
+                                      : QRect(image.left() + frameOffset, image.top(), frameAlong, cross);
+    m_preview->atStart = start == 0;
+    m_preview->atEnd = start + len >= total;
+    m_preview->showFrame = !m_alignmentLost && !m_storageFull;
+    m_preview->setGeometry(win);
+    if (!m_hidPreview) m_preview->show();
+    // Only a preview placed inside the selection needs to stay out of the grabbed pixels.
+    if (side == 2 && !m_previewTried) {
+        m_previewTried = true;
+        m_previewAffinity = SetWindowDisplayAffinity(reinterpret_cast<HWND>(m_preview->winId()), WDA_EXCLUDEFROMCAPTURE);
+    }
+    m_preview->update();
 }
 
 void LongCapture::updateUi()
 {
     updateLabel();
-    if (m_preview && m_rowEnd > m_rowStart) {
-        const int rows = m_rowEnd - m_rowStart;
-        const double s = qMin(double(m_preview->width()) / m_width,
-                              double(m_preview->height()) / rows);
-        const QImage view(m_buf.constScanLine(m_headPad), m_width, rows, m_bytesPerLine, QImage::Format_RGB32);
-        const QImage scaled = view.scaled(qMax(1, qRound(m_width * s)), qMax(1, qRound(rows * s)),
-                                         Qt::IgnoreAspectRatio, Qt::FastTransformation);
-        m_preview->setPixmap(QPixmap::fromImage(scaled));
+    updateButtons();
+    updatePreview();
+}
+
+void LongCapture::setVertical(bool vertical)
+{
+    if (vertical == m_vertical) return;
+    setAutoScroll(false);
+    m_vertical = vertical;
+    if (m_dir && m_dir->currentIndex() != (vertical ? 0 : 1)) {
+        const QSignalBlocker block(m_dir);
+        m_dir->setCurrentIndex(vertical ? 0 : 1);
+    }
+    if (m_auto) m_auto->setIcon(vertical ? barIcon(Icon::LongShot) : rotatedIcon(barIcon(Icon::LongShot), Bar::icon));
+    updateCropDirection();
+    if (m_axis) { m_axis->setCursor(vertical ? Qt::SizeVerCursor : Qt::SizeHorCursor); m_axis->update(); }
+    resetCapture();                              // A new direction starts a new image.
+}
+
+void LongCapture::setAutoScroll(bool on)
+{
+    m_autoScroll = on;
+    if (m_auto && m_auto->isChecked() != on) {
+        const QSignalBlocker block(m_auto);
+        m_auto->setChecked(on);
+    }
+    if (on) {
+        QCursor::setPos(m_region.center());     // Wheel input lands on the page under the selection.
+        m_scrollClock.invalidate();
     }
 }
 
-void LongCapture::finish()
+QPoint LongCapture::moveRegion(QPoint delta)
+{
+    // Moving along the scroll axis reads like scrolling to the stitcher; the cross axis would change the frame.
+    QPoint d = m_vertical ? QPoint(0, delta.y()) : QPoint(delta.x(), 0);
+    const QRect screen = screenFor(m_region)->geometry();
+    const int limit = qMax(100, (m_vertical ? screen.height() : screen.width()) / 3);
+    if (qAbs(d.x()) > limit || qAbs(d.y()) > limit) return QPoint();
+    const QRect next = m_region.translated(d);
+    if (next.top() < screen.top()) d.ry() += screen.top() - next.top();
+    if (next.bottom() > screen.bottom()) d.ry() -= next.bottom() - screen.bottom();
+    if (next.left() < screen.left()) d.rx() += screen.left() - next.left();
+    if (next.right() > screen.right()) d.rx() -= next.right() - screen.right();
+    if (d.isNull()) return d;
+    m_region.translate(d);
+    if (m_mask) m_mask->update();
+    if (m_bar) m_bar->move(m_bar->pos() + d);
+    updatePreview();
+    return d;
+}
+
+bool LongCapture::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_mask && event->type() == QEvent::Paint) {
+        QPainter p(m_mask);
+        const QRect hole = m_region.translated(-m_mask->geometry().topLeft());
+        p.fillRect(m_mask->rect(), QColor(0, 0, 0, 120));
+        p.setCompositionMode(QPainter::CompositionMode_Source);
+        p.fillRect(hole, Qt::transparent);
+        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        p.setPen(QPen(Bar::accent, kBorder, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+        p.drawRect(QRectF(hole).adjusted(-kBorder / 2.0, -kBorder / 2.0, kBorder / 2.0, kBorder / 2.0));
+        return true;
+    }
+    if (watched == m_bar && event->type() == QEvent::Paint) {   // Rounded dark surface with a faint light rim.
+        QPainter p(m_bar);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(255, 255, 255, 17));
+        p.drawRoundedRect(QRectF(m_bar->rect()), Bar::radius + 1, Bar::radius + 1);
+        p.setBrush(Bar::surface);
+        p.drawRoundedRect(QRectF(m_bar->rect()).adjusted(1, 1, -1, -1), Bar::radius, Bar::radius);
+        return true;
+    }
+    if (watched == m_cropPanel && event->type() == QEvent::Paint) {
+        QPainter p(m_cropPanel);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(255, 255, 255, 17));
+        p.drawRoundedRect(QRectF(m_cropPanel->rect()), Bar::radius + 1, Bar::radius + 1);
+        p.setBrush(Bar::surface);
+        p.drawRoundedRect(QRectF(m_cropPanel->rect()).adjusted(1, 1, -1, -1), Bar::radius, Bar::radius);
+        return true;
+    }
+    if ((watched == m_crop || watched == m_cropPanel)
+        && (event->type() == QEvent::Enter || event->type() == QEvent::Leave)) {
+        (watched == m_crop ? m_cropHover : m_panelHover) = event->type() == QEvent::Enter;
+        refreshCropPanel();
+        return QObject::eventFilter(watched, event);
+    }
+    if (watched != m_grip && watched != m_axis) return QObject::eventFilter(watched, event);
+    auto *w = static_cast<QWidget *>(watched);
+    switch (event->type()) {
+    case QEvent::Paint: {
+        QPainter p(w);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QPointF c = QRectF(w->rect()).center();
+        if (w == m_grip) {                       // Six dots: the bar's drag handle.
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0x32, 0x32, 0x36));
+            for (int col : {-1, 1})
+                for (int row : {-1, 0, 1})
+                    p.drawRect(QRectF(c.x() + col * 3 - 1.5, c.y() + row * 7 - 1.5, 3, 3));
+        } else {                                 // Double arrow along the scroll axis.
+            p.setPen(QPen(Bar::ink, 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            const auto axis = [&](qreal a, qreal b) { return m_vertical ? QPointF(c.x() + b, c.y() + a) : QPointF(c.x() + a, c.y() + b); };
+            p.drawLine(axis(-9, 0), axis(9, 0));
+            p.drawPolyline(QPolygonF{axis(-5, -4), axis(-9, 0), axis(-5, 4)});
+            p.drawPolyline(QPolygonF{axis(5, -4), axis(9, 0), axis(5, 4)});
+        }
+        return true;
+    }
+    case QEvent::MouseButtonPress: {
+        auto *e = static_cast<QMouseEvent *>(event);
+        if (e->button() == Qt::LeftButton) { m_dragging = w; m_dragAt = e->globalPosition().toPoint(); }
+        return true;
+    }
+    case QEvent::MouseMove: {
+        if (m_dragging != w) return true;
+        const QPoint at = static_cast<QMouseEvent *>(event)->globalPosition().toPoint();
+        if (w == m_grip) {
+            m_bar->move(m_bar->pos() + at - m_dragAt);
+            m_barMoved = true;
+            m_dragAt = at;
+            updatePreview();
+        } else {
+            m_dragAt += moveRegion(at - m_dragAt);
+        }
+        return true;
+    }
+    case QEvent::MouseButtonRelease:
+        m_dragging = nullptr;
+        return true;
+    default:
+        return QObject::eventFilter(watched, event);
+    }
+}
+
+void LongCapture::notice(const QString &title, const QString &text, const QString &noAskKey)
+{
+    QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+    if (!noAskKey.isEmpty() && settings.value(noAskKey, false).toBool()) return;
+    if (m_notice) return;
+    auto *box = new QMessageBox(QMessageBox::Warning, title, text, QMessageBox::Ok);
+    box->setWindowFlag(Qt::WindowStaysOnTopHint);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    if (!noAskKey.isEmpty()) box->setCheckBox(new QCheckBox(QStringLiteral("不再提示")));
+    m_notice = box;
+    m_paused = true;                             // The dialog may cover the selection.
+    connect(box, &QMessageBox::finished, this, [this, box, noAskKey] {
+        if (!noAskKey.isEmpty() && box->checkBox() && box->checkBox()->isChecked())
+            QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot")).setValue(noAskKey, true);
+        m_paused = bool(m_ocrCancel);            // Recognition keeps the capture still.
+    });
+    box->show();
+}
+
+void LongCapture::fail(const QString &message)
+{
+    if (!m_label) return;
+    m_label->setText(message);
+    placeBar();
+}
+
+void LongCapture::finish(bool edit)
 {
     if (m_done)
         return;
-    const QPixmap pix = QPixmap::fromImage(toImage());
+    const QPixmap pix = QPixmap::fromImage(exportImage());
     if (pix.isNull()) {
-        if (m_label) m_label->setText(QStringLiteral("导出失败，请释放内存后重试"));
+        fail(QStringLiteral("导出失败，请释放内存后重试"));
+        return;
+    }
+    if (edit) {                                   // The editor can come back here, so the session only steps aside.
+        suspend();
+        emit finished(pix, true);
         return;
     }
     m_done = true;
     cleanupUi();
-    emit finished(pix);
+    emit finished(pix, false);
     deleteLater();
+}
+
+void LongCapture::suspend()
+{
+    if (m_done) return;
+    m_suspended = true;
+    setAutoScroll(false);
+    m_cropHover = m_panelHover = false;
+    for (QWidget *w : {m_mask, m_bar, static_cast<QWidget *>(m_preview), m_cropPanel}) if (w) w->hide();
+}
+
+void LongCapture::resume()
+{
+    if (m_done || !m_suspended) return;
+    m_suspended = false;
+    for (QWidget *w : {m_mask, m_bar}) if (w) w->show();
+    if (m_preview && !m_preview->image.isNull()) m_preview->show();
+    updateUi();
 }
 
 void LongCapture::cancel()
@@ -369,41 +1057,102 @@ void LongCapture::cancel()
 
 void LongCapture::saveCapture()
 {
-    const QImage img = toImage();
+    const QImage img = exportImage();
     if (img.isNull()) {
-        if (m_label) m_label->setText(QStringLiteral("导出失败，请释放内存后重试"));
+        fail(QStringLiteral("导出失败，请释放内存后重试"));
         return;
     }
+    // The dialog is not topmost; the session steps aside and stops capturing while it is open.
+    m_paused = true;
+    setAutoScroll(false);
+    for (QWidget *w : {m_mask, m_bar, static_cast<QWidget *>(m_preview), m_cropPanel}) if (w) w->hide();
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     const QString path = QFileDialog::getSaveFileName(
-        nullptr, QStringLiteral("保存长截图"), dir + QStringLiteral("/longshot.png"),
-        QStringLiteral("PNG (*.png)"));            // Save long captures as PNG.
-    if (path.isEmpty())
-        return;                                    // Cancelled dialog: keep the session active.
-    if (!saveImageAtomic(img, path)) {
-        if (m_label) m_label->setText(QStringLiteral("保存失败，请检查路径或释放内存后重试"));
-        return;
-    }
-    cancel();
+        nullptr, QStringLiteral("保存图像"), dir + QStringLiteral("/longshot.png"),
+        QStringLiteral("PNG 图片 (*.png);;JPG 图片 (*.jpg)"));
+    if (m_done) return;
+    const bool saved = !path.isEmpty() && saveImageAtomic(img, path);
+    if (saved) { cancel(); return; }
+    for (QWidget *w : {m_mask, m_bar}) if (w) w->show();
+    if (m_preview && !m_preview->image.isNull()) m_preview->show();
+    m_paused = false;
+    if (!path.isEmpty()) fail(QStringLiteral("保存失败，请检查路径或释放内存后重试"));
 }
 
 void LongCapture::copyCapture()
 {
-    const QImage img = toImage();
+    const QImage img = exportImage();
     if (img.isNull()) {
-        if (m_label) m_label->setText(QStringLiteral("导出失败，请释放内存后重试"));
+        fail(QStringLiteral("导出失败，请释放内存后重试"));
         return;
     }
     if (!copyImageToClipboard(img)) {
-        if (m_label) m_label->setText(QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+        fail(QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
         return;
     }
     cancel();
 }
 
+void LongCapture::ocrCopy()
+{
+    const QImage img = exportImage();
+    if (img.isNull()) {
+        fail(QStringLiteral("导出失败，请释放内存后重试"));
+        return;
+    }
+    if (m_ocrCancel) return;
+    // The session holds still and shows progress until the text is on the clipboard; close cancels it.
+    m_ocrCancel = std::make_shared<std::atomic_bool>(false);
+    m_paused = true;
+    setAutoScroll(false);
+    for (QWidget *w : QList<QWidget *>{m_dir, m_auto, m_save, m_crop} + QList<QWidget *>(m_gated.begin(), m_gated.end()))
+        if (w) w->setEnabled(false);
+    if (m_label) { m_label->setText(QStringLiteral("正在识别文本，请稍候...")); placeBar(); }
+    auto *watcher = new QFutureWatcher<OcrResult>(this);
+    connect(watcher, &QFutureWatcher<OcrResult>::finished, this, [this, watcher] {
+        const OcrResult result = watcher->result();
+        watcher->deleteLater();
+        m_ocrCancel.reset();
+        if (m_done || result.cancelled) return;
+        QString error = result.error;
+        if (error.isEmpty() && result.text().trimmed().isEmpty()) error = QStringLiteral("未检测到文本");
+        else if (error.isEmpty() && !copyTextToClipboard(result.text()))
+            error = QStringLiteral("复制失败，剪贴板可能被占用，请重试");
+        if (!error.isEmpty()) {
+            m_paused = bool(m_notice);
+            for (QWidget *w : {static_cast<QWidget *>(m_dir), static_cast<QWidget *>(m_auto)}) if (w) w->setEnabled(true);
+            updateButtons();
+            fail(error);
+            return;
+        }
+        QToolTip::showText(QCursor::pos(), QStringLiteral("文本复制成功"), nullptr, QRect(), 2000);
+        cancel();
+    });
+    const OcrCancel cancel = m_ocrCancel;
+    watcher->setFuture(QtConcurrent::run([img, cancel]() -> OcrResult {
+        // Recognition scales the long side to its input limit; tall images are read in screen-sized chunks.
+        // shortcut: A text line taller than the chunk search window may still be split; add overlap if that shows up.
+        OcrResult all;
+        int top = 0;
+        for (int end : ocrCuts(img, qMax(1440, img.width()))) {
+            const OcrResult part = OcrEngine::instance().recognize(img.copy(0, top, img.width(), end - top), cancel);
+            if (!part.error.isEmpty() || part.cancelled) return part;
+            all.lines += part.lines;
+            top = end;
+        }
+        return all;
+    }));
+}
+
 void LongCapture::cleanupUi()
 {
-    if (m_bar) { m_bar->hide(); m_bar->deleteLater(); m_bar = nullptr; }
+    if (m_ocrCancel) m_ocrCancel->store(true);
+    if (m_notice) m_notice->close();
+    if (m_cropTimer) m_cropTimer->stop();
+    for (QWidget **w : {&m_mask, &m_bar, &m_cropPanel}) if (*w) { (*w)->hide(); (*w)->deleteLater(); *w = nullptr; }
     if (m_preview) { m_preview->hide(); m_preview->deleteLater(); m_preview = nullptr; }
-    if (m_frame) { m_frame->hide(); m_frame->deleteLater(); m_frame = nullptr; }
+    m_label = nullptr; m_dir = nullptr; m_auto = nullptr; m_save = nullptr; m_ocr = nullptr;
+    m_crop = m_cropStart = m_cropEnd = nullptr; m_autoCropBox = nullptr;
+    m_grip = m_axis = nullptr;
+    m_gated.clear();
 }

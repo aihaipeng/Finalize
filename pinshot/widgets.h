@@ -26,7 +26,7 @@ enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, 
                   ChevronUp, ChevronDown, ChevronRight, WavyLine, Underline, Strikethrough, Check, Translate, View,
                   CardFit, CardSplit, CardTranslate, CardReload, CardCopy, CardColumns, CardZoomIn,
                   CardZoomOut, CardActual, CardPin, CardMinimize, CardMaximize, CardRestore, CardClose, CardSearch,
-                  CardUp, CardDown, CardRight, CardFormat };
+                  CardUp, CardDown, CardRight, CardFormat, Back, Crop, CropStart, CropEnd };
 
 // dark: glyphs for a dark surface (light ink) instead of the light bars.
 QIcon makeIcon(Icon icon, int size = 16, bool dark = false);
@@ -45,6 +45,8 @@ constexpr int button = 31, icon = 21, radius = 8, gap = 8;
 // Capture bar glyphs: light ink, accent when checked, dim when disabled.
 QIcon barIcon(Icon icon, int size = Bar::icon);
 QToolButton *barButton(Icon icon, const QString &tip);
+// Pill combo for the dark capture bars: flat popup rows and a thin chevron.
+QComboBox *flatComboBox();
 // Rounded track slider for the dark capture bars.
 extern const QString darkSliderQss;
 

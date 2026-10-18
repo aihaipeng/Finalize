@@ -14,6 +14,7 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QInputDialog>
+#include <QPointer>
 #include <qt_windows.h>
 
 bool HotkeyFilter::nativeEventFilter(const QByteArray &, void *message, qintptr *)
@@ -83,9 +84,20 @@ void Controller::startCapture()
     });
     connect(ov, &CaptureOverlay::longRequested, this, [](const QRect &region) {
         auto *lc = new LongCapture(region);
-        connect(lc, &LongCapture::finished, lc, [region](const QPixmap &pix) {
-            const QScreen *scr = QGuiApplication::screenAt(region.topLeft());
+        connect(lc, &LongCapture::finished, lc, [lc](const QPixmap &pix, bool edit) {
+            const QRect region = lc->region();   // The selection may have moved along the scroll axis.
+            const QScreen *scr = QGuiApplication::screenAt(edit ? region.center() : region.topLeft());
             if (!scr) scr = QGuiApplication::primaryScreen();
+            if (edit) {
+                // The editor opens centered on the screen; back returns to the still-open capture.
+                auto *pin = new PinWindow(pix, LongCapture::editorGeometry(pix.size(), scr->devicePixelRatio(),
+                                                                           scr->availableGeometry()));
+                QPointer<LongCapture> session(lc);
+                connect(pin, &PinWindow::editorLeft, lc, [lc](bool back) { back ? lc->resume() : lc->cancel(); });
+                connect(pin, &QObject::destroyed, lc, [session] { if (session && session->suspended()) session->cancel(); });
+                pin->openEditor(true);
+                return;
+            }
             const QRect av = scr->availableGeometry().contains(region.topLeft())
                 ? scr->availableGeometry() : scr->geometry();
             new PinWindow(pix, PinWindow::fittedGeometry(pix.size(), region, av));

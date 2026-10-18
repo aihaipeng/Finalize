@@ -513,7 +513,36 @@ int PinWindow::testPlacement()
     editPin.setAttribute(Qt::WA_DeleteOnClose, false);
     editPin.toggleToolbar(true);
     const auto barButtons = editPin.m_toolbar->findChildren<QToolButton *>();
-    check(barButtons.size() == 15, "pin toolbar shows eight tools, undo/redo, four actions and done");
+    int shownButtons = 0;
+    for (QToolButton *b : barButtons) shownButtons += !b->isHidden();
+    check(shownButtons == 15 && editPin.m_backBtn->isHidden(),
+          "pin toolbar shows eight tools, undo/redo, four actions and done; no back button");
+    {
+        // Edited long captures get a back button just before done; back closes the pin and reports it.
+        PinWindow longEdit(flat, QRect(300, 200, 240, 160));
+        longEdit.setAttribute(Qt::WA_DeleteOnClose, false);
+        QList<bool> left;
+        QObject::connect(&longEdit, &PinWindow::editorLeft, [&left](bool back) { left << back; });
+        longEdit.openEditor(true);
+        QApplication::processEvents();
+        QLayout *row = longEdit.m_toolbar->layout();
+        check(!longEdit.m_backBtn->isHidden() && row->indexOf(longEdit.m_backBtn) == row->count() - 2,
+              "the back button sits just before done");
+        longEdit.m_backBtn->click();
+        QApplication::processEvents();
+        check(left == QList<bool>{true} && !longEdit.isVisible(), "back reports once and closes the editor pin");
+        PinWindow keep(flat, QRect(300, 200, 240, 160));
+        keep.setAttribute(Qt::WA_DeleteOnClose, false);
+        QList<bool> kept;
+        QObject::connect(&keep, &PinWindow::editorLeft, [&kept](bool back) { kept << back; });
+        keep.openEditor(true);
+        keep.toggleToolbar(false);
+        keep.toggleToolbar(true);
+        QApplication::processEvents();
+        check(kept == QList<bool>{false} && keep.isVisible() && keep.m_backBtn->isHidden(),
+              "done keeps the pin, reports once, and the back button does not return");
+        keep.toggleToolbar(false);
+    }
     QToolButton *shapeBtn = nullptr;
     QToolButton *translateBtn = nullptr;
     for (QToolButton *b : barButtons) {

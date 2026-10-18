@@ -24,6 +24,11 @@
 #include <QEventLoop>
 #include <QElapsedTimer>
 #include <QBuffer>
+#include <QToolButton>
+#include <QComboBox>
+#include <QStringList>
+#include <QApplication>
+#include <QCheckBox>
 #include <qt_windows.h>
 #include <cstdio>
 #include <cstdlib>
@@ -220,25 +225,80 @@ int LongCapture::testStitching()
                     "PNG export beyond 65000 rows round-trips every pixel");
     regressionCheck(!large.reserveRows(1 << 25, 0) && large.m_storageFull && large.toImage() == extended,
                     "memory budget rejection leaves the complete capture intact");
-    QLabel preview;
-    preview.resize(120, 240);
-    large.m_preview = &preview;
-    large.updateUi();
-    large.m_preview = nullptr;
-    regressionCheck(!preview.pixmap(Qt::ReturnByValue).isNull() && preview.pixmap(Qt::ReturnByValue).toImage()
-                        == extended.scaled(1, 240, Qt::IgnoreAspectRatio, Qt::FastTransformation),
-                    "very long preview scales the buffer view without copying the whole result first");
+    {
+        // The preview shows a bounded slice ending at the current frame, without copying the whole result.
+        const QRect screen = QGuiApplication::primaryScreen()->geometry();
+        large.m_region = QRect(screen.left() + 40, screen.top() + 200, 16, 300);
+        large.m_storageFull = false;
+        large.m_frameRow = large.m_rowEnd - 300;
+        large.m_lastFrame = longRows.copy(0, longRows.height() - 300, 16, 300);
+        large.updatePreview();
+        LongPreview *pv = large.m_preview;
+        regressionCheck(pv && !pv->image.isNull() && pv->atEnd && !pv->atStart && pv->showFrame
+                            && pv->frameRect.bottom() == pv->imageRect.bottom()
+                            && pv->imageRect.bottom() + 1 == large.m_region.bottom() + 1 - 4 - pv->geometry().top(),
+                        "very long preview slices the tail, frames the current frame, and bottom-aligns to the selection");
+        large.m_alignmentLost = true;
+        large.updatePreview();
+        regressionCheck(pv && !pv->showFrame, "a failed match drops the match frame");
+        large.m_alignmentLost = false;
+        delete large.m_preview;
+        large.m_preview = nullptr;
+    }
     auto *exportCapture = new LongCapture{QRect()};
     exportCapture->initTiles(16);
     regressionCheck(exportCapture->appendRows(extended, 0, extended.height()),
                     "a first frame larger than the growth step reserves enough storage");
     QPixmap exported;
-    QObject::connect(exportCapture, &LongCapture::finished, [&exported](const QPixmap &pix) { exported = pix; });
+    QObject::connect(exportCapture, &LongCapture::finished, [&exported](const QPixmap &pix, bool) { exported = pix; });
     exportCapture->finish();
     regressionCheck(exported.toImage() == extended, "very long pinned output retains the original pixels");
     LongCapture exportFailure{QRect()};
     exportFailure.finish();
     regressionCheck(!exportFailure.m_done, "failed export keeps the capture session open");
+    // Horizontal capture: frames are transposed onto the vertical stitcher and transposed back on export.
+    {
+        const QImage wide = motionPage.copy(0, 0, W, 1400);
+        const QImage page = transposed(wide);               // 1400 wide, W tall: content scrolls right.
+        regressionCheck(transposed(page) == wide, "transposing twice restores every pixel");
+        LongCapture horizontal{QRect(0, 0, H, W)};
+        horizontal.m_vertical = false;
+        bool aligned = true;
+        int right = H;
+        for (int pos : {0, 200, 450, 700, 450, 650, 900}) {
+            aligned = horizontal.ingest(page.copy(pos, 0, H, W)) && horizontal.m_frameRow == pos && aligned;
+            right = qMax(right, pos + H);
+        }
+        regressionCheck(aligned && horizontal.exportImage() == page.copy(0, 0, right, W),
+                        "horizontal scrolling stitches left to right and exports in screen orientation");
+    }
+    regressionCheck(autoScrollStep(299) == 25 && autoScrollStep(300) == 35 && autoScrollStep(499) == 35
+                        && autoScrollStep(500) == 45 && autoScrollStep(700) == 55 && autoScrollStep(899) == 55
+                        && autoScrollStep(900) == 65 && autoScrollStep(4000) == 65,
+                    "auto-scroll wheel step follows the selection extent table");
+    {
+        QImage text(200, 5000, QImage::Format_RGB32);
+        text.fill(Qt::white);
+        QPainter tp(&text);
+        tp.setPen(Qt::black);
+        for (int y = 0; y < text.height(); y += 30) tp.drawText(10, y + 20, QStringLiteral("line %1").arg(y));
+        tp.end();
+        const QVector<int> ends = ocrCuts(text, 1440);
+        bool blankCuts = ends.last() == text.height();
+        int top = 0;
+        for (int end : ends) {
+            blankCuts = blankCuts && end - top <= 1440 && end > top;
+            if (end != text.height()) {
+                const QRgb *row = reinterpret_cast<const QRgb *>(text.constScanLine(end - 1));
+                for (int x = 0; x < text.width(); ++x) blankCuts = blankCuts && row[x] == row[0];
+            }
+            top = end;
+        }
+        regressionCheck(ends.size() == 4 && blankCuts,
+                        "tall recognition input splits into bounded chunks on blank rows");
+        regressionCheck(ocrCuts(text.copy(0, 0, 200, 900), 1440) == QVector<int>{900},
+                        "short recognition input stays whole");
+    }
     QImage performancePage(1280, 3600, QImage::Format_RGB32);
     performancePage.fill(Qt::white);
     QPainter performancePainter(&performancePage);
@@ -297,12 +357,173 @@ int LongCapture::testOutput()
           "long-capture copy succeeds after the clipboard lock is released");
     LongCapture fullScreen(QGuiApplication::primaryScreen()->availableGeometry());
     fullScreen.buildUi();
-    fullScreen.m_affinityOk = true;
+    fullScreen.m_barAffinity = false;
     fullScreen.setUiVisible(false);
-    check(!fullScreen.m_bar->isVisible(), "toolbar hides independently of preview capture exclusion");
+    check(!fullScreen.m_bar->isVisible(), "a bar that is not capture-excluded hides while it overlaps the grab");
     fullScreen.setUiVisible(true);
     check(fullScreen.m_bar->isVisible(), "toolbar returns after capture");
+    fullScreen.m_barAffinity = true;
+    fullScreen.setUiVisible(false);
+    check(fullScreen.m_bar->isVisible(), "a capture-excluded bar stays up during the grab");
+    fullScreen.setUiVisible(true);
     fullScreen.cleanupUi();
+
+    const QRect screen = QGuiApplication::primaryScreen()->availableGeometry();
+    LongCapture session(QRect(screen.left() + 100, screen.top() + 100, 400, 300));
+    session.buildUi();
+    QStringList tips;
+    for (QToolButton *b : session.m_bar->findChildren<QToolButton *>()) tips << b->toolTip();
+    const QString ocrTip = session.m_ocrMissing.isEmpty() ? QStringLiteral("复制识别到的文字") : session.m_ocrMissing;
+    check(tips == QStringList{QStringLiteral("自动滚动截图"), QStringLiteral("裁剪"), QStringLiteral("编辑"), ocrTip,
+                              QStringLiteral("贴图"), QStringLiteral("保存"), QStringLiteral("关闭"), QStringLiteral("复制并关闭")},
+          "long-capture bar lists auto scroll, crop, edit, OCR copy, pin, save, close and copy-and-close in order");
+    check(!session.m_crop->isEnabled() && session.m_cropStart->toolTip() == QStringLiteral("裁剪顶部")
+              && session.m_cropEnd->toolTip() == QStringLiteral("裁剪底部"),
+          "crop waits for a captured image and its panel crops top and bottom");
+    check(session.m_label->text() == QStringLiteral("400 x 300") && session.m_dir->currentText() == QStringLiteral("纵向"),
+          "bar starts with the selection size and vertical direction");
+    bool allDisabled = true;
+    for (QToolButton *b : session.m_gated) allDisabled = allDisabled && !b->isEnabled();
+    check(allDisabled, "edit, OCR, pin and copy wait for a captured image");
+    QImage frame(400, 300, QImage::Format_RGB32);
+    frame.fill(Qt::white);
+    session.addFrame(frame);
+    session.updateButtons();
+    session.updateLabel();
+    check(session.m_gated.at(0)->isEnabled() && session.m_gated.at(2)->isEnabled() && session.m_gated.at(3)->isEnabled()
+              && session.m_label->text() == QStringLiteral("400 x 300"),
+          "captured rows enable the bounded outputs and the label shows the stitched size");
+    session.m_rowEnd = session.m_rowStart + 29001;          // Length gate only; rows are never read here.
+    session.updateButtons();
+    check(!session.m_gated.at(0)->isEnabled() && !session.m_gated.at(3)->isEnabled() && session.m_save->isEnabled(),
+          "images of 29001 rows or more keep only save");
+    session.m_rowEnd = session.m_rowStart + 300;
+    const QPoint barBefore = session.m_bar->pos();
+    const QPoint moved = session.moveRegion(QPoint(30, 40));
+    check(moved == QPoint(0, 40) && session.m_region.topLeft() == QPoint(screen.left() + 100, screen.top() + 140)
+              && session.m_bar->pos() == barBefore + QPoint(0, 40),
+          "the move control shifts the selection and bar along the scroll axis only");
+    check(session.moveRegion(QPoint(0, 5000)).isNull(), "a jump beyond a third of the screen is ignored");
+    session.m_dir->setCurrentIndex(1);
+    check(!session.m_vertical && session.logicalLength() == 0 && !session.m_autoScroll
+              && session.m_label->text() == QStringLiteral("400 x 300"),
+          "switching direction restarts the capture");
+    check(session.moveRegion(QPoint(25, 25)) == QPoint(25, 0), "horizontal sessions move along x");
+    check(session.m_cropStart->toolTip() == QStringLiteral("裁剪左侧") && session.m_cropEnd->toolTip() == QStringLiteral("裁剪右侧"),
+          "horizontal sessions crop left and right");
+    {
+        // Hovering the crop button opens its panel under the bar; leaving both closes it after a short delay.
+        session.addFrame(transposed(frame));
+        session.updateButtons();
+        QEvent enter(QEvent::Enter), leave(QEvent::Leave);
+        QApplication::sendEvent(session.m_crop, &enter);
+        QElapsedTimer t;
+        t.start();
+        while (!session.m_cropPanel->isVisible() && t.elapsed() < 1000) QApplication::processEvents();
+        check(session.m_cropPanel->isVisible() && session.m_cropPanel->y() >= session.m_bar->geometry().bottom(),
+              "hovering crop opens the panel below the bar");
+        QApplication::sendEvent(session.m_crop, &leave);
+        QApplication::sendEvent(session.m_cropPanel, &enter);
+        t.restart();
+        while (t.elapsed() < 350) QApplication::processEvents();
+        check(session.m_cropPanel->isVisible(), "moving onto the panel keeps it open");
+        QApplication::sendEvent(session.m_cropPanel, &leave);
+        t.restart();
+        while (session.m_cropPanel->isVisible() && t.elapsed() < 1000) QApplication::processEvents();
+        check(!session.m_cropPanel->isVisible(), "leaving the panel closes it");
+    }
+    {
+        // Back from the editor: the session hides and holds still, then returns as it was.
+        const int rows = session.logicalLength();
+        session.suspend();
+        check(session.suspended() && !session.m_bar->isVisible() && !session.m_mask->isVisible(),
+              "editing hides the session without ending it");
+        session.resume();
+        check(!session.suspended() && session.m_bar->isVisible() && session.m_mask->isVisible()
+                  && session.logicalLength() == rows,
+              "back restores the session with its stitched rows");
+    }
+    session.cleanupUi();
+    {
+        // Crop keeps the rows from the current frame to one end, in place.
+        QImage page(40, 1000, QImage::Format_RGB32);
+        for (int y = 0; y < page.height(); ++y)
+            for (int x = 0; x < page.width(); ++x) page.setPixel(x, y, qRgb(y % 256, y / 256, x));
+        LongCapture c{QRect()};
+        c.initTiles(40);
+        c.appendRows(page, 0, page.height());
+        c.m_lastFrame = page.copy(0, 300, 40, 200);
+        c.m_frameRow = 300;
+        c.cropBefore();
+        check(c.toImage() == page.copy(0, 300, 40, 700) && c.m_frameRow == c.m_rowStart,
+              "crop top keeps the current frame and everything after it");
+        c.m_frameRow = c.m_rowStart + 100;                 // Frame now at page row 400.
+        c.cropAfter();
+        check(c.toImage() == page.copy(0, 300, 40, 300), "crop bottom keeps everything up to the current frame's end");
+        c.m_frameRow = c.m_rowStart;
+        c.cropBefore();
+        check(c.toImage() == page.copy(0, 400, 40, 200) && c.m_lastFrame == c.toImage(),
+              "crop top at the start keeps the last frame's worth and re-anchors on it");
+        const QImage kept = c.toImage();
+        c.m_frameRow = c.m_rowStart;
+        c.cropAfter();
+        check(c.toImage() == kept, "nothing to crop leaves the image unchanged");
+        QImage tail(40, 200, QImage::Format_RGB32);
+        tail.fill(Qt::red);
+        c.m_frameRow = c.m_rowEnd - 200;
+        check(c.appendRows(tail, 0, 200) && c.toImage().copy(0, 200, 40, 200) == tail
+                  && c.toImage().copy(0, 0, 40, 200) == kept,
+              "capture continues to grow after a crop");
+    }
+    {
+        // Auto crop: once scrolling turns back from the direction it grew in, rows past the frame are dropped.
+        LongCapture c{QRect()};
+        c.m_autoCrop = true;
+        c.initTiles(40);
+        QImage rows(40, 2000, QImage::Format_RGB32);
+        for (int y = 0; y < rows.height(); ++y) rows.scanLine(y)[0] = uchar(y);
+        c.appendRows(rows, 0, 200);
+        c.m_lastFrame = rows.copy(0, 0, 40, 200);
+        c.m_frameRow = 0;
+        for (int top : {100, 200, 300, 400}) {               // Scroll down: the tail grows.
+            c.appendRows(rows, c.m_rowEnd, top + 200 - c.m_rowEnd);
+            c.m_frameRow = top;
+            c.autoCrop(1);
+        }
+        check(c.m_cropState == 1 && c.logicalLength() == 600, "growing toward the tail sets the crop direction");
+        c.m_frameRow = 250;                                    // Scroll back up inside the coverage.
+        c.autoCrop(0);
+        check(c.logicalLength() == 450 && c.m_rowEnd == 450, "scrolling back up drops the rows below the frame");
+        c.m_frameRow = 200;
+        c.autoCrop(0);
+        check(c.logicalLength() == 400, "continuing up keeps cropping to the frame");
+        LongCapture off{QRect()};
+        off.initTiles(40);
+        off.appendRows(rows, 0, 600);
+        off.m_lastFrame = rows.copy(0, 0, 40, 200);
+        off.m_frameRow = 400;
+        off.autoCrop(1);
+        off.m_frameRow = 100;
+        off.autoCrop(0);
+        check(off.logicalLength() == 600, "auto crop off leaves turning back alone");
+    }
+    {
+        // The editor shows the native size when it fits and scales down to fit otherwise, centered.
+        const QRect av(0, 0, 1920, 1040);
+        const QRect small = editorGeometry(QSize(600, 400), 1.0, av);
+        check(small.size() == QSize(600, 400) && qAbs(small.center().x() - av.center().x()) <= 1
+                  && qAbs(small.center().y() - av.center().y()) <= 1,
+              "a capture that fits opens at its native size in the screen center");
+        check(editorGeometry(QSize(1200, 800), 2.0, av).size() == QSize(600, 400),
+              "native size is in device pixels, shown at the screen's scale");
+        const QRect tall = editorGeometry(QSize(600, 6000), 1.0, av);
+        check(tall.height() <= av.height() - 2 * PinWindow::kShadowMargin - 48 && tall.width() == qFloor(600.0 * tall.height() / 6000)
+                  && qAbs(tall.center().x() - av.center().x()) <= 1 && tall.top() >= av.top() + PinWindow::kShadowMargin,
+              "a tall capture scales down proportionally to fit with room for the bar");
+        const QRect wide = editorGeometry(QSize(8000, 300), 1.0, av);
+        check(wide.width() <= av.width() - 2 * PinWindow::kShadowMargin && wide.left() >= av.left(),
+              "a wide capture scales down to fit the width");
+    }
     return failures ? 1 : 0;
 }
 

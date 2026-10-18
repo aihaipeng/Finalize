@@ -936,19 +936,30 @@ void PinWindow::toggleToolbar(bool enabled)
             connect(translateBtn, &QToolButton::clicked, this, &PinWindow::openTranslate);
             lay->addWidget(translateBtn);
 
+            m_backBtn = iconButton(Icon::Back, QStringLiteral("返回长截图"));
+            m_backBtn->setFocusPolicy(Qt::NoFocus);
+            connect(m_backBtn, &QToolButton::clicked, this, [this] {
+                m_canGoBack = false;
+                emit editorLeft(true);
+                close();
+            });
+            lay->addWidget(m_backBtn);
+
             // Done: hides the bar like the first Esc; the pin and its marks stay.
             auto *doneBtn = iconButton(Icon::Check, QStringLiteral("完成"));
             doneBtn->setFocusPolicy(Qt::NoFocus);
             connect(doneBtn, &QToolButton::clicked, this, [this] { toggleToolbar(false); });
             lay->addWidget(doneBtn);
 
-            m_toolbar->adjustSize();
         }
+        m_backBtn->setVisible(m_canGoBack);
+        m_toolbar->adjustSize();
         updateToolbarPosition();
         m_toolbar->show();
     } else {
         if (m_canvas) m_canvas->armTool(CaptureOverlay::ATool::None);   // Marks stay; the strip closes.
         if (m_toolbar) m_toolbar->hide();
+        if (m_canGoBack) { m_canGoBack = false; emit editorLeft(false); }
     }
 }
 

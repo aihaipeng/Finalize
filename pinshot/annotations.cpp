@@ -222,6 +222,11 @@ protected:
 private:
     bool m_glyphOnly;
 };
+}
+
+QComboBox *flatComboBox() { return new FlatComboBox; }
+
+namespace {
 
 // The native text item draws a dashed placeholder box for an empty focused document;
 // the overlay paints its own thin frame, so that decoration is masked here.
