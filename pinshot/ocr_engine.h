@@ -85,3 +85,8 @@ private:
     QString m_version;
     int m_recHeight = 48;
 };
+
+// Row ends for splitting a tall image into recognition-sized chunks, preferring uniform rows.
+QVector<int> ocrCuts(const QImage &image, int limit);
+// Recognition for tall captures: each chunk keeps the OCR detector's native text size.
+OcrResult recognizeChunked(const QImage &image, const OcrCancel &cancel);

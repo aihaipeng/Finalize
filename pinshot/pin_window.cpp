@@ -218,20 +218,6 @@ void PinWindow::resetProcessing()
     applyProcessedImage();
 }
 
-QRect PinWindow::fittedGeometry(const QSize &imageSize, const QRect &source, const QRect &available)
-{
-    if (imageSize.isEmpty() || source.isEmpty() || available.isEmpty())
-        return {};
-    // Fit from the capture origin, not the screen center; never enlarge the source width.
-    const int roomWidth = qMax(1, available.right() + 1 - source.left());
-    const int roomHeight = qMax(1, available.bottom() + 1 - source.top());
-    const double scale = qMin(double(source.width()) / imageSize.width(),
-                              qMin(double(roomWidth) / imageSize.width(),
-                                   double(roomHeight) / imageSize.height()));
-    return QRect(source.topLeft(), QSize(qMax(1, qRound(imageSize.width() * scale)),
-                                         qMax(1, qRound(imageSize.height() * scale))));
-}
-
 void PinWindow::paintEvent(QPaintEvent *)
 {
     QPainter p(this);

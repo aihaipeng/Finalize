@@ -30,6 +30,7 @@
 #include <QWheelEvent>
 #include <QApplication>
 #include <QCheckBox>
+#include <QSettings>
 #include <qt_windows.h>
 #include <cstdio>
 #include <cstdlib>
@@ -374,15 +375,18 @@ int LongCapture::testOutput()
     session.buildUi();
     QStringList tips;
     for (QToolButton *b : session.m_bar->findChildren<QToolButton *>()) tips << b->toolTip();
-    const QString ocrTip = session.m_ocrMissing.isEmpty() ? QStringLiteral("复制识别到的文字") : session.m_ocrMissing;
+    const QString ocrTip = session.m_ocrMissing.isEmpty() ? QStringLiteral("文字识别 (OCR)：截图与文本对照") : session.m_ocrMissing;
+    const QString translateTip = session.m_ocrMissing.isEmpty() ? QStringLiteral("翻译：识别并翻译为中文") : session.m_ocrMissing;
     check(tips == QStringList{QStringLiteral("自动向上滚动截图"), QStringLiteral("自动向下滚动截图"),
-                              QStringLiteral("裁剪"), QStringLiteral("编辑"), ocrTip,
+                              QStringLiteral("裁剪"), QStringLiteral("编辑"), ocrTip, translateTip,
                               QStringLiteral("贴图"), QStringLiteral("保存"), QStringLiteral("关闭"), QStringLiteral("复制并关闭")},
-          "long-capture bar lists both auto-scroll directions, crop, edit, OCR copy, pin, save, close and copy-and-close in order");
+          "long-capture bar lists both auto-scroll directions, crop, edit, OCR, translate, pin, save, close and copy-and-close in order");
+    const QPoint cursorBeforeAuto = QCursor::pos();
     session.m_auto->click();
     check(session.m_autoScroll == 1 && session.m_auto->isChecked() && !session.m_autoUp->isChecked()
-              && session.m_auto->isEnabled() && !session.m_autoUp->isEnabled(),
-          "scrolling down keeps the down button active and greys out the up button");
+              && session.m_auto->isEnabled() && !session.m_autoUp->isEnabled()
+              && QCursor::pos() == cursorBeforeAuto,
+          "scrolling down keeps the down button active, greys out the up button and leaves the pointer in place");
     session.m_auto->click();
     check(session.m_autoScroll == 0 && !session.m_auto->isChecked() && session.m_autoUp->isEnabled(),
           "clicking the active direction stops and enables the other");
@@ -400,18 +404,23 @@ int LongCapture::testOutput()
           "bar starts with the selection size and vertical direction");
     bool allDisabled = true;
     for (QToolButton *b : session.m_gated) allDisabled = allDisabled && !b->isEnabled();
-    check(allDisabled, "edit, OCR, pin and copy wait for a captured image");
+    check(allDisabled, "edit, OCR, translate, pin and copy wait for a captured image");
     QImage frame(400, 300, QImage::Format_RGB32);
     frame.fill(Qt::white);
     session.addFrame(frame);
     session.updateButtons();
     session.updateLabel();
-    check(session.m_gated.at(0)->isEnabled() && session.m_gated.at(2)->isEnabled() && session.m_gated.at(3)->isEnabled()
+    check(session.m_gated.at(0)->isEnabled() && session.m_gated.at(3)->isEnabled() && session.m_gated.at(4)->isEnabled()
+              && (session.m_ocrMissing.isEmpty()
+                      ? session.m_gated.at(1)->isEnabled() && session.m_gated.at(2)->isEnabled()
+                      : !session.m_gated.at(1)->isEnabled() && !session.m_gated.at(2)->isEnabled())
               && session.m_label->text() == QStringLiteral("400 x 300"),
           "captured rows enable the bounded outputs and the label shows the stitched size");
     session.m_rowEnd = session.m_rowStart + 29001;          // Length gate only; rows are never read here.
     session.updateButtons();
-    check(!session.m_gated.at(0)->isEnabled() && !session.m_gated.at(3)->isEnabled() && session.m_save->isEnabled(),
+    bool gatedOff = true;
+    for (QToolButton *b : session.m_gated) gatedOff = gatedOff && !b->isEnabled();
+    check(gatedOff && session.m_save->isEnabled(),
           "images of 29001 rows or more keep only save");
     session.m_rowEnd = session.m_rowStart + 300;
     const QPoint barBefore = session.m_bar->pos();
@@ -463,6 +472,31 @@ int LongCapture::testOutput()
               "back restores the session with its stitched rows");
     }
     session.cleanupUi();
+    if (session.m_ocrMissing.isEmpty()) {
+        // Both text cards use the same dialog as a normal capture and end the session when closed.
+        for (bool translate : {false, true}) {
+            auto *card = new LongCapture(QRect(screen.left() + 100, screen.top() + 100, 400, 300));
+            card->buildUi();
+            QImage page(400, 300, QImage::Format_RGB32);
+            page.fill(Qt::white);
+            card->addFrame(page);
+            card->updateButtons();
+            QPointer<LongCapture> alive(card);
+            (translate ? card->m_translate : card->m_ocr)->click();
+            check(alive && alive->m_ocrDialog && alive->m_ocrDialog->isVisible()
+                      && alive->m_ocrDialog->windowTitle()
+                          == (translate ? QStringLiteral("Finalize 翻译") : QStringLiteral("Finalize OCR"))
+                      && alive->suspended() && !alive->m_bar->isVisible(),
+                  translate ? "long capture translate opens the same translate card and pauses the session"
+                            : "long capture OCR opens the same OCR card and pauses the session");
+            alive->m_ocrDialog->close();
+            QElapsedTimer wait;
+            wait.start();
+            while (alive && wait.elapsed() < 2000) QApplication::processEvents();
+            check(!alive, translate ? "closing the translate card ends the long capture"
+                                    : "closing the OCR card ends the long capture");
+        }
+    }
     {
         // Auto scroll no longer stops when the pointer leaves: the wheel goes to the page under the selection.
         class WheelPage : public QWidget {
@@ -576,6 +610,11 @@ int LongCapture::testOutput()
 
 int LongCapture::testLiveCapture(const QString &previewPath)
 {
+    // The live row-count expectation assumes auto crop is off; keep the user's setting untouched.
+    QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+    const QVariant savedAutoCrop = settings.value(QStringLiteral("LongShot/AutoCrop"));
+    settings.setValue(QStringLiteral("LongShot/AutoCrop"), false);
+    settings.sync();
     class Page : public QWidget {
     public:
         QImage image;
@@ -631,11 +670,15 @@ int LongCapture::testLiveCapture(const QString &previewPath)
         passed = capture.m_preview->grab().save(previewPath) && passed;
     }
     if (capture.m_rowEnd != qRound((page.height() + 280) * scale)) {
-        std::fprintf(stderr, "FAIL: live capture accumulated an incorrect row count\n");
+        std::fprintf(stderr, "FAIL: live capture accumulated an incorrect row count (actual=%d expected=%d scale=%.3f)\n",
+                     capture.m_rowEnd, qRound((page.height() + 280) * scale), double(scale));
         passed = false;
     }
     capture.cancel();
     page.close();
+    if (savedAutoCrop.isValid()) settings.setValue(QStringLiteral("LongShot/AutoCrop"), savedAutoCrop);
+    else settings.remove(QStringLiteral("LongShot/AutoCrop"));
+    settings.sync();
     if (passed) std::printf("PASS: live GDI scrolling capture, preview, down/up/revisit, DPR %.2f\n", double(scale));
     return passed ? 0 : 1;
 }

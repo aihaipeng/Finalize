@@ -86,21 +86,18 @@ void Controller::startCapture()
         auto *lc = new LongCapture(region);
         connect(lc, &LongCapture::finished, lc, [lc](const QPixmap &pix, bool edit) {
             const QRect region = lc->region();   // The selection may have moved along the scroll axis.
-            const QScreen *scr = QGuiApplication::screenAt(edit ? region.center() : region.topLeft());
+            const QScreen *scr = QGuiApplication::screenAt(region.center());
             if (!scr) scr = QGuiApplication::primaryScreen();
-            if (edit) {
-                // The editor opens centered on the screen; back returns to the still-open capture.
-                auto *pin = new PinWindow(pix, LongCapture::editorGeometry(pix.size(), scr->devicePixelRatio(),
-                                                                           scr->availableGeometry()));
-                QPointer<LongCapture> session(lc);
-                connect(pin, &PinWindow::editorLeft, lc, [lc](bool back) { back ? lc->resume() : lc->cancel(); });
-                connect(pin, &QObject::destroyed, lc, [session] { if (session && session->suspended()) session->cancel(); });
-                pin->openEditor(true);
+            // The pin and the editor share one centered, proportionally fitted placement.
+            auto *pin = new PinWindow(pix, LongCapture::editorGeometry(pix.size(), scr->devicePixelRatio(),
+                                                                       scr->availableGeometry()));
+            if (!edit)
                 return;
-            }
-            const QRect av = scr->availableGeometry().contains(region.topLeft())
-                ? scr->availableGeometry() : scr->geometry();
-            new PinWindow(pix, PinWindow::fittedGeometry(pix.size(), region, av));
+            // The editor can come back to the still-open capture.
+            QPointer<LongCapture> session(lc);
+            connect(pin, &PinWindow::editorLeft, lc, [lc](bool back) { back ? lc->resume() : lc->cancel(); });
+            connect(pin, &QObject::destroyed, lc, [session] { if (session && session->suspended()) session->cancel(); });
+            pin->openEditor(true);
         });
         lc->start();
     });

@@ -26,12 +26,9 @@
 #include <QLinearGradient>
 #include <QMouseEvent>
 #include <QMessageBox>
-#include <QToolTip>
 #include <QCheckBox>
 #include <QSettings>
 #include <QSignalBlocker>
-#include <QFutureWatcher>
-#include <QtConcurrent>
 #include <qt_windows.h>
 
 namespace {
@@ -137,7 +134,11 @@ void LongCapture::scrollOnce()
     const int step = autoScrollStep(m_vertical ? m_region.height() : m_region.width());
     // Wheel data and WM_MOUSEWHEEL share signs: negative is down, positive is up; horizontal is positive right.
     const int delta = m_autoScroll * (m_vertical ? -step : step);
-    if (m_region.contains(QCursor::pos())) {
+    const QPoint cursor = QCursor::pos();
+    // The pointer stays where the user clicked; only a pointer resting on the page itself follows the wheel.
+    const bool overUi = (m_bar && m_bar->isVisible() && m_bar->geometry().contains(cursor))
+        || (m_cropPanel && m_cropPanel->isVisible() && m_cropPanel->geometry().contains(cursor));
+    if (m_region.contains(cursor) && !overUi) {
         INPUT input{};
         input.type = INPUT_MOUSE;
         input.mi.dwFlags = m_vertical ? MOUSEEVENTF_WHEEL : MOUSEEVENTF_HWHEEL;
@@ -154,27 +155,6 @@ void LongCapture::scrollOnce()
                      MAKEWPARAM(0, delta), MAKELPARAM(at.x(), at.y()));
 }
 
-QVector<int> LongCapture::ocrCuts(const QImage &image, int limit)
-{
-    QVector<int> ends;
-    const int H = image.height(), W = image.width();
-    const auto uniform = [&](int y) {
-        const QRgb *row = reinterpret_cast<const QRgb *>(image.constScanLine(y));
-        for (int x = 1; x < W; ++x)
-            if (row[x] != row[0]) return false;
-        return true;
-    };
-    int y = 0;
-    while (H - y > limit) {
-        int cut = y + limit;                    // Fall back to a hard split when no blank row is near the limit.
-        for (int r = y + limit - 1; r > y + limit * 2 / 3; --r)
-            if (uniform(r)) { cut = r + 1; break; }
-        ends.append(cut);
-        y = cut;
-    }
-    ends.append(H);
-    return ends;
-}
 
 QRect LongCapture::editorGeometry(const QSize &pixels, qreal dpr, const QRect &available)
 {
@@ -684,21 +664,23 @@ void LongCapture::buildUi()
     connect(m_cropEnd, &QToolButton::clicked, this, &LongCapture::cropAfter);
     connect(m_autoCropBox, &QCheckBox::toggled, this, &LongCapture::setAutoCrop);
     auto *edit = barButton(Icon::Pen, QStringLiteral("编辑"));
-    m_ocr = barButton(Icon::Ocr, QStringLiteral("复制识别到的文字"));
+    m_ocr = barButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)：截图与文本对照"));
+    m_translate = barButton(Icon::Translate, QStringLiteral("翻译：识别并翻译为中文"));
     m_ocrMissing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
     if (!m_ocrMissing.isEmpty()) m_ocr->setToolTip(m_ocrMissing);
+    if (!m_ocrMissing.isEmpty()) m_translate->setToolTip(m_ocrMissing);
     auto *pin = barButton(Icon::Pin, QStringLiteral("贴图"));
     auto *save = barButton(Icon::Save, QStringLiteral("保存"));
     auto *close = barButton(Icon::Cancel, QStringLiteral("关闭"));
     auto *copy = barButton(Icon::Copy, QStringLiteral("复制并关闭"));
-    m_gated = {edit, m_ocr, pin, copy};
+    m_gated = {edit, m_ocr, m_translate, pin, copy};
     m_save = save;
     lay->addWidget(m_grip);
     lay->addWidget(m_label);
     lay->addWidget(m_axis);
     lay->addWidget(barSeparator(true));
     lay->addWidget(m_dir);
-    for (QToolButton *b : {m_autoUp, m_auto, m_crop, edit, m_ocr, pin, save, close, copy}) {
+    for (QToolButton *b : {m_autoUp, m_auto, m_crop, edit, m_ocr, m_translate, pin, save, close, copy}) {
         b->setFocusPolicy(Qt::NoFocus);
         lay->addWidget(b);
     }
@@ -706,7 +688,8 @@ void LongCapture::buildUi()
     connect(m_autoUp, &QToolButton::toggled, this, [this](bool on) { setAutoScroll(on ? -1 : 0); });
     connect(m_auto, &QToolButton::toggled, this, [this](bool on) { setAutoScroll(on ? 1 : 0); });
     connect(edit, &QToolButton::clicked, this, [this] { finish(true); });
-    connect(m_ocr, &QToolButton::clicked, this, &LongCapture::ocrCopy);
+    connect(m_ocr, &QToolButton::clicked, this, [this] { openTextCard(false); });
+    connect(m_translate, &QToolButton::clicked, this, [this] { openTextCard(true); });
     connect(pin, &QToolButton::clicked, this, [this] { finish(false); });
     connect(save, &QToolButton::clicked, this, &LongCapture::saveCapture);
     connect(close, &QToolButton::clicked, this, &LongCapture::cancel);
@@ -766,9 +749,10 @@ void LongCapture::updateButtons()
 {
     const int length = logicalLength();
     const bool bounded = length > 0 && length < kMaxGatedLength;
-    for (QToolButton *b : m_gated) b->setEnabled(bounded && (b != m_ocr || m_ocrMissing.isEmpty()));
+    for (QToolButton *b : m_gated)
+        b->setEnabled(bounded && ((b != m_ocr && b != m_translate) || m_ocrMissing.isEmpty()));
     if (m_save) m_save->setEnabled(length > 0);
-    if (m_crop) m_crop->setEnabled(length > 0 && !m_ocrCancel);
+    if (m_crop) m_crop->setEnabled(length > 0);
     // The running direction owns the toggle; the other stays grey until it is stopped.
     if (m_autoUp) m_autoUp->setEnabled(m_autoScroll <= 0);
     if (m_auto) m_auto->setEnabled(m_autoScroll >= 0);
@@ -905,10 +889,7 @@ void LongCapture::setAutoScroll(int direction)
         const QSignalBlocker block(m_autoUp);
         m_autoUp->setChecked(m_autoScroll < 0);
     }
-    if (m_autoScroll) {
-        QCursor::setPos(m_region.center());     // Wheel input lands on the page under the selection.
-        m_scrollClock.invalidate();
-    }
+    if (m_autoScroll) m_scrollClock.invalidate();
     updateButtons();
 }
 
@@ -1033,7 +1014,7 @@ void LongCapture::notice(const QString &title, const QString &text, const QStrin
     connect(box, &QMessageBox::finished, this, [this, box, noAskKey] {
         if (!noAskKey.isEmpty() && box->checkBox() && box->checkBox()->isChecked())
             QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot")).setValue(noAskKey, true);
-        m_paused = bool(m_ocrCancel);            // Recognition keeps the capture still.
+        m_paused = false;                        // The dialog closed; capturing may resume.
     });
     box->show();
 }
@@ -1130,67 +1111,33 @@ void LongCapture::copyCapture()
     cancel();
 }
 
-void LongCapture::ocrCopy()
+void LongCapture::openTextCard(bool translate)
 {
     const QImage img = exportImage();
     if (img.isNull()) {
         fail(QStringLiteral("导出失败，请释放内存后重试"));
         return;
     }
-    if (m_ocrCancel) return;
-    // The session holds still and shows progress until the text is on the clipboard; close cancels it.
-    m_ocrCancel = std::make_shared<std::atomic_bool>(false);
-    m_paused = true;
-    setAutoScroll(0);
-    for (QWidget *w : QList<QWidget *>{m_dir, m_auto, m_autoUp, m_save, m_crop}
-                        + QList<QWidget *>(m_gated.begin(), m_gated.end()))
-        if (w) w->setEnabled(false);
-    if (m_label) { m_label->setText(QStringLiteral("正在识别文本，请稍候...")); placeBar(); }
-    auto *watcher = new QFutureWatcher<OcrResult>(this);
-    connect(watcher, &QFutureWatcher<OcrResult>::finished, this, [this, watcher] {
-        const OcrResult result = watcher->result();
-        watcher->deleteLater();
-        m_ocrCancel.reset();
-        if (m_done || result.cancelled) return;
-        QString error = result.error;
-        if (error.isEmpty() && result.text().trimmed().isEmpty()) error = QStringLiteral("未检测到文本");
-        else if (error.isEmpty() && !copyTextToClipboard(result.text()))
-            error = QStringLiteral("复制失败，剪贴板可能被占用，请重试");
-        if (!error.isEmpty()) {
-            m_paused = bool(m_notice);
-            for (QWidget *w : {static_cast<QWidget *>(m_dir), static_cast<QWidget *>(m_auto),
-                               static_cast<QWidget *>(m_autoUp)}) if (w) w->setEnabled(true);
-            updateButtons();
-            fail(error);
-            return;
-        }
-        QToolTip::showText(QCursor::pos(), QStringLiteral("文本复制成功"), nullptr, QRect(), 2000);
-        cancel();
-    });
-    const OcrCancel cancel = m_ocrCancel;
-    watcher->setFuture(QtConcurrent::run([img, cancel]() -> OcrResult {
-        // Recognition scales the long side to its input limit; tall images are read in screen-sized chunks.
-        // shortcut: A text line taller than the chunk search window may still be split; add overlap if that shows up.
-        OcrResult all;
-        int top = 0;
-        for (int end : ocrCuts(img, qMax(1440, img.width()))) {
-            const OcrResult part = OcrEngine::instance().recognize(img.copy(0, top, img.width(), end - top), cancel);
-            if (!part.error.isEmpty() || part.cancelled) return part;
-            all.lines += part.lines;
-            top = end;
-        }
-        return all;
-    }));
+    // The card replaces the session; closing it ends the capture like a normal text card does.
+    suspend();
+    auto *dialog = translate ? showTranslate(img, m_bar, m_region) : showOcr(img, m_bar, m_region);
+    m_ocrDialog = dialog;
+    if (!dialog) {
+        resume();
+        fail(QStringLiteral("无法打开识别窗口"));
+        return;
+    }
+    connect(dialog, &QDialog::finished, this, [this] { QTimer::singleShot(0, this, &LongCapture::cancel); });
 }
 
 void LongCapture::cleanupUi()
 {
-    if (m_ocrCancel) m_ocrCancel->store(true);
+    if (m_ocrDialog) m_ocrDialog->close();
     if (m_notice) m_notice->close();
     if (m_cropTimer) m_cropTimer->stop();
     for (QWidget **w : {&m_mask, &m_bar, &m_cropPanel}) if (*w) { (*w)->hide(); (*w)->deleteLater(); *w = nullptr; }
     if (m_preview) { m_preview->hide(); m_preview->deleteLater(); m_preview = nullptr; }
-    m_label = nullptr; m_dir = nullptr; m_auto = m_autoUp = nullptr; m_save = nullptr; m_ocr = nullptr;
+    m_label = nullptr; m_dir = nullptr; m_auto = m_autoUp = nullptr; m_save = nullptr; m_ocr = m_translate = nullptr;
     m_crop = m_cropStart = m_cropEnd = nullptr; m_autoCropBox = nullptr;
     m_grip = m_axis = nullptr;
     m_gated.clear();

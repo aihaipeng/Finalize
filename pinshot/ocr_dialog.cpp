@@ -1069,7 +1069,7 @@ void OcrDialog::start() {
     m_busy->show();
     m_status->setText(m_translate ? QString() : QStringLiteral("识别中 · · ·"));
     m_watcher.setFuture(QtConcurrent::run([&engine,image,cancel] {
-        const OcrResult result = engine.recognize(image,cancel);
+        const OcrResult result = recognizeChunked(image,cancel);
         engine.busy.store(false);
         return result;
     }));

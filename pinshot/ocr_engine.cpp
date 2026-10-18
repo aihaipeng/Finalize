@@ -318,6 +318,58 @@ QVector<QPolygonF> OcrEngine::mergeLineBoxes(QVector<QPolygonF> boxes) {
     return lines;
 }
 
+QVector<int> ocrCuts(const QImage &image, int limit)
+{
+    QVector<int> ends;
+    const int H = image.height(), W = image.width();
+    const auto uniform = [&](int y) {
+        const QRgb *row = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+        for (int x = 1; x < W; ++x)
+            if (row[x] != row[0]) return false;
+        return true;
+    };
+    int y = 0;
+    while (H - y > limit) {
+        int cut = y + limit;                    // Fall back to a hard split when no blank row is near the limit.
+        for (int r = y + limit - 1; r > y + limit * 2 / 3; --r)
+            if (uniform(r)) { cut = r + 1; break; }
+        ends.append(cut);
+        y = cut;
+    }
+    ends.append(H);
+    return ends;
+}
+
+OcrResult recognizeChunked(const QImage &image, const OcrCancel &cancel)
+{
+    if (image.isNull() || image.height() <= 1440)
+        return OcrEngine::instance().recognize(image, cancel);
+    QElapsedTimer timer;
+    timer.start();
+    OcrResult all;
+    int top = 0;
+    for (int end : ocrCuts(image, 1440)) {
+        const OcrResult part = OcrEngine::instance().recognize(image.copy(0, top, image.width(), end - top), cancel);
+        if (part.cancelled) {
+            all.cancelled = true;
+            all.lines.clear();
+            return all;
+        }
+        if (!part.error.isEmpty()) {
+            all.error = part.error;
+            return all;
+        }
+        for (OcrLine line : part.lines) {
+            line.box.translate(0, top);
+            for (QPolygonF &glyph : line.glyphs) glyph.translate(0, top);
+            all.lines.append(line);
+        }
+        top = end;
+    }
+    all.elapsed = timer.elapsed();
+    return all;
+}
+
 void OcrEngine::checked(OrtStatus *status) {
     if (!status) return;
     const std::string message = m_api->GetErrorMessage(status);

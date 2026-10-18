@@ -31,7 +31,6 @@ class PinWindow : public QWidget
 public:
     explicit PinWindow(const QPixmap &pix, const QRect &displayRect);
     ~PinWindow() override;
-    static QRect fittedGeometry(const QSize &imageSize, const QRect &source, const QRect &available);
     static int testPlacement();
     QMenu *createContextMenu();
     // The window keeps a transparent band around the image for its painted shadow.

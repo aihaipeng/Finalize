@@ -5,6 +5,7 @@
 #include "widgets.h"
 #include "pin_window.h"
 #include "ocr_engine.h"
+#include "ocr_dialog.h"
 #include <QObject>
 #include <QImage>
 #include <QPixmap>
@@ -51,9 +52,7 @@ public:
     QRect region() const { return m_region; }
     // Wheel delta per tick for the scroll-axis extent of the selection, in logical pixels.
     static int autoScrollStep(int extent);
-    // Row ends of the chunks a tall image is split into for recognition, preferring uniform rows.
-    static QVector<int> ocrCuts(const QImage &image, int limit);
-    // Editor placement: native size when it fits, scaled down to fit otherwise, centered with room for the bar below.
+    // Placed capture (editor or pin): native size when it fits, scaled down to fit otherwise, centered with room for the bar below.
     static QRect editorGeometry(const QSize &pixels, qreal dpr, const QRect &available);
     static int testStitching();
     static int testOutput();
@@ -113,7 +112,7 @@ private:
     // Save/copy/OCR end the session without creating a pinned image.
     void saveCapture();
     void copyCapture();
-    void ocrCopy();
+    void openTextCard(bool translate);               // Same OCR/translate card as a normal capture.
     void cleanupUi();
 private:
     QRect m_region;
@@ -137,8 +136,8 @@ private:
     QLabel *m_label = nullptr;
     QComboBox *m_dir = nullptr;
     QToolButton *m_auto = nullptr, *m_autoUp = nullptr, *m_save = nullptr;
-    QList<QToolButton *> m_gated;                    // Edit, OCR, pin, copy: bounded image length only.
-    QToolButton *m_ocr = nullptr;
+    QList<QToolButton *> m_gated;                    // Edit, OCR, translate, pin, copy: bounded image length only.
+    QToolButton *m_ocr = nullptr, *m_translate = nullptr;
     QString m_ocrMissing;
     bool m_barMoved = false;                         // The user dragged the bar away from its anchor.
     LongPreview *m_preview = nullptr;
@@ -151,7 +150,7 @@ private:
     bool m_storageFull = false, m_storageWarned = false;
     bool m_failWarned = false;
     QPointer<QMessageBox> m_notice;
-    OcrCancel m_ocrCancel;                           // Set while recognition for OCR copy runs.
+    QPointer<OcrDialog> m_ocrDialog;
     QToolButton *m_crop = nullptr, *m_cropStart = nullptr, *m_cropEnd = nullptr;
     QWidget *m_cropPanel = nullptr;                  // Opens while the crop button or the panel is hovered.
     QCheckBox *m_autoCropBox = nullptr;

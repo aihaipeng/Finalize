@@ -51,28 +51,6 @@ int PinWindow::testPlacement()
                       QSize(qRound(1920 / dpr), qRound(1080 / dpr))), displays) == display.native,
                   "screen mapping keeps native origins at uniform and mixed DPI, including negative screens");
     const QRect source(300, 200, 600, 400);
-    check(fittedGeometry(QSize(600, 400), source, available) == source,
-          "a short capture keeps its original position and size");
-    check(fittedGeometry(QSize(900, 600), source, available) == source,
-          "native capture pixels map back to the original logical size at 150 percent DPI");
-    check(fittedGeometry(QSize(600, 800), source, available) == QRect(300, 200, 600, 800),
-          "a long capture that fits is not reduced or centered");
-    const QRect tall = fittedGeometry(QSize(600, 2400), source, available);
-    check(tall == QRect(300, 200, 210, 840) && available.contains(tall),
-          "an oversized long capture uses the maximum height while retaining its origin");
-    check(fittedGeometry(QSize(900, 3600), source, available) == tall,
-          "oversized placement is independent of the native capture DPI");
-    check(fittedGeometry(QSize(1200, 600), QRect(1500, 200, 1200, 300), available)
-              == QRect(1500, 200, 420, 210),
-          "width overflow shrinks proportionally to the remaining screen width");
-    const QPoint offset(-1920, -1080);
-    check(fittedGeometry(QSize(600, 2400), source.translated(offset), available.translated(offset))
-              == tall.translated(offset),
-          "secondary screens with negative coordinates retain the capture origin");
-    check(fittedGeometry(QSize(600, 2400), QRect(1919, 1039, 600, 400), available)
-              == QRect(1919, 1039, 1, 1),
-          "edge captures keep a nonempty display inside the screen");
-    check(fittedGeometry(QSize(), source, available).isEmpty(), "empty images are rejected");
     QPixmap pixels(900, 600);
     pixels.fill(Qt::green);
     PinWindow pin(pixels, source);
@@ -91,7 +69,7 @@ int PinWindow::testPlacement()
     pin.close();
     QPixmap longPixels(600, 20000);
     longPixels.fill(Qt::green);
-    PinWindow longPin(longPixels, fittedGeometry(longPixels.size(), source, available));
+    PinWindow longPin(longPixels, LongCapture::editorGeometry(longPixels.size(), 1.0, available));
     longPin.setAttribute(Qt::WA_DeleteOnClose, false);
     const QSize fitted = longPin.imageRect().size();
     const QPoint longAnchor = longPin.geometry().center();
