@@ -58,6 +58,18 @@ void OcrEngine::testAlgorithms() {
     check(input == QVector<float>({-1,0,-1,0,1,0}),"detection and recognition use BGR, minus-one-to-one normalization and zero padding");
     const QSize reduced = detectionSize(QSize(2000,1000));
     check(reduced == QSize(1440,736),"large detection input shrinks and aligns to multiples of 32");
+    QVector<float> centers;
+    decode(logits,7,dictionary,&centers);
+    check(centers == QVector<float>({1.0f,3.5f,4.5f,6.5f}),"CTC reports the middle of each emitted token's step run");
+    const QPolygonF row{QPointF(0,0),QPointF(100,0),QPointF(100,20),QPointF(0,20)};
+    const auto glyphs = glyphBoxes(row,{0.125f,0.375f,0.625f});   // Binary-exact fractions.
+    check(glyphs.size()==3 && glyphs[0][0]==QPointF(0,0) && glyphs[0][1]==QPointF(25,0)
+              && glyphs[1][1]==QPointF(50,0) && glyphs[2][1]==QPointF(75,0) && glyphs[1][2]==QPointF(50,20),
+          "glyph boxes split a line halfway between character centres and keep the line height");
+    const QPolygonF column{QPointF(0,0),QPointF(20,0),QPointF(20,100),QPointF(0,100)};
+    const auto stacked = glyphBoxes(column,{0.25f,0.75f});
+    check(stacked.size()==2 && stacked[0][1]==QPointF(0,50) && stacked[0][3]==QPointF(20,0) && stacked[1][2]==QPointF(20,100),
+          "tall line boxes split top to bottom");
     bool invalid = false;
     try { decode(QVector<float>{1},1,dictionary); } catch (const std::exception &) { invalid=true; }
     check(invalid,"CTC rejects malformed tensor dimensions");

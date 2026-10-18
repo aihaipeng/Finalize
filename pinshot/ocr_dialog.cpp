@@ -158,8 +158,184 @@ void OcrImageView::wheelEvent(QWheelEvent *event)  {
 }
 
 void OcrImageView::mouseDoubleClickEvent(QMouseEvent *event)  {
+    // On text a double click selects the whole recognized line; elsewhere it fits the capture.
+    const int hit = event->button()==Qt::LeftButton ? glyphAt(event->position().toPoint(),false) : -1;
+    if (hit >= 0) {
+        int first = hit, last = hit;
+        while (first > 0 && m_glyphs[first-1].line == m_glyphs[hit].line) --first;
+        while (last+1 < m_glyphs.size() && m_glyphs[last+1].line == m_glyphs[hit].line) ++last;
+        m_press = -1; m_selecting = false;
+        selectRange(first,last);
+        event->accept(); return;
+    }
     fit();
     event->accept();
+}
+
+void OcrImageView::setTextLines(const QVector<OcrLine> &lines) {
+    m_textData.clear(); m_glyphs.clear(); m_highlighted.clear();
+    m_anchor = m_lead = m_press = -1; m_selecting = false;
+    viewport()->setMouseTracking(true);   // Hover alone must switch the cursor over text.
+    for (int l = 0; l < lines.size(); ++l) {
+        const OcrLine &line = lines[l];
+        if (!m_textData.isEmpty()) m_textData += QLatin1Char('\n');
+        const int base = int(m_textData.size());
+        m_textData += line.text;
+        if (line.glyphs.size() != line.text.size()) continue;   // Text without geometry stays unselectable.
+        for (int c = 0; c < line.text.size(); ++c)
+            if (!line.text[c].isSpace() && !line.glyphs[c].boundingRect().isEmpty())
+                m_glyphs.append(Glyph{line.glyphs[c], base+c, l});
+    }
+    viewport()->update();
+}
+
+int OcrImageView::glyphAt(const QPoint &viewPos, bool nearest) const {
+    // A glyph under the point wins; while dragging the closest glyph box follows the cursor.
+    const QPointF at = mapToScene(viewPos);
+    int best = -1;
+    double bestDistance = std::numeric_limits<double>::max();
+    for (int i = 0; i < m_glyphs.size(); ++i) {
+        if (m_glyphs[i].polygon.containsPoint(at,Qt::OddEvenFill)) return i;
+        if (!nearest) continue;
+        const QRectF r = m_glyphs[i].polygon.boundingRect();
+        const double dx = at.x()<r.left() ? r.left()-at.x() : at.x()>r.right() ? at.x()-r.right() : 0;
+        const double dy = at.y()<r.top() ? r.top()-at.y() : at.y()>r.bottom() ? at.y()-r.bottom() : 0;
+        if (dx*dx+dy*dy < bestDistance) { bestDistance = dx*dx+dy*dy; best = i; }
+    }
+    return best;
+}
+
+void OcrImageView::selectRange(int anchor, int lead) {
+    m_anchor = anchor; m_lead = lead;
+    viewport()->update();
+}
+
+QString OcrImageView::selectedText() const {
+    if (m_anchor < 0 || m_lead < 0 || m_glyphs.isEmpty()) return {};
+    const int first = qMin(m_anchor,m_lead), last = qMin(qMax(m_anchor,m_lead),int(m_glyphs.size())-1);
+    if (first > last) return {};
+    const int from = m_glyphs[first].textIndex, to = m_glyphs[last].textIndex;
+    return m_textData.mid(from,to-from+1);
+}
+
+void OcrImageView::highlightText(const QString &selection) {
+    m_highlighted.clear();
+    // Compatibility-folded and blank-free on both sides, so reflowed or width-converted text still finds its glyphs.
+    QString needle;
+    for (const QChar ch : selection.normalized(QString::NormalizationForm_KC))
+        if (!ch.isSpace() && ch != QChar(0x2029) && ch != QChar(0x2028)) needle += ch;
+    if (!needle.isEmpty() && !m_glyphs.isEmpty()) {
+        QHash<int,int> glyphOf;
+        for (int i = 0; i < m_glyphs.size(); ++i) glyphOf.insert(m_glyphs[i].textIndex,i);
+        QString hay;
+        QVector<int> source;
+        for (int i = 0; i < m_textData.size(); ++i) {
+            if (m_textData[i].isSpace()) continue;
+            for (const QChar ch : QString(m_textData[i]).normalized(QString::NormalizationForm_KC)) {
+                hay += ch; source.append(i);
+            }
+        }
+        QSet<int> marked;
+        for (int at = hay.indexOf(needle); at >= 0; at = hay.indexOf(needle,at+needle.size()))
+            for (int k = at; k < at+needle.size(); ++k)
+                if (glyphOf.contains(source[k])) marked.insert(glyphOf.value(source[k]));
+        m_highlighted = QVector<int>(marked.begin(),marked.end());
+        std::sort(m_highlighted.begin(),m_highlighted.end());
+    }
+    viewport()->update();
+}
+
+void OcrImageView::copySelection() {
+    const QString text = selectedText();
+    if (text.isEmpty()) return;
+    const bool ok = copyTextToClipboard(text);
+    if (copied) copied(ok);
+}
+
+void OcrImageView::mousePressEvent(QMouseEvent *event) {
+    if (event->button()==Qt::LeftButton && !m_glyphs.isEmpty()) {
+        setFocus(Qt::MouseFocusReason);
+        const int hit = glyphAt(event->position().toPoint(),false);
+        if (hit >= 0) {   // Text starts a selection, not a pan; the text cursor stays for the whole drag.
+            m_press = hit;
+            viewport()->setCursor(Qt::IBeamCursor);
+            event->accept(); return;
+        }
+        selectRange(-1,-1);
+    }
+    QGraphicsView::mousePressEvent(event);
+}
+
+void OcrImageView::mouseMoveEvent(QMouseEvent *event) {
+    if (m_press >= 0 && (event->buttons() & Qt::LeftButton)) {
+        if (!m_selecting) { m_selecting = true; selectRange(m_press,m_press); }
+        const int lead = glyphAt(event->position().toPoint(),true);
+        if (lead >= 0 && lead != m_lead) selectRange(m_anchor,lead);
+        event->accept(); return;
+    }
+    if (event->buttons()==Qt::NoButton && !m_glyphs.isEmpty())
+        viewport()->setCursor(glyphAt(event->position().toPoint(),false) >= 0 ? Qt::IBeamCursor : Qt::OpenHandCursor);
+    QGraphicsView::mouseMoveEvent(event);
+}
+
+void OcrImageView::mouseReleaseEvent(QMouseEvent *event) {
+    if (event->button()==Qt::LeftButton && m_press >= 0) {
+        // A click on text without a drag drops the selection.
+        if (!m_selecting) selectRange(-1,-1);
+        m_press = -1; m_selecting = false;
+        viewport()->setCursor(glyphAt(event->position().toPoint(),false) >= 0 ? Qt::IBeamCursor : Qt::OpenHandCursor);
+        event->accept(); return;
+    }
+    QGraphicsView::mouseReleaseEvent(event);
+}
+
+void OcrImageView::keyPressEvent(QKeyEvent *event) {
+    if (event->matches(QKeySequence::Copy) && !selectedText().isEmpty()) { copySelection(); event->accept(); return; }
+    QGraphicsView::keyPressEvent(event);
+}
+
+void OcrImageView::contextMenuEvent(QContextMenuEvent *event) {
+    if (selectedText().isEmpty()) { QGraphicsView::contextMenuEvent(event); return; }
+    QMenu menu(this);
+    QAction *copy = menu.addAction(QStringLiteral("复制"));
+    if (menu.exec(event->globalPos()) == copy) copySelection();
+    event->accept();
+}
+
+void OcrImageView::leaveEvent(QEvent *event) {
+    if (!m_glyphs.isEmpty()) viewport()->setCursor(Qt::OpenHandCursor);
+    QGraphicsView::leaveEvent(event);
+}
+
+void OcrImageView::drawForeground(QPainter *painter, const QRectF &rect) {
+    QGraphicsView::drawForeground(painter,rect);
+    if (m_glyphs.isEmpty()) return;
+    // Consecutive glyphs of one line paint as one quad: first glyph's leading edge to the last one's trailing edge.
+    const auto paintRuns = [&](const QVector<int> &indices) {
+        for (int i = 0; i < indices.size();) {
+            int j = i;
+            while (j+1 < indices.size() && indices[j+1] == indices[j]+1
+                   && m_glyphs[indices[j+1]].line == m_glyphs[indices[i]].line) ++j;
+            const QPolygonF &a = m_glyphs[indices[i]].polygon, &b = m_glyphs[indices[j]].polygon;
+            const QPolygonF run{a[0],b[1],b[2],a[3]};
+            if (run.boundingRect().intersects(rect)) painter->drawPolygon(run);
+            i = j+1;
+        }
+    };
+    painter->save();
+    painter->setPen(Qt::NoPen);
+    painter->setRenderHint(QPainter::Antialiasing);
+    if (!m_highlighted.isEmpty()) {
+        painter->setBrush(QColor(0xff,0xc4,0x00,110));
+        paintRuns(m_highlighted);
+    }
+    if (m_anchor >= 0 && m_lead >= 0) {
+        QVector<int> range;
+        for (int i = qMin(m_anchor,m_lead); i <= qMin(qMax(m_anchor,m_lead),int(m_glyphs.size())-1); ++i) range.append(i);
+        painter->setBrush(QColor(0x16,0x83,0xff,80));
+        paintRuns(range);
+    }
+    painter->restore();
 }
 
 QString PickerCombo::displayText() const
@@ -388,6 +564,10 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         fit->setToolTip(tip); fit->setAccessibleName(tip);
     };
     imageView->zoomed();
+    m_imageView = imageView;
+    imageView->copied = [this](bool ok) {
+        m_status->setText(ok ? QStringLiteral("已复制选中文字") : QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+    };
     for (QWidget *widget : {static_cast<QWidget *>(copyImage),static_cast<QWidget *>(zoomIn),
                             static_cast<QWidget *>(zoomOut),static_cast<QWidget *>(zoomLevel),static_cast<QWidget *>(fit)})
         imageActions->addWidget(widget);
@@ -614,6 +794,12 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     m_text->setAccessibleName(m_translate ? QStringLiteral("译文") : QStringLiteral("OCR 识别文本"));
     m_text->setReadOnly(true);
     m_findTarget = m_text;
+    // Selecting recognized text marks the same characters on the capture.
+    if (!m_translate)
+        connect(m_text,&QPlainTextEdit::selectionChanged,this,[this] {
+            const QTextCursor cursor = m_text->textCursor();
+            m_imageView->highlightText(cursor.hasSelection() ? cursor.selectedText() : QString());
+        });
     if (m_translate) font.setPointSizeF(font.pointSizeF()+1);   // The translation is what the card is for.
     m_text->setFont(font);
     m_busy = new QLabel(QStringLiteral("· · ·"));
@@ -766,6 +952,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         if (!m_translate) m_retry->setEnabled(true);
         else if (!result.error.isEmpty() || result.lines.isEmpty() || m_cancel->load()) setActionsEnabled(true);
         if (m_cancel->load()) return;
+        if (result.error.isEmpty()) m_imageView->setTextLines(result.lines);
         if (m_translate && (!result.error.isEmpty() || result.lines.isEmpty())) {
             // Recognition stopped: the user can still type the original and translate it.
             m_sourcePane->setReadOnly(false);

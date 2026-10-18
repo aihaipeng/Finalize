@@ -245,6 +245,20 @@ int OcrDialog::testTranslate()
         std::fprintf(stderr, "FAIL: source/translation blocks lack their own copy button and character count\n");
         return 1;
     }
+    // The capture in the translate card carries the recognized characters as selectable text.
+    if (!dialog.m_imageView || dialog.m_imageView->glyphCount() == 0) {
+        restore();
+        std::fprintf(stderr, "FAIL: translate card capture has no selectable text\n");
+        return 1;
+    }
+    dialog.m_imageView->selectRange(0, dialog.m_imageView->glyphCount() - 1);
+    if (!sourceText->toPlainText().contains(dialog.m_imageView->selectedText().section(QLatin1Char('\n'), 0, 0))) {
+        restore();
+        std::fprintf(stderr, "FAIL: capture selection does not read the recognized text (%s)\n",
+                     qPrintable(dialog.m_imageView->selectedText()));
+        return 1;
+    }
+    dialog.m_imageView->selectRange(-1, -1);
     const bool named = dialog.m_source->displayText() == QStringLiteral("语言检测 (英语)");
     bool edited = false, hazed = false, quiet = false;
     auto *mask = dialog.findChild<QWidget *>(QStringLiteral("retranslateMask"));

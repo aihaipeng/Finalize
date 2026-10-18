@@ -160,8 +160,12 @@ OcrResult OcrEngine::recognize(QImage image, const OcrCancel &cancel) {
                                               {1, 3, m_recHeight, width}, shape);
             if (shape.size() != 3 || shape[0] != 1 || shape[2] != m_characters.size())
                 throw std::runtime_error("Recognition output does not match its dictionary");
-            OcrLine line = decode(logits, int(shape[1]), m_characters);
+            QVector<float> centers;
+            OcrLine line = decode(logits, int(shape[1]), m_characters, &centers);
             line.box = box;
+            // A step spans width/steps input pixels; the line content fills the first contentWidth of them.
+            for (float &center : centers) center = center * width / float(shape[1]) / contentWidth;
+            line.glyphs = glyphBoxes(box, centers);
             if (!line.text.trimmed().isEmpty() && line.score >= 0.5f) result.lines.append(line);
         }
         result.cancelled = cancel->load();
@@ -174,11 +178,13 @@ OcrResult OcrEngine::recognize(QImage image, const OcrCancel &cancel) {
     return result;
 }
 
-OcrLine OcrEngine::decode(const QVector<float> &data, int steps, const QStringList &characters) {
+OcrLine OcrEngine::decode(const QVector<float> &data, int steps, const QStringList &characters,
+                          QVector<float> *centers) {
     OcrLine line;
     if (steps <= 0 || characters.isEmpty() || qint64(steps) * characters.size() != data.size())
         throw std::runtime_error("Invalid CTC tensor");
     int previous = -1, count = 0;
+    QVector<int> first, last, length;   // Step run and QChar count of every emitted token.
     for (int step = 0; step < steps; ++step) {
         const float *row = data.constData() + step * characters.size();
         const int best = int(std::max_element(row, row + characters.size()) - row);
@@ -186,11 +192,40 @@ OcrLine OcrEngine::decode(const QVector<float> &data, int steps, const QStringLi
             line.text += characters[best];
             line.score += row[best];
             ++count;
+            first.append(step); last.append(step); length.append(int(characters[best].size()));
+        } else if (best != 0 && !last.isEmpty()) {
+            last.last() = step;
         }
         previous = best;
     }
     if (count) line.score /= count;
+    if (centers) {
+        centers->clear();
+        for (int i = 0; i < first.size(); ++i)
+            for (int c = 0; c < length[i]; ++c) centers->append((first[i] + last[i] + 1) / 2.0f);
+    }
     return line;
+}
+
+QVector<QPolygonF> OcrEngine::glyphBoxes(const QPolygonF &box, const QVector<float> &centers) {
+    if (box.size() != 4 || centers.isEmpty()) return {};
+    // Tall boxes read top to bottom (the crop was turned), others left to right.
+    const QPointF across = box[1] - box[0], down = box[3] - box[0];
+    const bool vertical = std::hypot(down.x(), down.y()) >= 1.5 * std::hypot(across.x(), across.y());
+    const QPointF axis = vertical ? down : across, side = vertical ? across : down;
+    // Neighbouring characters meet halfway between their centres; the ends mirror the inner half.
+    const int n = int(centers.size());
+    QVector<double> edge(n + 1);
+    for (int i = 1; i < n; ++i) edge[i] = (centers[i-1] + centers[i]) / 2.0;
+    edge[0] = n > 1 ? centers[0] - (edge[1] - centers[0]) : 0.0;
+    edge[n] = n > 1 ? centers[n-1] + (centers[n-1] - edge[n-1]) : 1.0;
+    QVector<QPolygonF> glyphs;
+    for (int i = 0; i < n; ++i) {
+        const double a = qBound(0.0, edge[i], 1.0), b = qBound(a, edge[i+1], 1.0);
+        const QPointF from = box[0] + axis * a, to = box[0] + axis * b;
+        glyphs.append(QPolygonF{from, to, to + side, from + side});
+    }
+    return glyphs;
 }
 
 QVector<QPolygonF> OcrEngine::textBoxes(const QVector<float> &prob, const QSize &size, const QSize &original,

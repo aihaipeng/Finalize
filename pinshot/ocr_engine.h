@@ -25,6 +25,7 @@ struct OrtStatus;
 struct OcrLine {
     QString text;
     QPolygonF box;
+    QVector<QPolygonF> glyphs;   // One quad per QChar of text in image pixels; empty when unknown.
     float score = 0;
 };
 struct OcrResult {
@@ -54,7 +55,11 @@ public:
     static int testLanguages(const QString &previewPath);
     static QSize detectionSize(const QSize &source);
     OcrResult recognize(QImage image, const OcrCancel &cancel);
-    static OcrLine decode(const QVector<float> &data, int steps, const QStringList &characters);
+    // centers: per QChar of the text, the middle of its CTC steps, in steps.
+    static OcrLine decode(const QVector<float> &data, int steps, const QStringList &characters,
+                          QVector<float> *centers = nullptr);
+    // Splits a line box into one quad per character; centers are fractions along the reading axis.
+    static QVector<QPolygonF> glyphBoxes(const QPolygonF &box, const QVector<float> &centers);
     static QVector<QPolygonF> textBoxes(const QVector<float> &prob, const QSize &size, const QSize &original,
                                        const OcrCancel &cancel);
 private:

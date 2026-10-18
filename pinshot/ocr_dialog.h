@@ -36,13 +36,38 @@ public:
     int percent() const;                  // 100 = one capture pixel per screen pixel.
     void zoomTo(int percent);             // Around the view centre, clamped to 2..1600.
     std::function<void()> zoomed;         // Called after every scale change.
+    // Text on the capture: drag across characters to select them, Ctrl+C or the context menu copies.
+    void setTextLines(const QVector<OcrLine> &lines);
+    QString selectedText() const;
+    void selectRange(int anchor, int lead);   // Glyph indices; -1 clears.
+    // Marks the glyphs whose characters the text pane has selected (yellow, under the blue selection).
+    void highlightText(const QString &selection);
+    const QVector<int> &highlighted() const { return m_highlighted; }
+    int glyphCount() const { return int(m_glyphs.size()); }
+    QPolygonF glyphPolygon(int index) const { return m_glyphs.value(index).polygon; }
+    std::function<void(bool)> copied;     // Copy result of the selected text.
 protected:
     void resizeEvent(QResizeEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
+    void leaveEvent(QEvent *event) override;
+    void drawForeground(QPainter *painter, const QRectF &rect) override;
 private:
+    struct Glyph { QPolygonF polygon; int textIndex = -1, line = -1; };
+    int glyphAt(const QPoint &viewPos, bool nearest) const;
+    void copySelection();
     QRectF m_fit;
     bool m_zoomed = false;
+    QString m_textData;                   // Lines joined by '\n'; glyph textIndex points into it.
+    QVector<Glyph> m_glyphs;
+    QVector<int> m_highlighted;
+    int m_anchor = -1, m_lead = -1, m_press = -1;
+    bool m_selecting = false;
 };
 
 class QSplitter;
@@ -121,6 +146,7 @@ private:
     QToolButton *m_retry = nullptr, *m_copy = nullptr, *m_maximize = nullptr, *m_layout = nullptr,
                 *m_format = nullptr, *m_replaceToggle = nullptr;
     QSplitter *m_split = nullptr;
+    OcrImageView *m_imageView = nullptr;
     QWidget *m_imagePanel = nullptr, *m_find = nullptr, *m_replaceRow = nullptr;
     QLineEdit *m_findEdit = nullptr, *m_replaceEdit = nullptr;
     OcrCancel m_cancel;

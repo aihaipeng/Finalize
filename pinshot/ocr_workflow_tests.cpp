@@ -271,6 +271,74 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     check(text->font().pointSizeF()>=12 && dialog->font().pointSizeF()>=10.5 && copy->size()==QSize(28,28)
               && retry->size()==copy->size() && copy->iconSize()==QSize(16,16),
           "OCR uses readable point-sized system fonts and consistent 16px glyphs on 28px action targets");
+    // Recognized characters are selectable on the capture, and text-pane selections light them up.
+    const QString wantedLine=QStringLiteral("HelloWorld123");
+    const int glyphTotal=QString(expectedText).remove(QLatin1Char('\n')).size();
+    bool ordered=zoomView->glyphCount()==glyphTotal;
+    for (int i=1;ordered && i<zoomView->glyphCount();++i) {
+        const QRectF a=zoomView->glyphPolygon(i-1).boundingRect(), b=zoomView->glyphPolygon(i).boundingRect();
+        ordered = b.top()>a.center().y() || b.left()>=a.left();   // Left to right inside a row, rows top to bottom.
+    }
+    check(ordered,"every recognized character gets its own box on the capture, in reading order");
+    {
+        QTextCursor pick(text->document());
+        pick.setPosition(text->toPlainText().indexOf(wantedLine));
+        pick.setPosition(pick.position()+5,QTextCursor::KeepAnchor);   // "Hello"
+        text->setTextCursor(pick);
+    }
+    const QVector<int> lit=zoomView->highlighted();
+    const int helloFirst=QStringLiteral("截图文字识别").size();
+    check(lit==QVector<int>({helloFirst,helloFirst+1,helloFirst+2,helloFirst+3,helloFirst+4}),
+          "selecting text in the OCR pane highlights exactly those characters on the capture");
+    text->moveCursor(QTextCursor::End);
+    check(zoomView->highlighted().isEmpty(),"clearing the text selection clears the capture highlight");
+    const auto viewMouse=[&](QEvent::Type type,int glyph,Qt::MouseButtons buttons) {
+        const QPoint at=zoomView->mapFromScene(zoomView->glyphPolygon(glyph).boundingRect().center());
+        QMouseEvent event(type,QPointF(at),QPointF(zoomView->viewport()->mapToGlobal(at)),
+                          type==QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,buttons,Qt::NoModifier);
+        QApplication::sendEvent(zoomView->viewport(),&event);
+    };
+    viewMouse(QEvent::MouseMove,helloFirst+1,Qt::NoButton);
+    const bool hoverBeam=zoomView->viewport()->hasMouseTracking() && zoomView->viewport()->cursor().shape()==Qt::IBeamCursor;
+    const QPointF centreBefore=zoomView->mapToScene(zoomView->viewport()->rect().center());
+    viewMouse(QEvent::MouseButtonPress,helloFirst+5,Qt::LeftButton);        // "W"
+    viewMouse(QEvent::MouseMove,helloFirst+9,Qt::LeftButton);
+    const bool dragBeam=zoomView->viewport()->cursor().shape()==Qt::IBeamCursor;
+    viewMouse(QEvent::MouseMove,helloFirst+12,Qt::LeftButton);              // "3"
+    viewMouse(QEvent::MouseButtonRelease,helloFirst+12,Qt::NoButton);
+    check(hoverBeam && dragBeam,"hovering and dragging over capture text show the text cursor, not the hand");
+    const bool dragged=zoomView->selectedText()==QStringLiteral("World123")
+        && zoomView->mapToScene(zoomView->viewport()->rect().center())==centreBefore;
+    QApplication::clipboard()->clear();
+    zoomView->setFocus();
+    QKeyEvent copyKey(QEvent::KeyPress,Qt::Key_C,Qt::ControlModifier);
+    QApplication::sendEvent(zoomView,&copyKey);
+    check(dragged && QApplication::clipboard()->text()==QStringLiteral("World123") && status->text()==QStringLiteral("已复制选中文字"),
+          "dragging across capture text selects it without panning and Ctrl+C copies it");
+    viewMouse(QEvent::MouseButtonPress,0,Qt::LeftButton);
+    viewMouse(QEvent::MouseMove,glyphTotal-1,Qt::LeftButton);
+    viewMouse(QEvent::MouseButtonRelease,glyphTotal-1,Qt::NoButton);
+    check(zoomView->selectedText()==expectedText,"a selection across rows keeps the recognized line breaks");
+    viewMouse(QEvent::MouseButtonPress,3,Qt::LeftButton);
+    viewMouse(QEvent::MouseButtonRelease,3,Qt::NoButton);
+    check(zoomView->selectedText().isEmpty(),"a click on text without dragging drops the capture selection");
+    {
+        const QPoint at=zoomView->mapFromScene(zoomView->glyphPolygon(helloFirst+2).boundingRect().center());
+        QMouseEvent twice(QEvent::MouseButtonDblClick,QPointF(at),QPointF(zoomView->viewport()->mapToGlobal(at)),
+                          Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+        QApplication::sendEvent(zoomView->viewport(),&twice);
+    }
+    check(zoomView->selectedText()==wantedLine && zoomView->fitted(),"double-clicking capture text selects its whole line instead of refitting");
+    zoomView->selectRange(-1,-1);
+    if (!previewPath.isEmpty()) {
+        QTextCursor pick(text->document());
+        pick.setPosition(text->toPlainText().indexOf(wantedLine));
+        pick.setPosition(pick.position()+wantedLine.size(),QTextCursor::KeepAnchor);
+        text->setTextCursor(pick);
+        QApplication::processEvents();
+        check(dialog->grab().save(previewPath+QStringLiteral("-highlight.png")),"save text highlight preview");
+        text->moveCursor(QTextCursor::End);
+    }
     const auto contrast = [](const QColor &a,const QColor &b) {
         const auto luminance = [](const QColor &color) {
             const auto linear=[](double value) { return value<=0.04045 ? value/12.92 : std::pow((value+0.055)/1.055,2.4); };
