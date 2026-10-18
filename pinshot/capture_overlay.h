@@ -252,10 +252,6 @@ private:
     Handle hitHandle(const QPoint &p) const;
     static Qt::CursorShape cursorForHandle(Handle h);
     QRect resizeBy(Handle h, const QPoint &pos);
-    // Magnetic edges: snap selection edges to nearby screen and window anchors.
-    enum { SnapThreshold = 8 };
-    QVector<int> snapAnchorLines(bool horizontal) const;
-    void applySnap(Handle h);
     void updateTip();
     void buildToolLayout();
     void placeToolbar();
@@ -291,7 +287,6 @@ private:
     bool m_dragStarted = false;
     QRect m_hover;                                  // Detected window under the cursor; drives the mask hole while idle.
     QRect m_pressWindow;                            // Window under the press point; a click without drag selects it.
-    int m_snapX = -1, m_snapY = -1;                 // Active magnetic-anchor lines while dragging.
     PixelInspector *m_inspector = nullptr;
     QPoint m_pressPos;
     QRect m_sel, m_pressSel;

@@ -215,7 +215,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         check(bounds.contains(positioned) && !positioned.contains(cursor), "panel stays on screen and avoids the cursor");
     }
     check(overlay.m_shot.toImage() == frozen, "magnifier and format changes must not alter capture pixels");
-    // Magnetic edge snapping while creating, moving, and resizing a selection.
+    // Creating, moving and resizing a selection track the cursor exactly (no magnetic snapping).
     const QRect screenGeo = QGuiApplication::primaryScreen()->geometry();
     const QPoint screenOrigin = screenGeo.topLeft() - overlay.geometry().topLeft();
     const auto mouseMove = [&overlay](const QPoint &local) {
@@ -227,26 +227,23 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     overlay.m_drag = H_New;
     overlay.m_mode = Selecting;
     mouseMove(screenOrigin + QPoint(screenGeo.width() - 6, 120));
-    check(overlay.m_sel.right() + 1 == screenOrigin.x() + screenGeo.width() && overlay.m_snapX == screenOrigin.x() + screenGeo.width(),
-          "new selection snaps its right edge to the screen border");
+    check(overlay.m_sel == QRect(screenOrigin + QPoint(40, 40), screenOrigin + QPoint(screenGeo.width() - 6, 120)),
+          "a new selection follows the cursor without snapping");
     overlay.m_sel = QRect(screenOrigin + QPoint(20, 20), QSize(60, 40));
     overlay.m_pressSel = overlay.m_sel;          // H_Move diffs against the press snapshot.
     overlay.m_pressPos = screenOrigin + QPoint(50, 40);
     overlay.m_drag = H_Move;
     overlay.m_mode = Adjusting;
-    mouseMove(screenOrigin + QPoint(38, 40));   // Lands 8px from the screen border.
-    check(overlay.m_sel.left() == screenOrigin.x() && overlay.m_snapX == screenOrigin.x(),
-          "moving the selection snaps its left edge to the screen border");
-    check(overlay.m_sel.size() == QSize(60, 40), "edge snapping preserves the selection size while moving");
+    mouseMove(screenOrigin + QPoint(38, 40));   // 8px from the screen border: no pull.
+    check(overlay.m_sel == QRect(screenOrigin + QPoint(8, 20), QSize(60, 40)),
+          "moving the selection follows the cursor without snapping");
     overlay.m_pressSel = overlay.m_sel;
     overlay.m_pressPos = screenOrigin + QPoint(38, 40);
     overlay.m_drag = H_R;
-    mouseMove(screenOrigin + QPoint(screenGeo.width() - 3, 40));
-    check(overlay.m_sel.right() + 1 == screenOrigin.x() + screenGeo.width(),
-          "resizing snaps the dragged edge to the screen border");
-    mouseMove(screenOrigin + QPoint(200, 40));
-    check(overlay.m_sel.right() + 1 == screenOrigin.x() + 201 && overlay.m_snapX < 0,
-          "no snap indicator appears away from anchor lines");
+    for (int x : {screenGeo.width() - 3, screenGeo.width() - 9, 200}) {
+        mouseMove(screenOrigin + QPoint(x, 40));
+        check(overlay.m_sel.right() == screenOrigin.x() + x, "resizing tracks the cursor pixel for pixel");
+    }
     // A fresh capture selects a detected window; dragging overrides that window hit.
     overlay.resetSelection();
     overlay.m_detectionOptions.elements = true;
@@ -281,8 +278,8 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     overlay.m_drag = H_R;
     overlay.m_mode = Adjusting;
     mouseMove(screenOrigin + QPoint(196, 70));   // 4px short of the window's right edge (200).
-    check(overlay.m_sel.right() + 1 == screenOrigin.x() + 200,
-          "resizing snaps the dragged edge to a window edge");
+    check(overlay.m_sel.right() == screenOrigin.x() + 196,
+          "resizing near a window edge is not pulled onto it");
     // Hover: the mask hole follows the detected window before any selection exists.
     overlay.m_sel = QRect();
     overlay.m_mode = Selecting;

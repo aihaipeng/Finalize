@@ -283,15 +283,6 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         p.setPen(QPen(QColor("#2080f0"), 1));
         p.drawRect(QRectF(hole).adjusted(0.5, 0.5, -0.5, -0.5));
     }
-    const QColor snapColor(0, 229, 255);        // Magnetic-snap indicator lines.
-    if (m_snapX >= 0) {
-        p.setPen(QPen(snapColor, 1));
-        p.drawLine(m_snapX, hole.top() - 10, m_snapX, hole.bottom() + 10);
-    }
-    if (m_snapY >= 0) {
-        p.setPen(QPen(snapColor, 1));
-        p.drawLine(hole.left() - 10, m_snapY, hole.right() + 10, m_snapY);
-    }
     if (m_mode == Adjusting && !m_sel.isNull())   // Annotations clip to the selection.
         paintAnnotations(p, QPointF(0, 0), 1.0, QRectF(m_sel), false);
     if (m_live && regionItem(m_ann))              // Thin frame shows the dragged region.
@@ -354,7 +345,6 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
 
 void CaptureOverlay::mousePressEvent(QMouseEvent *e)
 {
-    m_snapX = m_snapY = -1;                     // Clear magnetic-snap indicators.
     cancelDetection();
     m_nudging = false;
     const bool wasEditing = editorActive();
@@ -511,7 +501,6 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
         m_pressSel = m_sel;
         if (m_drag != H_None && m_drag != H_Move && !m_sel.contains(e->pos())) {
             m_sel = resizeBy(m_drag, e->pos());  // Outside presses extend the existing edge or corner.
-            applySnap(m_drag);
             hideToolBars();
             updateTip();
             update();
@@ -589,7 +578,6 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
     } else {
         m_sel = resizeBy(m_drag, pos);
     }
-    applySnap(m_drag);
     updateInspector();
     updateTip();
     update();
@@ -639,7 +627,6 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
         m_sel = m_pressWindow;
     }
     m_drag = H_None;
-    m_snapX = m_snapY = -1;                     // Snap indicators only live during a drag.
     m_sel = m_sel.normalized();
     if (m_sel.width() < 4 || m_sel.height() < 4) {
         if (m_pressWindow.isEmpty()) {          // Plain click on empty space: nothing selected.
@@ -754,7 +741,6 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
         m_sel = m_sel == current ? rect() : current;
         m_mode = Adjusting;
         m_hover = {};
-        m_snapX = m_snapY = -1;
         placeToolbar(); showToolBars(); updateTip(); update();
         updateInspector();
         return;
@@ -781,7 +767,6 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
             cancelDetection();
             m_sel.translate(delta);
             m_sel.moveTo(qBound(0,m_sel.x(),width()-m_sel.width()),qBound(0,m_sel.y(),height()-m_sel.height()));
-            m_snapX = m_snapY = -1;
             placeToolbar(); showToolBars(); updateTip(); update();
             updateInspector();
             return;
@@ -1240,82 +1225,6 @@ QRect CaptureOverlay::resizeBy(Handle h, const QPoint &pos)
     }
     return QRect(QPoint(qMin(r.left(),r.right()),qMin(r.top(),r.bottom())),
                  QPoint(qMax(r.left(),r.right()),qMax(r.top(),r.bottom())));
-}
-
-QVector<int> CaptureOverlay::snapAnchorLines(bool horizontal) const
-{
-    QVector<int> out;
-    for (const QScreen *s : QGuiApplication::screens()) {
-        const QRect g = localScreenRect(s->geometry());
-        if (horizontal)
-            out << g.left() << g.right() + 1 << g.center().x();
-        else
-            out << g.top() << g.bottom() + 1 << g.center().y();
-    }
-    for (const DetectedWindow &w : m_windowRects) {  // Window edges as magnetic anchors.
-        if (horizontal)
-            out << w.native.left() << w.native.right() + 1;
-        else
-            out << w.native.top() << w.native.bottom() + 1;
-    }
-    return out;
-}
-
-void CaptureOverlay::applySnap(Handle h)
-{
-    m_snapX = m_snapY = -1;
-    if (h == H_None || m_sel.isNull())
-        return;
-    const QVector<int> ax = snapAnchorLines(true), ay = snapAnchorLines(false);
-    int (*nearest)(const QVector<int> &, int) = [](const QVector<int> &anchors, int v) {
-        int best = v, dist = SnapThreshold + 1;
-        for (int a : anchors) {
-            const int d = qAbs(a - v);
-            if (d < dist) { dist = d; best = a; }
-        }
-        return best;
-    };
-    if (h == H_New || h == H_Move) {
-        // Whole rectangle: shift so that any edge lands on the nearest anchor.
-        for (int axis = 0; axis < 2; ++axis) {
-            const QVector<int> &anchors = axis ? ay : ax;
-            const int e0 = axis ? m_sel.top() : m_sel.left();
-            const int e1 = axis ? m_sel.bottom() + 1 : m_sel.right() + 1;
-            int shift = 0, dist = SnapThreshold + 1, anchor = 0;
-            for (int e : {e0, e1})
-                for (int a : anchors) {
-                    const int d = qAbs(a - e);
-                    if (d < dist) { dist = d; shift = a - e; anchor = a; }
-                }
-            if (dist <= SnapThreshold) {
-                if (axis) { m_snapY = anchor; m_sel.translate(0, shift); }
-                else      { m_snapX = anchor; m_sel.translate(shift, 0); }
-            }
-        }
-        return;
-    }
-    // Edge/corner resize: only the dragged edges snap.
-    const bool left = h == H_L || h == H_TL || h == H_BL;
-    const bool right = h == H_R || h == H_TR || h == H_BR;
-    const bool top = h == H_T || h == H_TL || h == H_TR;
-    const bool bottom = h == H_B || h == H_BL || h == H_BR;
-    if (left) {
-        const int v = nearest(ax, m_sel.left());
-        if (v != m_sel.left()) { m_snapX = v; m_sel.setLeft(v); }
-    }
-    if (right) {
-        const int v = nearest(ax, m_sel.right() + 1);
-        if (v != m_sel.right() + 1) { m_snapX = v; m_sel.setRight(v - 1); }
-    }
-    if (top) {
-        const int v = nearest(ay, m_sel.top());
-        if (v != m_sel.top()) { m_snapY = v; m_sel.setTop(v); }
-    }
-    if (bottom) {
-        const int v = nearest(ay, m_sel.bottom() + 1);
-        if (v != m_sel.bottom() + 1) { m_snapY = v; m_sel.setBottom(v - 1); }
-    }
-    m_sel = m_sel.normalized();
 }
 
 void CaptureOverlay::updateTip()
