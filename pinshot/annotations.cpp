@@ -7,6 +7,8 @@
 #include "pin_window.h"
 #include "long_capture.h"
 #include "ocr_dialog.h"
+#include "smart_erase.h"
+#include <QThreadPool>
 #include <QGuiApplication>
 #include <QObject>
 #include <QImage>
@@ -531,8 +533,10 @@ QVector<CaptureOverlay::Annotation> CaptureOverlay::annotationSnapshot() const
     QVector<Annotation> snapshot = m_anns;
     for (Annotation &ann : snapshot) {
         ann.mosaicCache = {};
-        ann.mosaicSource = {};
         ann.mosaicCacheStrength = 0;
+        // A finished erase is shared (implicitly) so undo/redo shows it without re-running.
+        if (!ann.mosaicSmart || ann.smartResult.isNull()) ann.mosaicSource = {};
+        ann.smartPending = ann.smartFailed = false;
     }
     return snapshot;
 }
@@ -638,6 +642,7 @@ void CaptureOverlay::deleteSelected()
     stopItemDrag();
     if (m_selAnn < 0 || m_selAnn >= m_anns.size()) { m_selAnn = -1; return; }
     pushUndo();
+    ++m_smartEpoch;                              // In-flight erases must not land on shifted indexes.
     m_anns.removeAt(m_selAnn);
     m_selAnn = -1;
     normalizeNumbers();
@@ -917,6 +922,7 @@ void CaptureOverlay::commitTextEdit()
     }
     if (changed) {
         pushUndo();
+        ++m_smartEpoch;                          // In-flight erases must not land on shifted indexes.
         if (text.trimmed().isEmpty()) {         // Clearing the text deletes the annotation.
             m_anns.removeAt(m_editAnn);
             if (m_selAnn == m_editAnn) m_selAnn = -1;
@@ -1013,28 +1019,42 @@ bool CaptureOverlay::mosaicBlur() const
     return m_mosaicBlur;
 }
 
+bool CaptureOverlay::mosaicSmart() const
+{
+    if (m_live) return m_ann.mosaicSmart;
+    if (m_selAnn >= 0 && m_selAnn < m_anns.size()) return m_anns[m_selAnn].mosaicSmart;
+    return m_mosaicSmart;
+}
+
 void CaptureOverlay::switchMosaicEffect()
 {
     if (optionsTool() != ATool::Mosaic) return;
-    const bool blur = !mosaicBlur();
-    m_mosaicBlur = blur;
+    // Cycle pixelate -> blur -> smart -> pixelate.
+    const bool smart = mosaicSmart(), blur = mosaicBlur() && !smart;
+    const bool nextSmart = blur;
+    const bool nextBlur = !blur && !smart;
+    m_mosaicBlur = nextBlur;
+    m_mosaicSmart = nextSmart;
     Annotation *ann = m_live ? &m_ann : nullptr;
     if (!ann && m_selAnn >= 0 && m_selAnn < m_anns.size()) {
         pushUndo();
         ann = &m_anns[m_selAnn];
     }
     if (ann) {
-        ann->mosaicBlur = blur;
-        ann->mosaicStrength = ann->mosaicLevels[blur];
+        ann->mosaicBlur = nextBlur;
+        ann->mosaicSmart = nextSmart;
+        ann->mosaicStrength = ann->mosaicLevels[nextBlur ? 1 : 0];
         ann->mosaicCacheStrength = 0;
+        if (nextSmart) ann->smartResult = {};       // Repaint schedules a fresh erase.
     }
+    // Rebuilding the strip here would delete the button mid-click; toggle instead.
     syncSizeInput();
     update();
 }
 
 void CaptureOverlay::setMosaicStrength(int value)
 {
-    if (optionsTool() != ATool::Mosaic) return;
+    if (optionsTool() != ATool::Mosaic || mosaicSmart()) return;   // The smart mode has no strength.
     value = qBound(3, value, 24);
     if (value != mosaicStrength()) {
         m_mosaicLevels[mosaicBlur()] = value;
@@ -1063,6 +1083,53 @@ void CaptureOverlay::selectMosaicMode(bool brush)
     if (m_live) { m_live = false; commitAnnotation(); }
     m_mosaicBrush = brush;
     selectTool(ATool::Mosaic);
+}
+
+QImage CaptureOverlay::smartEraseMask(const Annotation &ann, const QSize &deviceSize, qreal dpr)
+{
+    if (deviceSize.isEmpty() || dpr <= 0) return {};
+    QImage mask(deviceSize, QImage::Format_Grayscale8);
+    mask.fill(255);                                  // 255 keeps pixels, 0 marks the hole.
+    QPainter painter(&mask);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(Qt::black);
+    painter.scale(dpr, dpr);
+    if (ann.mosaicBrush) painter.drawPath(strokeMask(ann.stroke, ann.pen));
+    else painter.drawRect(QRectF(ann.rect));
+    painter.end();
+    return mask;
+}
+
+void CaptureOverlay::scheduleSmartErase(int index, const QImage &source)
+{
+    if (index < 0 || index >= m_anns.size() || source.isNull()) return;
+    Annotation &ann = m_anns[index];
+    if (ann.tool != ATool::Mosaic || !ann.mosaicSmart || ann.smartPending) return;
+    const QImage mask = smartEraseMask(ann, source.size(), m_shot.devicePixelRatioF());
+    if (mask.isNull()) return;
+    ann.smartPending = true;
+    ann.smartFailed = false;
+    ann.smartResult = {};
+    ann.mosaicSource = source;                       // Paint compares against its sampling layer.
+    ann.smartRect = ann.rect;
+    ann.smartStroke = ann.stroke;
+    ann.smartPen = ann.pen;
+    const int epoch = m_smartEpoch;
+    QThreadPool::globalInstance()->start([this, epoch, index, source, mask] {
+        QString error;
+        const QImage erased = SmartErase::erase(source, mask, &error);
+        QMetaObject::invokeMethod(this, [this, epoch, index, erased, error] {
+            if (epoch != m_smartEpoch || index < 0 || index >= m_anns.size()) return;
+            Annotation &ann = m_anns[index];
+            ann.smartPending = false;
+            if (erased.isNull()) {
+                ann.smartFailed = true;              // Renders as a black redaction, never the source.
+                if (!error.isEmpty()) qWarning() << "smart erase:" << error;
+            } else ann.smartResult = erased;
+            update();
+        }, Qt::QueuedConnection);
+    });
 }
 
 void CaptureOverlay::selectEraserMode(bool rect)
@@ -1118,23 +1185,33 @@ void CaptureOverlay::setWidthControl(int value)
 void CaptureOverlay::syncSizeInput()
 {
     if (m_mosaicPreview) {
-        QImage preview(24, 24, QImage::Format_ARGB32);
-        preview.fill(Qt::transparent);
-        QPainter painter(&preview);
-        painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(Qt::NoPen);                // Solid dark disc: whole tiles stay dark on the light bar.
-        painter.setBrush(QColor(0x32, 0x32, 0x32));
-        painter.drawEllipse(QRectF(4, 4, 16, 16));
-        painter.end();
-        preview = mosaicBlur() ? mosaicBlurred(preview, mosaicStrength())
-                               : mosaicTiles(preview, mosaicStrength(), 1).scaled(24, 24);
-        m_mosaicPreview->setIcon(QIcon(QPixmap::fromImage(preview)));
-        m_mosaicPreview->setToolTip(mosaicBlur() ? QStringLiteral("模糊：点击切换为像素化，滚轮调强度")
-                                              : QStringLiteral("像素化：点击切换为模糊，滚轮调强度"));
+        if (mosaicSmart()) {
+            m_mosaicPreview->setIcon(makeIcon(Icon::Eraser));
+            m_mosaicPreview->setToolTip(QStringLiteral("智能擦除：点击切换为像素化"));
+        } else {
+            QImage preview(24, 24, QImage::Format_ARGB32);
+            preview.fill(Qt::transparent);
+            QPainter painter(&preview);
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.setPen(Qt::NoPen);                // Solid dark disc: whole tiles stay dark on the light bar.
+            painter.setBrush(QColor(0x32, 0x32, 0x32));
+            painter.drawEllipse(QRectF(4, 4, 16, 16));
+            painter.end();
+            preview = mosaicBlur() ? mosaicBlurred(preview, mosaicStrength())
+                                   : mosaicTiles(preview, mosaicStrength(), 1).scaled(24, 24);
+            m_mosaicPreview->setIcon(QIcon(QPixmap::fromImage(preview)));
+            m_mosaicPreview->setToolTip(mosaicBlur()
+                ? QStringLiteral("模糊：点击切换为智能擦除")
+                : QStringLiteral("像素化：点击切换为模糊，滚轮调强度"));
+        }
     }
-    if (m_mosaicStrengthLabel)
+    const bool smartMosaic = mosaicSmart();
+    if (m_mosaicStrengthLabel) {
         m_mosaicStrengthLabel->setText(QString::number(mosaicStrength()));
+        m_mosaicStrengthLabel->setVisible(!smartMosaic);   // The smart mode has no strength.
+    }
     if (m_mosaicSlider) {
+        m_mosaicSlider->setVisible(!smartMosaic);
         const QSignalBlocker lock(m_mosaicSlider);
         m_mosaicSlider->setValue(mosaicStrength());
         m_mosaicSlider->setToolTip(QStringLiteral("马赛克强度 %1：拖动调节，数值越大像素块越大").arg(mosaicStrength()));
@@ -1306,6 +1383,7 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
         m_ann.pen = m_mosaicWidth;
         m_ann.mosaicBrush = m_mosaicBrush;
         m_ann.mosaicBlur = m_mosaicBlur;
+        m_ann.mosaicSmart = m_mosaicSmart;
         m_ann.mosaicLevels[0] = m_mosaicLevels[0];
         m_ann.mosaicLevels[1] = m_mosaicLevels[1];
         m_ann.mosaicStrength = m_mosaicLevels[m_mosaicBlur];
@@ -1915,7 +1993,6 @@ void CaptureOverlay::updateToolOptions()
         m_mosaicSlider->setFocusPolicy(Qt::NoFocus);
         m_mosaicSlider->setStyleSheet(lightSliderQss);
         m_mosaicSlider->installEventFilter(this);
-        syncSizeInput();
         connect(m_mosaicSlider, &QSlider::valueChanged, this, &CaptureOverlay::setMosaicStrength);
         connect(m_mosaicSlider, &QSlider::sliderPressed, this, [this] { m_mosaicDragUndo = false; });
         connect(m_mosaicSlider, &QSlider::sliderReleased, this, [this] { m_mosaicDragUndo = false; });
@@ -1928,6 +2005,7 @@ void CaptureOverlay::updateToolOptions()
         m_mosaicStrengthLabel->setFixedWidth(24);
         m_mosaicStrengthLabel->installEventFilter(this);
         lay->addWidget(m_mosaicStrengthLabel);
+        syncSizeInput();                          // Hides both when the smart mode is active.
         addSize();                               // Brush width stays visible in both modes.
         break;
     }
@@ -2045,9 +2123,9 @@ void CaptureOverlay::paintAnnotations(QPainter &p, const QPointF &origin, qreal 
         }
         lower = m_mosaicFrame;
     }
-    const auto paint = [&](const Annotation &ann, bool visible = true) {
+    const auto paint = [&](const Annotation &ann, int index, bool visible = true) {
         if (ann.tool == ATool::Mosaic) --remainingMosaics;
-        if (visible) drawAnnotation(out, ann, lower);
+        if (visible) drawAnnotation(out, ann, lower, index);
         if (remainingMosaics > 0) {
             const QImage source = ann.tool == ATool::Mosaic ? lower : QImage();
             QPainter layer(&lower);
@@ -2058,14 +2136,14 @@ void CaptureOverlay::paintAnnotations(QPainter &p, const QPointF &origin, qreal 
                 layer.setClipPath(annTransform(ann).map(eraserMask(ann)), Qt::IntersectClip);
                 layer.drawImage(QRectF(0, 0, m_mosaicFrame.width() / dpr, m_mosaicFrame.height() / dpr),
                                 m_mosaicFrame);
-            } else drawAnnotation(layer, ann, source);
+            } else drawAnnotation(layer, ann, source, index);
         }
     };
     for (int i = 0; i < m_anns.size(); ++i)
-        if (!editorActive() || i != m_editAnn) paint(m_anns[i]);
-        else paint(editorAnnotation(), includeEditor);
-    if (editorActive() && m_editAnn < 0) paint(editorAnnotation(), includeEditor);
-    if (m_live) paint(m_ann);
+        if (!editorActive() || i != m_editAnn) paint(m_anns[i], i);
+        else paint(editorAnnotation(), m_editAnn, includeEditor);
+    if (editorActive() && m_editAnn < 0) paint(editorAnnotation(), -1, includeEditor);
+    if (m_live) paint(m_ann, -1);
     if (layerPainter.isActive()) {
         layerPainter.end();
         p.save();
@@ -2172,7 +2250,7 @@ QImage CaptureOverlay::mosaicBlurred(const QImage &source, int radius)
     return image;
 }
 
-void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QImage &source) const
+void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QImage &source, int index) const
 {
     QPen pen(ann.color, ann.pen);
     pen.setCapStyle(Qt::RoundCap);
@@ -2423,6 +2501,24 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         if (ann.mosaicBrush) mask = strokeMask(ann.stroke, ann.pen);
         else mask.addRect(QRectF(ann.rect));
         p.setClipPath(mask, Qt::IntersectClip);
+        if (ann.mosaicSmart) {
+            if (ann.smartFailed) {                  // A failed erase must not expose the source pixels.
+                p.fillRect(area, Qt::black);
+                break;
+            }
+            const bool stale = ann.smartResult.isNull() || ann.mosaicSource != source
+                || ann.smartRect != ann.rect || ann.smartStroke != ann.stroke || ann.smartPen != ann.pen;
+            if (ann.smartPending || stale) {
+                if (!ann.smartPending && index >= 0)
+                    const_cast<CaptureOverlay *>(this)->scheduleSmartErase(index, source);
+                // The area stays recognizable but dimmed until the offline model answers.
+                p.fillRect(area, QColor(0, 0, 0, 38));
+                break;
+            }
+            p.setRenderHint(QPainter::SmoothPixmapTransform, false);
+            p.drawImage(QRectF(0, 0, m_shot.width() / dpr, m_shot.height() / dpr), ann.smartResult);
+            break;
+        }
         if (ann.mosaicCacheStrength != ann.mosaicStrength || ann.mosaicCache.isNull()
             || ann.mosaicSource != source) {
             ann.mosaicSource = source;

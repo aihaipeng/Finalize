@@ -55,6 +55,8 @@ int main(int argc, char **argv)
     }
     if (app.arguments().contains(QStringLiteral("--test-mosaic")))
         return CaptureOverlay::testMosaic(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-mosaic")) + 1));
+    if (app.arguments().contains(QStringLiteral("--test-smart-erase")))
+        return CaptureOverlay::testSmartErase(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-smart-erase")) + 1));
     if (app.arguments().contains(QStringLiteral("--test-output"))) {
         auto *saved = new QMimeData;
         if (const QMimeData *data = QGuiApplication::clipboard()->mimeData())

@@ -376,14 +376,17 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
             overlay.m_mosaicPreview->click();
         }
         overlay.m_mosaicPreview->click();
-        check(overlay.mosaicBlur() && overlay.mosaicStrength() == 6 && overlay.toolSize() == oldWidth,
-              "effect preview switches to the independent default blur strength without changing width");
+        check(!overlay.mosaicBlur() && !overlay.mosaicSmart() && overlay.mosaicStrength() == 12
+                  && overlay.toolSize() == oldWidth,
+              "effect preview cycles back to the pixelate strength without changing width");
+        overlay.m_mosaicPreview->click();
         overlay.m_mosaicSlider->setValue(11);
+        check(overlay.mosaicBlur() && !overlay.mosaicSmart() && overlay.mosaicStrength() == 11
+                  && overlay.toolSize() == oldWidth,
+              "switching to blur takes its own strength independently of width");
         overlay.m_mosaicPreview->click();
-        check(!overlay.mosaicBlur() && overlay.mosaicStrength() == 12 && overlay.toolSize() == oldWidth,
-              "switching back restores pixelation strength independently of blur and brush width");
-        overlay.m_mosaicPreview->click();
-        check(overlay.mosaicStrength() == 11, "switching again remembers blur strength");
+        check(overlay.mosaicSmart() && overlay.m_mosaicLevels[1] == 11,
+              "the cycle reaches the smart erase and remembers the blur strength");
         overlay.m_mosaicPreview->click();
         overlay.m_anns.clear();
         overlay.m_selAnn = -1;

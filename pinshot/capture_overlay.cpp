@@ -1515,6 +1515,7 @@ void CaptureOverlay::undoAnnotation()
     if (m_undoStack.isEmpty()) return;
     m_redoStack.append(annotationSnapshot());
     m_anns = m_undoStack.takeLast();
+    ++m_smartEpoch;                              // Restored indexes must not receive stale erases.
     m_selAnn = -1;
     normalizeNumbers();
     syncUndoButtons();
@@ -1529,6 +1530,7 @@ void CaptureOverlay::redoAnnotation()
     if (m_redoStack.isEmpty()) return;
     m_undoStack.append(annotationSnapshot());
     m_anns = m_redoStack.takeLast();
+    ++m_smartEpoch;                              // Restored indexes must not receive stale erases.
     m_selAnn = -1;
     normalizeNumbers();
     syncUndoButtons();

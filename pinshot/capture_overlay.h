@@ -73,6 +73,7 @@ public:
     static int testSelection();
     static int testColorPicker(const QString &previewPath);
     static int testMosaic(const QString &previewPath);
+    static int testSmartErase(const QString &previewPath);
     static int testWindowDetection();
     static int testTextAnnotation();
     static int testOutput();
@@ -104,10 +105,16 @@ private:
         int mosaicStrength = 6;                      // Pixel block size (3-24), independent of brush width.
         bool mosaicBrush = false;
         bool mosaicBlur = false;
+        bool mosaicSmart = false;                     // Third effect: content-aware erase.
         int mosaicLevels[2] = {6, 6};
         quint32 mosaicSeed = 1;
         mutable int mosaicCacheStrength = 0;
         mutable QImage mosaicCache, mosaicSource;
+        QImage smartResult;                           // Full-size erased layer for the smart mode.
+        bool smartPending = false, smartFailed = false;
+        QRect smartRect;                              // Geometry the current result was computed for.
+        QPolygonF smartStroke;
+        int smartPen = -1;
         QRect rect;                                  // Rect / Ellipse / Mosaic / Text / Number box.
         QPoint a, b;                                 // Arrow endpoints.
         QPolygonF stroke;                            // Pen / Marker / Mosaic brush polyline.
@@ -173,9 +180,12 @@ private:
     bool mosaicBrush() const;
     int mosaicStrength() const;
     bool mosaicBlur() const;
+    bool mosaicSmart() const;
     void switchMosaicEffect();
     void setMosaicStrength(int value);
     void selectMosaicMode(bool brush);
+    void scheduleSmartErase(int index, const QImage &source);   // Async erase for the annotation at index.
+    static QImage smartEraseMask(const Annotation &ann, const QSize &deviceSize, qreal dpr);
     void selectEraserMode(bool rect);
     bool eraserRect() const;
     // Rectangle mosaics and rectangle erasures: movable regions that keep their frame while their tool is armed.
@@ -216,7 +226,7 @@ private:
                           bool includeEditor = true) const;
     static QImage mosaicTiles(const QImage &source, int block, quint32 seed);
     static QImage mosaicBlurred(const QImage &source, int radius);
-    void drawAnnotation(QPainter &p, const Annotation &ann, const QImage &source) const;
+    void drawAnnotation(QPainter &p, const Annotation &ann, const QImage &source, int index = -1) const;
 
     void startDetector();
     void setWindowTargets(const WindowTargets &windows);
@@ -295,6 +305,8 @@ private:
     int m_apen = 3;
     int m_mosaicLevels[2] = {6, 6}, m_mosaicWidth = 14;
     bool m_mosaicBrush = true, m_mosaicBlur = false, m_mosaicDragUndo = false;
+    bool m_mosaicSmart = false;
+    int m_smartEpoch = 0;                         // Bumped whenever the annotation list is rebuilt.
     qreal m_afont = 15;                              // Base text/number font size (pt).
     QString m_afamily = QStringLiteral("Microsoft YaHei UI");
     bool m_afill = false;                            // Default fill mode for rect / ellipse.
