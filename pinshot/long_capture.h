@@ -94,7 +94,8 @@ private:
     void updatePreview();
     void updateUi();
     void setVertical(bool vertical);
-    void setAutoScroll(bool on);
+    void setAutoScroll(int direction);               // 0 off, 1 down/right, -1 up/left.
+    void scrollOnce();                               // One wheel tick toward the active direction.
     QPoint moveRegion(QPoint delta);                 // Returns the applied part of the delta.
     void notice(const QString &title, const QString &text, const QString &noAskKey);
     void fail(const QString &message);
@@ -124,7 +125,7 @@ private:
     int m_rowStart = 0, m_rowEnd = 0;                 // Logical coverage [start,end).
     int m_headPad = 0, m_tailPad = 0;
     bool m_vertical = true;
-    bool m_autoScroll = false;
+    int m_autoScroll = 0;                            // 0 off, 1 down/right, -1 up/left.
     bool m_paused = false;                           // A dialog is open over the desktop.
     QElapsedTimer m_scrollClock, m_previewClock, m_failClock;
     QWidget *m_mask = nullptr;
@@ -135,7 +136,7 @@ private:
     QPoint m_dragAt;
     QLabel *m_label = nullptr;
     QComboBox *m_dir = nullptr;
-    QToolButton *m_auto = nullptr, *m_save = nullptr;
+    QToolButton *m_auto = nullptr, *m_autoUp = nullptr, *m_save = nullptr;
     QList<QToolButton *> m_gated;                    // Edit, OCR, pin, copy: bounded image length only.
     QToolButton *m_ocr = nullptr;
     QString m_ocrMissing;

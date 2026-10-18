@@ -27,6 +27,7 @@
 #include <QToolButton>
 #include <QComboBox>
 #include <QStringList>
+#include <QWheelEvent>
 #include <QApplication>
 #include <QCheckBox>
 #include <qt_windows.h>
@@ -374,9 +375,24 @@ int LongCapture::testOutput()
     QStringList tips;
     for (QToolButton *b : session.m_bar->findChildren<QToolButton *>()) tips << b->toolTip();
     const QString ocrTip = session.m_ocrMissing.isEmpty() ? QStringLiteral("复制识别到的文字") : session.m_ocrMissing;
-    check(tips == QStringList{QStringLiteral("自动滚动截图"), QStringLiteral("裁剪"), QStringLiteral("编辑"), ocrTip,
+    check(tips == QStringList{QStringLiteral("自动向上滚动截图"), QStringLiteral("自动向下滚动截图"),
+                              QStringLiteral("裁剪"), QStringLiteral("编辑"), ocrTip,
                               QStringLiteral("贴图"), QStringLiteral("保存"), QStringLiteral("关闭"), QStringLiteral("复制并关闭")},
-          "long-capture bar lists auto scroll, crop, edit, OCR copy, pin, save, close and copy-and-close in order");
+          "long-capture bar lists both auto-scroll directions, crop, edit, OCR copy, pin, save, close and copy-and-close in order");
+    session.m_auto->click();
+    check(session.m_autoScroll == 1 && session.m_auto->isChecked() && !session.m_autoUp->isChecked()
+              && session.m_auto->isEnabled() && !session.m_autoUp->isEnabled(),
+          "scrolling down keeps the down button active and greys out the up button");
+    session.m_auto->click();
+    check(session.m_autoScroll == 0 && !session.m_auto->isChecked() && session.m_autoUp->isEnabled(),
+          "clicking the active direction stops and enables the other");
+    session.m_autoUp->click();
+    check(session.m_autoScroll == -1 && session.m_autoUp->isChecked() && !session.m_auto->isChecked()
+              && session.m_autoUp->isEnabled() && !session.m_auto->isEnabled(),
+          "scrolling up greys out the down button");
+    session.m_autoUp->click();
+    check(session.m_autoScroll == 0 && !session.m_autoUp->isChecked() && session.m_auto->isEnabled(),
+          "clicking the up direction again stops the capture");
     check(!session.m_crop->isEnabled() && session.m_cropStart->toolTip() == QStringLiteral("裁剪顶部")
               && session.m_cropEnd->toolTip() == QStringLiteral("裁剪底部"),
           "crop waits for a captured image and its panel crops top and bottom");
@@ -405,12 +421,15 @@ int LongCapture::testOutput()
           "the move control shifts the selection and bar along the scroll axis only");
     check(session.moveRegion(QPoint(0, 5000)).isNull(), "a jump beyond a third of the screen is ignored");
     session.m_dir->setCurrentIndex(1);
-    check(!session.m_vertical && session.logicalLength() == 0 && !session.m_autoScroll
+    check(!session.m_vertical && session.logicalLength() == 0 && session.m_autoScroll == 0
               && session.m_label->text() == QStringLiteral("400 x 300"),
           "switching direction restarts the capture");
     check(session.moveRegion(QPoint(25, 25)) == QPoint(25, 0), "horizontal sessions move along x");
     check(session.m_cropStart->toolTip() == QStringLiteral("裁剪左侧") && session.m_cropEnd->toolTip() == QStringLiteral("裁剪右侧"),
           "horizontal sessions crop left and right");
+    check(session.m_autoUp->toolTip() == QStringLiteral("自动向左滚动截图")
+              && session.m_auto->toolTip() == QStringLiteral("自动向右滚动截图"),
+          "horizontal sessions scroll left and right");
     {
         // Hovering the crop button opens its panel under the bar; leaving both closes it after a short delay.
         session.addFrame(transposed(frame));
@@ -444,6 +463,32 @@ int LongCapture::testOutput()
               "back restores the session with its stitched rows");
     }
     session.cleanupUi();
+    {
+        // Auto scroll no longer stops when the pointer leaves: the wheel goes to the page under the selection.
+        class WheelPage : public QWidget {
+        public:
+            int wheels = 0, delta = 0;
+            void wheelEvent(QWheelEvent *e) override { ++wheels; delta = e->angleDelta().y(); }
+        } wheelPage;
+        wheelPage.setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+        wheelPage.setGeometry(QRect(screen.center() - QPoint(100, 80), QSize(200, 160)));
+        wheelPage.show();
+        wheelPage.raise();
+        QApplication::processEvents();
+        LongCapture wheel{QRect(wheelPage.geometry().topLeft(), wheelPage.size())};
+        QCursor::setPos(screen.topLeft() + QPoint(2, 2));
+        wheel.m_autoScroll = 1;
+        wheel.scrollOnce();
+        QElapsedTimer wait;
+        wait.start();
+        while (wheelPage.wheels < 1 && wait.elapsed() < 1000) QApplication::processEvents();
+        check(wheelPage.wheels == 1 && wheelPage.delta < 0, "auto scroll down reaches the page with the pointer outside");
+        wheel.m_autoScroll = -1;
+        wheel.scrollOnce();
+        wait.restart();
+        while (wheelPage.wheels < 2 && wait.elapsed() < 1000) QApplication::processEvents();
+        check(wheelPage.wheels == 2 && wheelPage.delta > 0, "auto scroll up sends the opposite wheel delta");
+    }
     {
         // Crop keeps the rows from the current frame to one end, in place.
         QImage page(40, 1000, QImage::Format_RGB32);
@@ -517,12 +562,14 @@ int LongCapture::testOutput()
         check(editorGeometry(QSize(1200, 800), 2.0, av).size() == QSize(600, 400),
               "native size is in device pixels, shown at the screen's scale");
         const QRect tall = editorGeometry(QSize(600, 6000), 1.0, av);
-        check(tall.height() <= av.height() - 2 * PinWindow::kShadowMargin - 48 && tall.width() == qFloor(600.0 * tall.height() / 6000)
-                  && qAbs(tall.center().x() - av.center().x()) <= 1 && tall.top() >= av.top() + PinWindow::kShadowMargin,
-              "a tall capture scales down proportionally to fit with room for the bar");
+        check(tall.height() <= av.height() - 2 * PinWindow::kShadowMargin - 96 && qAbs(tall.width() - 600.0 * tall.height() / 6000) <= 1
+                  && qAbs(tall.center().x() - av.center().x()) <= 1 && qAbs(tall.center().y() - av.center().y()) <= 1
+                  && tall.top() >= av.top() + PinWindow::kShadowMargin,
+              "a tall capture scales down proportionally, stays exactly centered, and keeps room for the bar");
         const QRect wide = editorGeometry(QSize(8000, 300), 1.0, av);
-        check(wide.width() <= av.width() - 2 * PinWindow::kShadowMargin && wide.left() >= av.left(),
-              "a wide capture scales down to fit the width");
+        check(wide.width() <= av.width() - 2 * PinWindow::kShadowMargin && wide.left() >= av.left()
+                  && qAbs(wide.center().x() - av.center().x()) <= 1 && qAbs(wide.center().y() - av.center().y()) <= 1,
+              "a wide capture scales down to fit the width and stays centered");
     }
     return failures ? 1 : 0;
 }
