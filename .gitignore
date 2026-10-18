@@ -9,11 +9,7 @@ pinshot/release/
 moc_*.cpp
 moc_predefs.h
 AGENTS.md
-CONTEXT.md
-MAPPING.md
-LONGSHOT-MAPPING.md
-OCR-PLAN.md
-QT6-MIGRATION.md
+docs/
 pinshot/README.md
 .agents/
 .playwright-mcp/

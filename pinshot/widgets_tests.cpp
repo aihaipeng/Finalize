@@ -68,17 +68,17 @@ int ColorBoard::testRendering()
         return image.pixelColor(qFloor((at.x() + 0.5) * dpr), qFloor((at.y() + 0.5) * dpr));
     };
     const QRect cell = swatchRect(4);
-    check(pixel(cell.topLeft() - QPoint(1, 1)) != QColor(0x40, 0x40, 0x40), "an idle cell does not draw the hover frame");
+    const QPoint edge(cell.center().x(), cell.top() - 1);   // Mid-edge, clear of the rounded corner.
+    check(pixel(edge + QPoint(0, 1)).lightness() < 100, "an idle cell keeps a faint outline on its own edge");
     QMouseEvent hover(QEvent::MouseMove, QPointF(cell.center()), QPointF(board.mapToGlobal(cell.center())),
                       Qt::NoButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(&board, &hover);
-    check(pixel(cell.topLeft() - QPoint(1, 1)) == QColor(0x40, 0x40, 0x40),
-          "the hovered cell grows by 1px with a darker frame");
+    check(pixel(edge).lightness() > 120, "the hovered cell grows by 1px with a brighter outline");
     board.setCurrentColor(QColor("#3f48cc"));
-    const QColor mark = pixel(QPoint(23, 23));
-    check(board.currentColor() == QColor("#3f48cc") && pixel(QPoint(6, 6)) == QColor("#3f48cc")
-              && pixel(QPoint(1, 1)) == QColor(0x22, 0x22, 0x22) && mark.hsvSaturation() > 180,
-          "the current square repaints the new color, with a rainbow square marking the dialog");
+    const QColor ring = pixel(QPoint(13, 1));
+    check(board.currentColor() == QColor("#3f48cc") && pixel(QPoint(12, 12)) == QColor("#3f48cc")
+              && ring.hsvSaturation() > 180 && ring != QColor("#3f48cc"),
+          "the current square repaints the new color inside a rainbow ring marking the dialog");
     if (!qgetenv("COLOR_BOARD_SHOT").isEmpty())
         check(board.grab().save(QString::fromLocal8Bit(qgetenv("COLOR_BOARD_SHOT"))), "save the color board preview");
     std::printf("PASS: color board geometry, hit testing, presets, custom request, and hover at DPR %.2f\n", double(dpr));

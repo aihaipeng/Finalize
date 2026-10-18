@@ -107,6 +107,31 @@ QToolButton *iconButton(Icon icon, const QString &tip)
     return button;
 }
 
+QIcon barIcon(Icon icon, int size)
+{
+    return renderIcon(icon, size, 3, {
+        {Bar::ink, QIcon::Off, {QIcon::Normal, QIcon::Active, QIcon::Selected}},
+        {Bar::dim, QIcon::Off, {QIcon::Disabled}},
+        {Bar::dim, QIcon::On, {QIcon::Disabled}},
+        {Bar::accent, QIcon::On, {QIcon::Normal, QIcon::Active, QIcon::Selected}},
+    });
+}
+
+QToolButton *barButton(Icon icon, const QString &tip)
+{
+    auto *button = iconButton(icon, tip);
+    button->setIcon(barIcon(icon));
+    button->setIconSize(QSize(Bar::icon, Bar::icon));
+    button->setFixedSize(Bar::button, Bar::button);
+    return button;
+}
+
+const QString darkSliderQss = QStringLiteral(
+    "QSlider{margin:0px 1px 0px 1px;}"
+    "QSlider::groove:horizontal{border:none;background:#27272a;height:14px;border-radius:7px;}"
+    "QSlider::sub-page:horizontal{background:#3388ff;border-radius:7px;}"
+    "QSlider::handle:horizontal{background:#f4f4f4;width:10px;margin:2px 2px;border-radius:5px;}");
+
 QToolButton *colorButton(const QColor &color, const QString &tip, int size)
 {
     auto *button = iconButton(Icon::Copy, tip);   // Same button setup as the toolbar tools.
@@ -122,11 +147,12 @@ QToolButton *colorButton(const QColor &color, const QString &tip, int size)
     return button;
 }
 
-QWidget *barSeparator()
+QWidget *barSeparator(bool dark)
 {
     auto *line = new QFrame;
     line->setObjectName(QStringLiteral("barSeparator"));
-    line->setFixedSize(5, 14);                         // 1px line plus 2px margins each side.
+    if (dark) line->setFixedSize(13, 16);              // 1px line plus 6px margins each side.
+    else line->setFixedSize(5, 14);                    // 1px line plus 2px margins each side.
     return line;
 }
 
@@ -169,25 +195,25 @@ int ColorBoard::swatchAt(const QPoint &pos) const
 void ColorBoard::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
-    const QRect big = currentRect();
-    p.fillRect(big, QColor(0x22, 0x22, 0x22));
-    p.fillRect(big.adjusted(1, 1, -1, -1), m_current);
-    // A solid rainbow square marks the button that opens the full color dialog.
-    const QRect mark(big.right() - 9, big.bottom() - 9, 9, 9);
-    for (int y = mark.top(); y <= mark.bottom(); ++y)
-        for (int x = mark.left(); x <= mark.right(); ++x) {
-            const int hue = ((40 * (x - mark.left()) + 28 * (y - mark.top())) % 360 + 360) % 360;
-            p.fillRect(QRect(x, y, 1, 1), QColor::fromHsv(hue, 255, 250));
-        }
+    p.setRenderHint(QPainter::Antialiasing);
+    const QRectF big = QRectF(currentRect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    // A rainbow ring marks the button that opens the full color dialog; the color sits inside a 1px gap.
+    QConicalGradient rainbow(big.center(), 90);
+    for (int k = 0; k <= 6; ++k) rainbow.setColorAt(k / 6.0, QColor::fromHsv((360 - 60 * k) % 360, 255, 255));
+    p.setPen(QPen(QBrush(rainbow), 2));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(big.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6);
+    p.setPen(Qt::NoPen);
+    p.setBrush(m_current);
+    p.drawRoundedRect(big.adjusted(2.5, 2.5, -2.5, -2.5), 4, 4);
     for (int i = 0; i < PresetCount; ++i) {
         const QColor &c = kPresets[i];
-        QRect r = swatchRect(i);
+        QRectF r = swatchRect(i);
         if (i == m_hover) r.adjust(-1, -1, 1, 1);
-        // Light top/left frame, color-tinted dark bottom/right edge.
-        const QColor shade(34 + qRound(c.red() * 0.325), 34 + qRound(c.green() * 0.325), 34 + qRound(c.blue() * 0.325));
-        p.fillRect(r, i == m_hover ? QColor(0x40, 0x40, 0x40) : QColor(0x71, 0x71, 0x71));
-        p.fillRect(r.adjusted(1, 1, 0, 0), shade);
-        p.fillRect(r.adjusted(1, 1, -1, -1), c);
+        // Rounded chip; a faint outline keeps dark chips visible on the dark bar, brighter when hovered.
+        p.setPen(QPen(i == m_hover ? QColor(0xa1, 0xa1, 0xaa) : QColor(0x4b, 0x4b, 0x4b), 1));
+        p.setBrush(c);
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
     }
 }
 

@@ -101,7 +101,7 @@ QPolygonF arrowHeadPoly(const QPointF &tip, const QPointF &dir, qreal len, qreal
     return head;
 }
 
-// Popup rows: a flat light-blue wash under the hovered row, no style selection marker.
+// Popup rows: a rounded wash under the current or hovered row, no style selection marker.
 class FlatItemDelegate : public QStyledItemDelegate
 {
 public:
@@ -109,8 +109,14 @@ public:
     void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override
     {
         QStyleOptionViewItem plain = option;
-        if (option.state & (QStyle::State_MouseOver | QStyle::State_Selected))
-            painter->fillRect(option.rect, QColor(0xe5, 0xf1, 0xfb));
+        if (option.state & (QStyle::State_MouseOver | QStyle::State_Selected)) {   // Rounded row: accent when current, grey on hover.
+            painter->save();
+            painter->setRenderHint(QPainter::Antialiasing);
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(option.state & QStyle::State_Selected ? Bar::accent : QColor(0x3c, 0x3c, 0x3c));
+            painter->drawRoundedRect(QRectF(option.rect).adjusted(1, 1, -1, -1), 4, 4);
+            painter->restore();
+        }
         plain.state &= ~(QStyle::State_MouseOver | QStyle::State_Selected | QStyle::State_HasFocus);
         QStyledItemDelegate::paint(painter, plain, index);
     }
@@ -135,7 +141,7 @@ protected:
     }
 };
 
-// Popup scrollbar in the light language: a slim thumb at rest; on hover a wider thumb
+// Popup scrollbar in the dark bar language: a slim thumb at rest; on hover a wider thumb
 // over a visible track with up/down step arrows. The stylesheet only fixes the geometry
 // (12px bar, 12px step buttons) so hit testing matches what paintEvent draws.
 class FlatScrollBar : public QScrollBar
@@ -168,8 +174,8 @@ protected:
         };
         const bool hot = underMouse() || isSliderDown();
         if (hot) {
-            p.fillRect(rect(), QColor(0xf0, 0xf0, 0xf0));
-            p.setBrush(QColor(0x60, 0x60, 0x60));
+            p.fillRect(rect(), QColor(0x2e, 0x2e, 0x30));
+            p.setBrush(QColor(0xa1, 0xa1, 0xaa));
             const QPointF up = part(QStyle::SC_ScrollBarSubLine).center();
             const QPointF down = part(QStyle::SC_ScrollBarAddLine).center();
             p.drawPolygon(QPolygonF{up + QPointF(0, -2), up + QPointF(3, 1.5), up + QPointF(-3, 1.5)});
@@ -177,19 +183,22 @@ protected:
         }
         const QRectF handle = part(QStyle::SC_ScrollBarSlider);
         const qreal w = hot ? 8 : 4;
-        p.setBrush(hot ? QColor(0xa0, 0xa0, 0xa0) : QColor(0xc2, 0xc3, 0xc9));
+        p.setBrush(hot ? QColor(0x71, 0x71, 0x7a) : QColor(0x52, 0x52, 0x5b));
         p.drawRoundedRect(QRectF(hot ? (width() - w) / 2 : width() - w - 2, handle.top() + 1, w,
                                  qMax(0.0, handle.height() - 2)), w / 2, w / 2);
     }
 };
 
-// Light combo: frame without the native drop-down button, plus a thin chevron.
+// Pill combo: no native drop-down button, plus a thin chevron.
 class FlatComboBox : public QComboBox
 {
 public:
     explicit FlatComboBox(bool glyphOnly = false) : m_glyphOnly(glyphOnly)
     {
-        if (glyphOnly) setItemDelegate(new GlyphItemDelegate(this));
+        if (glyphOnly) {   // Narrow glyph pills keep the sample centered between the edge and the chevron.
+            setItemDelegate(new GlyphItemDelegate(this));
+            setStyleSheet(QStringLiteral("QComboBox{padding-left:6px;}QComboBox::drop-down{width:16px;}"));
+        }
         else setItemDelegate(new FlatItemDelegate(this));
         view()->setVerticalScrollBar(new FlatScrollBar);
     }
@@ -206,7 +215,7 @@ protected:
         painter.drawComplexControl(QStyle::CC_ComboBox, option);
         painter.drawControl(QStyle::CE_ComboBoxLabel, option);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(QPen(QColor(0x80, 0x80, 0x80), 1));
+        painter.setPen(QPen(Bar::muted, 1.5));
         const QPointF c = QRectF(arrow).center();
         painter.drawPolyline(QPolygonF{c + QPointF(-3, -1.5), c + QPointF(0, 1.5), c + QPointF(3, -1.5)});
     }
@@ -1186,15 +1195,15 @@ void CaptureOverlay::syncSizeInput()
 {
     if (m_mosaicPreview) {
         if (mosaicSmart()) {
-            m_mosaicPreview->setIcon(makeIcon(Icon::Eraser));
+            m_mosaicPreview->setIcon(barIcon(Icon::Eraser));
             m_mosaicPreview->setToolTip(QStringLiteral("智能擦除：点击切换为像素化"));
         } else {
             QImage preview(24, 24, QImage::Format_ARGB32);
             preview.fill(Qt::transparent);
             QPainter painter(&preview);
             painter.setRenderHint(QPainter::Antialiasing);
-            painter.setPen(Qt::NoPen);                // Solid dark disc: whole tiles stay dark on the light bar.
-            painter.setBrush(QColor(0x32, 0x32, 0x32));
+            painter.setPen(Qt::NoPen);                // Solid light disc: whole tiles stay bright on the dark bar.
+            painter.setBrush(Bar::ink);
             painter.drawEllipse(QRectF(4, 4, 16, 16));
             painter.end();
             preview = mosaicBlur() ? mosaicBlurred(preview, mosaicStrength())
@@ -1217,9 +1226,9 @@ void CaptureOverlay::syncSizeInput()
         m_mosaicSlider->setToolTip(QStringLiteral("马赛克强度 %1：拖动调节，数值越大像素块越大").arg(mosaicStrength()));
     }
     if (m_sizeButton) {                          // Line-width glyph with the value beside it.
-        // Glyph and value share one fixed 16+4+16 canvas, so the button never resizes as the value changes.
+        // Glyph and value pill share one fixed 16+4+28 canvas, so the button never resizes as the value changes.
         const qreal dpr = devicePixelRatioF();
-        QPixmap glyph(qCeil(36 * dpr), qCeil(16 * dpr));
+        QPixmap glyph(qCeil(48 * dpr), qCeil(24 * dpr));
         glyph.setDevicePixelRatio(dpr);
         glyph.fill(Qt::transparent);
         QPainter painter(&glyph);
@@ -1227,20 +1236,23 @@ void CaptureOverlay::syncSizeInput()
             painter.save();
             painter.scale(1 / dpr, 1 / dpr);
             const auto px = [dpr](qreal v) { return qRound(v * dpr); };
-            const qreal bars[][2] = {{2, 2}, {6, 3}, {11, 4}};   // top, height in whole logical px
+            const qreal bars[][2] = {{6, 2}, {10, 3}, {15, 4}};   // top, height in whole logical px
             for (const auto &bar : bars)
-                painter.fillRect(QRect(px(1), px(bar[0]), px(15) - px(1), qMax(1, px(bar[1]))), QColor(0x32, 0x32, 0x32));
+                painter.fillRect(QRect(px(1), px(bar[0]), px(15) - px(1), qMax(1, px(bar[1]))), Bar::ink);
             painter.restore();
         }
+        painter.setRenderHint(QPainter::Antialiasing);   // Value sits in a rounded field 4px after the glyph.
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(Bar::field);
+        painter.drawRoundedRect(QRectF(20, 0, 28, 24), 6, 6);
         painter.setFont(m_sizeButton->font());
-        painter.setPen(QColor(0x32, 0x32, 0x32));
-        // Value sits a fixed 4px after the glyph; spare room of short values falls on the right.
+        painter.setPen(Bar::ink);
         // Number size may carry a half step shared with text; the button shows whole values only.
         const QString value = QString::number(qRound(widthControlValue()));
-        painter.drawText(QRect(20, 0, 16, 16), Qt::AlignCenter, value);
+        painter.drawText(QRect(20, 0, 28, 24), Qt::AlignCenter, value);
         painter.end();
         m_sizeButton->setToolButtonStyle(Qt::ToolButtonIconOnly);   // The value is drawn in the glyph.
-        m_sizeButton->setIconSize(QSize(36, 16));
+        m_sizeButton->setIconSize(QSize(48, 24));
         m_sizeButton->setIcon(QIcon(glyph));
         m_sizeButton->setText(value);
     }
@@ -1260,8 +1272,8 @@ void CaptureOverlay::showSizePopup(QToolButton *anchor, int minimum, int maximum
     auto *popup = new QDialog(this, Qt::Popup | Qt::FramelessWindowHint);
     m_sizePopup = popup;
     popup->setAttribute(Qt::WA_DeleteOnClose);
-    popup->setStyleSheet(QStringLiteral("QDialog{background:#f2f2f2;border:1px solid #2080f0;}"
-                                        "QLabel{color:#323232;font-size:12px;}"));
+    popup->setStyleSheet(QStringLiteral("QDialog{background:#18181b;border:1px solid #27272a;}"
+                                        "QLabel{color:#fcfcfc;font-size:12px;}"));
     auto *row = new QHBoxLayout(popup);
     row->setContentsMargins(8, 6, 8, 6);
     row->setSpacing(6);
@@ -1272,7 +1284,7 @@ void CaptureOverlay::showSizePopup(QToolButton *anchor, int minimum, int maximum
     m_sizeSlider->setPageStep(1);
     m_sizeSlider->setFixedSize(128, 22);
     m_sizeSlider->setFocusPolicy(Qt::NoFocus);
-    m_sizeSlider->setStyleSheet(lightSliderQss);
+    m_sizeSlider->setStyleSheet(darkSliderQss);
     m_sizeSlider->installEventFilter(this);
     m_sizeValue = new QLabel(popup);
     m_sizeValue->setFixedWidth(24);
@@ -1555,7 +1567,7 @@ void CaptureOverlay::syncToolButtons()                           // Rect and Ell
         m_toolBtn[t]->setChecked(m_toolBtn[t] == active);
     }
     const QSignalBlocker lock(m_shapeButton);
-    m_shapeButton->setIcon(makeIcon(Icon::Rect));   // The main bar stays the same whichever sub-shape is armed.
+    m_shapeButton->setIcon(barIcon(Icon::Rect));   // The main bar stays the same whichever sub-shape is armed.
 }
 
 void CaptureOverlay::pickToolColor(const QColor &color, bool undoable)
@@ -1733,7 +1745,7 @@ void CaptureOverlay::updateToolOptions()
     if (tool == ATool::None) {
         m_toolOptions->hide();
         if (m_embedded) { emit stripRebuilt(); return; }
-        update(old);
+        update(old.adjusted(-4, -4, 4, 4));
         return;
     }
     m_sizeInput = nullptr;
@@ -1748,20 +1760,19 @@ void CaptureOverlay::updateToolOptions()
     const QList<QWidget *> stale = m_toolOptions->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly);
     for (QWidget *w : stale) delete w;
     auto *lay = new QHBoxLayout(m_toolOptions);
-    lay->setContentsMargins(1, 1, 1, 1);
-    lay->setSpacing(2);
+    lay->setContentsMargins(8, 5, 8, 6);         // 42px strip, same height as the main bar.
+    lay->setSpacing(4);
     lay->setAlignment(Qt::AlignLeft);
     auto addOption = [this](QHBoxLayout *l, Icon icon, const QString &tip, bool on,
                             const std::function<void()> &apply) {
-        auto *b = iconButton(icon, tip);
-        b->setFixedSize(32, 32);
+        auto *b = barButton(icon, tip);
         b->setFocusPolicy(Qt::NoFocus);
         b->setCheckable(true);
         b->setChecked(on);
         connect(b, &QToolButton::clicked, this, [this, apply, on] { apply(); Q_UNUSED(on); });
         l->addWidget(b);
     };
-    auto addSeparator = [](QHBoxLayout *l) { l->addWidget(barSeparator()); };
+    auto addSeparator = [](QHBoxLayout *l) { l->addWidget(barSeparator(true)); };
     auto addSwatches = [this](QHBoxLayout *l, ATool) {
         m_colorBoard = new ColorBoard(m_acolor);
         connect(m_colorBoard, &ColorBoard::presetPicked, this, [this](const QColor &color) { pickToolColor(color); });
@@ -1778,9 +1789,9 @@ void CaptureOverlay::updateToolOptions()
             m_sizeButton->setObjectName(QStringLiteral("sizeButton"));
             m_sizeButton->setAccessibleName(tool == ATool::Number ? QStringLiteral("大小") : QStringLiteral("粗细"));
             m_sizeButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-            m_sizeButton->setIconSize(QSize(16, 16));
+            m_sizeButton->setIconSize(QSize(48, 24));
             m_sizeButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);   // Width hugs glyph + value.
-            m_sizeButton->setFixedHeight(32);
+            m_sizeButton->setFixedHeight(Bar::button);
             m_sizeButton->setFocusPolicy(Qt::NoFocus);
             m_sizeButton->setCursor(Qt::PointingHandCursor);
             m_sizeButton->installEventFilter(this);
@@ -1811,6 +1822,7 @@ void CaptureOverlay::updateToolOptions()
                                     : QStringLiteral("输入、下拉选择或滚轮调节粗细"));
         m_sizeInput->setFocusPolicy(Qt::ClickFocus);
         m_sizeInput->setFixedSize(texty ? 62 : 46, 24);
+        m_sizeInput->setStyleSheet(QStringLiteral("QComboBox{padding:1px 2px 1px 4px;border-radius:6px;}QComboBox::drop-down{width:14px;}"));   // Room for 1637.5.
         m_sizeInput->lineEdit()->setAlignment(Qt::AlignCenter);
         m_sizeInput->setAccessibleName(texty ? QStringLiteral("字号") : QStringLiteral("粗细"));
         m_sizeInput->installEventFilter(this);
@@ -1858,8 +1870,7 @@ void CaptureOverlay::updateToolOptions()
         addOption(lay, Icon::MarkerRect, QStringLiteral("矩形高亮"), m_markerFill, [this] { toggleFill(); });
         if (auto *b = qobject_cast<QToolButton *>(lay->itemAt(lay->count() - 1)->widget())) {
             b->setObjectName(QStringLiteral("fillButton"));
-            b->setIcon(makeIcon(Icon::MarkerRect, 20));   // Fine checker needs more room than the 16px glyphs.
-            b->setIconSize(QSize(20, 20));
+            b->setIcon(barIcon(Icon::MarkerRect));
         }
         addSize();
         addSeparator(lay);
@@ -1875,7 +1886,7 @@ void CaptureOverlay::updateToolOptions()
             pm.fill(Qt::transparent);
             Annotation sample;
             sample.tool = ATool::Arrow;
-            sample.color = QColor(0x32, 0x32, 0x32);
+            sample.color = Bar::ink;
             const bool hollowHead = style == 1 || style == 3;
             sample.pen = line > 0 || style == 4 ? 2 : hollowHead ? 1 : 3;
             sample.arrowStyle = style;
@@ -1933,8 +1944,8 @@ void CaptureOverlay::updateToolOptions()
         break;
     }
     case ATool::Text: {
-        auto *bold = iconButton(Icon::Bold, QStringLiteral("粗体"));
-        auto *italic = iconButton(Icon::Italic, QStringLiteral("斜体"));
+        auto *bold = barButton(Icon::Bold, QStringLiteral("粗体"));
+        auto *italic = barButton(Icon::Italic, QStringLiteral("斜体"));
         for (auto *b : {bold, italic}) {
             b->setFocusPolicy(Qt::NoFocus);
             b->setCheckable(true);
@@ -1977,7 +1988,7 @@ void CaptureOverlay::updateToolOptions()
         addOption(lay, Icon::Pen, QStringLiteral("马赛克笔：滚轮调节笔宽"), brush,
                   [this] { selectMosaicMode(true); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("mosaicBrush"));
-        m_mosaicPreview = iconButton(Icon::Mosaic, QStringLiteral("像素化 / 模糊"));
+        m_mosaicPreview = barButton(Icon::Mosaic, QStringLiteral("像素化 / 模糊"));
         m_mosaicPreview->setObjectName(QStringLiteral("mosaicEffectPreview"));
         m_mosaicPreview->setAccessibleName(QStringLiteral("切换像素化 / 模糊"));
         m_mosaicPreview->setFocusPolicy(Qt::NoFocus);
@@ -1991,7 +2002,7 @@ void CaptureOverlay::updateToolOptions()
         m_mosaicSlider->setPageStep(1);
         m_mosaicSlider->setFixedSize(128, 22);
         m_mosaicSlider->setFocusPolicy(Qt::NoFocus);
-        m_mosaicSlider->setStyleSheet(lightSliderQss);
+        m_mosaicSlider->setStyleSheet(darkSliderQss);
         m_mosaicSlider->installEventFilter(this);
         connect(m_mosaicSlider, &QSlider::valueChanged, this, &CaptureOverlay::setMosaicStrength);
         connect(m_mosaicSlider, &QSlider::sliderPressed, this, [this] { m_mosaicDragUndo = false; });
@@ -2031,7 +2042,7 @@ void CaptureOverlay::updateToolOptions()
             pm.fill(Qt::transparent);
             Annotation sample;
             sample.tool = ATool::Number;
-            sample.color = QColor(0x32, 0x32, 0x32);
+            sample.color = Bar::ink;
             sample.rect = QRect(1, 1, 14, 14);
             sample.font = style == 2 ? 10 : 7;   // A bare digit has no disc, so it fills the cell itself.
             sample.text = QStringLiteral("1");
@@ -2052,7 +2063,7 @@ void CaptureOverlay::updateToolOptions()
             combo->setAccessibleName(name);
             combo->setFocusPolicy(Qt::NoFocus);
             combo->setIconSize(QSize(16, 16));
-            combo->setFixedSize(format ? 60 : 40, 24);
+            combo->setFixedSize(format ? 76 : 40, 24);   // Pill padding needs room for the sample text.
             connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, format](int k) {
                 pickNumberOption(format, k);
                 setFocus();
@@ -2085,7 +2096,7 @@ void CaptureOverlay::updateToolOptions()
     }
     placeToolbar();
     m_toolOptions->raise();
-    update(old.united(m_toolOptions->geometry()).adjusted(-1, -1, 1, 1));
+    update(old.united(m_toolOptions->geometry()).adjusted(-4, -4, 4, 4));
 }
 
 void CaptureOverlay::paintAnnotations(QPainter &p, const QPointF &origin, qreal scale, const QRectF &clip,

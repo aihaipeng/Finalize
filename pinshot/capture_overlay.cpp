@@ -116,27 +116,29 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     m_tools = new QWidget(this);
     m_tools->installEventFilter(this);
     m_tools->setCursor(Qt::ArrowCursor);
-    // Light bar language: flat 32px buttons, grey hover, theme-blue checked fill, 1px separators.
+    // Dark bar language: flat 31px buttons, translucent zinc hover, accent glyph when checked, 1px dividers.
     const QString barQss = QStringLiteral(
-        "QToolButton{color:#323232;background:transparent;border:none;border-radius:0px;padding:4px;}"
-        "QToolButton:hover{background-color:#d4d4d4;}"
-        "QToolButton:checked{background-color:#2080f0;}"
-        "QFrame#barSeparator{background-color:rgba(50,50,50,144);margin:0px 2px;border:none;}");
+        "QToolButton{color:#fcfcfc;background:transparent;border:none;border-radius:4px;padding:5px;}"
+        "QToolButton:hover{background-color:#26262a;}"
+        "QToolButton:pressed{background-color:#27272a;}"
+        "QToolButton:checked{background:transparent;}"
+        "QToolButton:checked:hover{background-color:#26262a;}"
+        "QFrame#barSeparator{background-color:#232326;margin:0px 6px;border:none;}");
     m_tools->setStyleSheet(barQss);
     // Capture output actions; a pin edit session replaces them with one
     // confirm button that applies the result back to the pin.
     QList<QWidget *> outputButtons;
     if (!pinEdit) {
-        auto *save = iconButton(Icon::Save, QStringLiteral("保存到文件 (Ctrl+S)"));
-        auto *copy = iconButton(Icon::Copy, QStringLiteral("复制到剪贴板 (Ctrl+C)"));
-        auto *pin = iconButton(Icon::Pin, QStringLiteral("贴在屏幕上 (Enter / 双击)"));
-        auto *scroll = iconButton(Icon::LongShot, QStringLiteral("长截图：手动滚动拼接长图"));
-        auto *ocr = iconButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)：截图与文本对照"));
+        auto *save = barButton(Icon::Save, QStringLiteral("保存到文件 (Ctrl+S)"));
+        auto *copy = barButton(Icon::Copy, QStringLiteral("复制到剪贴板 (Ctrl+C)"));
+        auto *pin = barButton(Icon::Pin, QStringLiteral("贴在屏幕上 (Enter / 双击)"));
+        auto *scroll = barButton(Icon::LongShot, QStringLiteral("长截图：手动滚动拼接长图"));
+        auto *ocr = barButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)：截图与文本对照"));
         ocr->setObjectName(QStringLiteral("ocrButton"));
         ocr->setAccessibleName(QStringLiteral("文字识别 OCR"));
         const QString ocrMissing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
         if (!ocrMissing.isEmpty()) { ocr->setEnabled(false); ocr->setToolTip(ocrMissing); }
-        auto *translate = iconButton(Icon::Translate, QStringLiteral("翻译：识别并翻译为中文"));
+        auto *translate = barButton(Icon::Translate, QStringLiteral("翻译：识别并翻译为中文"));
         translate->setAccessibleName(QStringLiteral("翻译"));
         if (!ocrMissing.isEmpty()) { translate->setEnabled(false); translate->setToolTip(ocrMissing); }
         connect(save, &QToolButton::clicked, this, &CaptureOverlay::saveCapture);
@@ -150,15 +152,16 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     // Instant annotation tools: draw inside the committed selection; every capture
     // action composes them in. One shape button covers rect / ellipse; per-tool
     // options (sub-shape, arrow style, colors, text weight) live on the strip below.
-    auto *undo = iconButton(Icon::Undo, QStringLiteral("撤销 (Ctrl+Z)"));
+    auto *undo = barButton(Icon::Undo, QStringLiteral("撤销 (Ctrl+Z)"));
     connect(undo, &QToolButton::clicked, this, &CaptureOverlay::undoAnnotation);
     m_undoButton = undo;
-    auto *redo = iconButton(Icon::Redo, QStringLiteral("重做 (Ctrl+Y)"));
+    auto *redo = barButton(Icon::Redo, QStringLiteral("重做 (Ctrl+Y)"));
     connect(redo, &QToolButton::clicked, this, &CaptureOverlay::redoAnnotation);
     m_redoButton = redo;
+    syncUndoButtons();                             // Empty stacks: both start greyed out.
     m_shapeButton = new QToolButton;               // One button for both shapes.
-    m_shapeButton->setIcon(makeIcon(Icon::Rect));
-    m_shapeButton->setIconSize(QSize(16, 16));
+    m_shapeButton->setIcon(barIcon(Icon::Rect));
+    m_shapeButton->setIconSize(QSize(Bar::icon, Bar::icon));
     m_shapeButton->setToolTip(QStringLiteral("形状：矩形/椭圆 (R=矩形 / O=椭圆)"));
     m_shapeButton->setCheckable(true);
     m_shapeButton->setCursor(Qt::PointingHandCursor);
@@ -180,7 +183,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         {ATool::Eraser, Icon::Eraser, "橡皮 (E)"},
     };
     for (const auto &t : tools) {
-        auto *button = iconButton(t.icon, QString::fromUtf8(t.tip));
+        auto *button = barButton(t.icon, QString::fromUtf8(t.tip));
         button->setCheckable(true);
         const ATool tool = t.tool;
         connect(button, &QToolButton::clicked, this, [this, tool] {
@@ -191,7 +194,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     }
     // Drawing tools | undo, redo | capture actions ending with pin, save, copy.
     if (pinEdit) {
-        auto *done = iconButton(Icon::Check, QStringLiteral("完成编辑 (Enter)"));
+        auto *done = barButton(Icon::Check, QStringLiteral("完成编辑 (Enter)"));
         connect(done, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
         m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
                          m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
@@ -205,24 +208,24 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     for (QWidget *button : m_toolButtons) button->setFocusPolicy(Qt::NoFocus);
 
     const QString optionsQss = barQss + QStringLiteral(
-        "QLabel{color:#323232;font-size:12px;border:none;}"
-        "QComboBox{color:#323232;background:#fdfdfd;border:1px solid #d2d2d2;border-bottom-color:#bcbcbc;"
-        "padding:1px 3px;font-size:12px;}"
-        "QComboBox:hover{border-color:#a0a0a0;}"
-        "QComboBox::drop-down{border:none;width:14px;background:transparent;}"
+        "QLabel{color:#fcfcfc;font-size:12px;border:none;}"
+        "QComboBox{color:#fcfcfc;background:#060607;border:none;border-radius:12px;"
+        "padding:1px 4px 1px 12px;font-size:12px;}"
+        "QComboBox:hover{background:#0c0c0e;}"
+        "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
         "QComboBox::down-arrow{image:none;width:0px;height:0px;}"
-        "QComboBox QAbstractItemView{outline:0px;color:#323232;background:#ffffff;border:1px solid #828790;"
-        "selection-background-color:#e5f1fb;selection-color:#323232;}"
-        "QLineEdit{color:#323232;background:transparent;border:none;"
-        "selection-background-color:#2080f0;selection-color:#ffffff;}");
+        "QComboBox QAbstractItemView{outline:0px;color:#fcfcfc;background:#262626;border:1px solid #3c3c3c;"
+        "padding:4px;selection-background-color:#3388ff;selection-color:#fcfcfc;}"
+        "QLineEdit{color:#fcfcfc;background:transparent;border:none;"
+        "selection-background-color:#3388ff;selection-color:#fcfcfc;}");
     if (m_embedded) {
-        // The option strip detaches as a small top-level bar styled like the
-        // pin's own toolbar; the pin positions it below that toolbar.
+        // The option strip detaches as a small top-level rounded bar;
+        // the pin positions it below its own toolbar.
         m_toolOptions = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
         m_toolOptions->setObjectName(QStringLiteral("pinStrip"));
         m_toolOptions->setAttribute(Qt::WA_StyledBackground);
         m_toolOptions->setStyleSheet(QStringLiteral(
-            "#pinStrip{background:#f2f2f2;border:1px solid #c8c8c8;border-radius:4px;}") + optionsQss);
+            "#pinStrip{background:#18181b;border:none;border-radius:8px;}") + optionsQss);
     } else {
         m_toolOptions = new QWidget(this);
         m_toolOptions->setStyleSheet(optionsQss);
@@ -331,15 +334,17 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         p.setPen(QPen(QColor(0, 0, 0, 90), 1));
         p.drawRect(m_sel.adjusted(0, 0, -1, -1));
     }
-    for (QWidget *glass : {m_tools, m_toolOptions}) {   // Light fill inside a 1px theme-blue frame.
+    for (QWidget *glass : {m_tools, m_toolOptions}) {   // Rounded dark surface with a faint light rim.
         if (m_embedded) break;                   // Detached or unused bars paint themselves.
         if (!glass->isVisible()) continue;
-        const QRect bar = glass->geometry();
+        const QRectF bar = glass->geometry();
+        p.setRenderHint(QPainter::Antialiasing);
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0x20, 0x80, 0xf0));
-        p.drawRect(bar);
-        p.setBrush(QColor(0xf2, 0xf2, 0xf2));
-        p.drawRect(bar.adjusted(1, 1, -1, -1));
+        p.setBrush(QColor(255, 255, 255, 17));    // 1px light rim lifts the bar off dark captures.
+        p.drawRoundedRect(bar.adjusted(-1, -1, 1, 1), Bar::radius + 1, Bar::radius + 1);
+        p.setBrush(Bar::surface);
+        p.drawRoundedRect(bar, Bar::radius, Bar::radius);
+        p.setRenderHint(QPainter::Antialiasing, false);
     }
 }
 
@@ -1242,11 +1247,11 @@ void CaptureOverlay::buildToolLayout()
 {
     if (m_tools->layout()) return;
     auto *lay = new QHBoxLayout(m_tools);
-    lay->setContentsMargins(1, 1, 1, 1);
-    lay->setSpacing(0);
+    lay->setContentsMargins(6, 5, 6, 6);         // 42px bar around 31px buttons.
+    lay->setSpacing(4);
     for (int i = 0; i < m_toolButtons.size(); ++i) {
-        if (i == 8 || i == 10) lay->addWidget(barSeparator());   // Tools | undo, redo | outputs.
-        static_cast<QToolButton *>(m_toolButtons[i])->setFixedSize(32, 32);
+        if (i == 8 || i == 10) lay->addWidget(barSeparator(true));   // Tools | undo, redo | outputs.
+        static_cast<QToolButton *>(m_toolButtons[i])->setFixedSize(Bar::button, Bar::button);
         lay->addWidget(m_toolButtons[i]);
     }
     m_tools->adjustSize();
@@ -1261,21 +1266,21 @@ void CaptureOverlay::placeToolbar()
     const QSize main = m_tools->sizeHint();
     const QSize options = optionsTool() == ATool::None ? QSize(0, 0) : m_toolOptions->sizeHint();
     const int width = qMax(main.width(), options.width());
-    const int height = main.height() + options.height();
+    const int height = main.height() + (options.isEmpty() ? 0 : Bar::gap + options.height());
     const int selRight = m_sel.right() + 1, selBottom = m_sel.bottom() + 1;
     // A pin edit keeps the toolbar centered below the pin, the same spot the
     // pin's own toolbar occupied; capture mode right-aligns under the selection.
     const int x = m_pinEdit
         ? qBound(avail.left(), m_sel.center().x() - width / 2, qMax(avail.left(), avail.right() + 1 - width))
         : qBound(avail.left(), selRight - width, avail.right() + 1 - width);
-    const int y = selBottom + 6 + height <= avail.bottom() + 1 ? selBottom + 6
-        : m_sel.top() - 6 - height >= avail.top() ? m_sel.top() - 6 - height
+    const int y = selBottom + Bar::gap + height <= avail.bottom() + 1 ? selBottom + Bar::gap
+        : m_sel.top() - Bar::gap - height >= avail.top() ? m_sel.top() - Bar::gap - height
         : qMax(avail.top(), avail.bottom() + 1 - height - 8);
     m_tools->setGeometry(x + width - main.width(), y, main.width(), main.height());
     positionToolOptions();
     const QRect glass = m_toolOptions->isVisible()
         ? m_tools->geometry().united(m_toolOptions->geometry()) : m_tools->geometry();
-    update(glass.united(old).adjusted(-1, -1, 1, 1));
+    update(glass.united(old).adjusted(-4, -4, 4, 4));
 }
 
 void CaptureOverlay::positionToolOptions()                      // Option strip hugs the toolbar's bottom edge.
@@ -1284,19 +1289,19 @@ void CaptureOverlay::positionToolOptions()                      // Option strip 
     if (!m_toolOptions->isVisible() && optionsTool() == ATool::None) return;
     const QRect bar = m_tools->geometry();
     const QSize hint = m_toolOptions->sizeHint();       // Strip width follows its own contents.
-    m_toolOptions->setGeometry(qBound(0, bar.left(), qMax(0, width() - hint.width())), bar.bottom() + 1,
-                               hint.width(), hint.height());   // Left-aligned with the main bar.
+    m_toolOptions->setGeometry(qBound(0, bar.left(), qMax(0, width() - hint.width())), bar.bottom() + 1 + Bar::gap,
+                               hint.width(), hint.height());   // Left-aligned 8px below the main bar.
 }
 
 void CaptureOverlay::hideToolBars()
 {
     if (optionsTool() != ATool::None) return;     // Active tool options remain available throughout a drag.
     if (m_toolOptions->isVisible()) {
-        update(m_toolOptions->geometry());
+        update(m_toolOptions->geometry().adjusted(-4, -4, 4, 4));
         m_toolOptions->hide();
     }
     if (m_tools->isVisible()) {
-        update(m_tools->geometry());
+        update(m_tools->geometry().adjusted(-4, -4, 4, 4));
         m_tools->hide();
     }
 }

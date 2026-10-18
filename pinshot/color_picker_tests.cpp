@@ -155,6 +155,8 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
                       QRect(-320, -240, 240, 180), image};
     CaptureOverlay overlay({frame});
     overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    check(!overlay.m_undoButton->isEnabled() && !overlay.m_redoButton->isEnabled(),
+          "a fresh capture greys out undo and redo before any edit");
     PixelInspector *inspector = overlay.m_inspector;
     const QPoint sample = frame.pixelRect.topLeft() + QPoint(120, 90);
     check(inspector->setSample(frame, sample), "native pixel sample with negative screen origin");
@@ -660,6 +662,10 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     QApplication::sendEvent(&overlay, &keyDel);
     while (!overlay.m_undoStack.isEmpty()) overlay.undoAnnotation();
     check(!overlay.m_undoButton->isEnabled(), "the undo button disables on an empty stack");
+    check(overlay.m_redoButton->isEnabled(), "undone edits light up the redo button");
+    overlay.redoAnnotation();
+    check(overlay.m_undoButton->isEnabled(), "a redone edit lights up the undo button");
+    while (!overlay.m_undoStack.isEmpty()) overlay.undoAnnotation();
     overlay.m_redoStack.clear();
     overlay.syncUndoButtons();
     check(!overlay.m_redoButton->isEnabled(), "the redo button disables on an empty stack");
@@ -1121,25 +1127,26 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     overlay.placeToolbar();
     overlay.showToolBars();
     check(overlay.m_toolOptions->x() == overlay.m_tools->x()
-              && overlay.m_toolOptions->y() == overlay.m_tools->geometry().bottom() + 1
+              && overlay.m_toolOptions->y() == overlay.m_tools->geometry().bottom() + 1 + Bar::gap
               && overlay.m_toolOptions->width() == overlay.m_toolOptions->sizeHint().width(),
-          "the options strip hugs the toolbar's bottom-left edge at its own width");
+          "the options strip sits 8px under the toolbar's bottom-left edge at its own width");
     for (QWidget *bar : {overlay.m_tools, overlay.m_toolOptions}) {
         const QImage painted = overlay.grab(bar->geometry()).toImage();
         const qreal dpr = painted.devicePixelRatio();
-        const QColor background = painted.pixelColor(qRound((bar->width() - 3) * dpr), qRound((bar->height() - 2) * dpr));
-        const QColor frame = painted.pixelColor(qRound(10 * dpr), 0);
-        if (background != QColor(0xf2, 0xf2, 0xf2) || frame != QColor(0x20, 0x80, 0xf0))
-            std::fprintf(stderr, "bar background %d,%d,%d frame %s size=%dx%d dpr=%.2f main=%d\n",
-                         background.red(), background.green(), background.blue(), qPrintable(frame.name()),
-                         bar->width(), bar->height(), double(dpr), bar == overlay.m_tools);
-        check(background == QColor(0xf2, 0xf2, 0xf2) && frame == QColor(0x20, 0x80, 0xf0),
-              "main and option bars render a light fill inside a theme-blue frame");
+        const QColor background = painted.pixelColor(qRound((bar->width() - 3) * dpr), qRound((bar->height() / 2) * dpr));
+        const QColor edge = painted.pixelColor(qRound(10 * dpr), 0);
+        const QColor corner = painted.pixelColor(0, 0);   // Rounded 8px corner leaves the frozen frame visible.
+        if (background != Bar::surface || edge != Bar::surface || corner == Bar::surface)
+            std::fprintf(stderr, "bar background %d,%d,%d edge %s corner %s size=%dx%d dpr=%.2f main=%d\n",
+                         background.red(), background.green(), background.blue(), qPrintable(edge.name()),
+                         qPrintable(corner.name()), bar->width(), bar->height(), double(dpr), bar == overlay.m_tools);
+        check(background == Bar::surface && edge == Bar::surface && corner != Bar::surface && bar->height() == 42,
+              "main and option bars render a 42px dark surface with rounded corners");
     }
     for (QWidget *widget : overlay.m_toolButtons) {
         const QIcon icon = static_cast<QToolButton *>(widget)->icon();
-        for (const auto &expect : {qMakePair(QIcon::Normal, QColor(0x32, 0x32, 0x32)),
-                                   qMakePair(QIcon::Disabled, QColor(0x7b, 0x7b, 0x7b))}) {
+        for (const auto &expect : {qMakePair(QIcon::Normal, Bar::ink),
+                                   qMakePair(QIcon::Disabled, Bar::dim)}) {
             const QImage pixels = icon.pixmap(QSize(16, 16), expect.first).toImage();
             bool exact = true, visible = false;
             for (int y = 0; y < pixels.height(); ++y)
@@ -1154,11 +1161,11 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
                 std::fprintf(stderr, "icon %s mode=%d visible=%d size=%dx%d\n",
                              qPrintable(widget->toolTip()), int(expect.first), int(visible),
                              pixels.width(), pixels.height());
-            check(visible && exact, "toolbar icons are dark glyphs, grey when disabled");
+            check(visible && exact, "toolbar icons are light glyphs, dim when disabled");
         }
         check(icon.pixmap(QSize(16, 16), QIcon::Normal, QIcon::On).toImage()
                   != icon.pixmap(QSize(16, 16), QIcon::Normal, QIcon::Off).toImage(),
-              "checked tools switch to white glyphs on the theme fill");
+              "checked tools switch to accent glyphs");
     }
     overlay.m_anns.clear();
     overlay.m_undoStack.clear();

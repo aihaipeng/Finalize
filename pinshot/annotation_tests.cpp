@@ -134,7 +134,7 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
         auto *brushButton = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicBrush"));
         check(brushButton && brushButton->isChecked()
                   && brushButton->icon().pixmap(QSize(16, 16)).toImage()
-                     == makeIcon(Icon::Pen).pixmap(QSize(16, 16)).toImage(),
+                     == barIcon(Icon::Pen).pixmap(QSize(16, 16)).toImage(),
               "mosaic brush has an explicit pencil icon and selected state");
         brushButton->click();
         check(overlay.mosaicBrush(), "clicking the active brush keeps brush mode");
@@ -365,14 +365,14 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
         const int oldWidth = overlay.m_mosaicWidth;
         for (int blurPass = 0; blurPass < 2; ++blurPass) {
             QImage glyph(24, 24, QImage::Format_RGB32);    // As seen on the bar background.
-            glyph.fill(QColor(0xf2, 0xf2, 0xf2));
+            glyph.fill(Bar::surface);
             QPainter onBar(&glyph);
             onBar.drawPixmap(0, 0, overlay.m_mosaicPreview->icon().pixmap(24, 24));
             onBar.end();
-            int darkest = 255;
+            int darkest = 0;   // Brightest pixel: the glyph must stand out from the dark bar.
             for (int y = 0; y < glyph.height(); ++y)
-                for (int x = 0; x < glyph.width(); ++x) darkest = qMin(darkest, qGray(glyph.pixel(x, y)));
-            check(darkest <= 0x7b, "effect preview glyph keeps >=3:1 contrast on the light bar");
+                for (int x = 0; x < glyph.width(); ++x) darkest = qMax(darkest, qGray(glyph.pixel(x, y)));
+            check(darkest >= 0x80, "effect preview glyph keeps >=3:1 contrast on the dark bar");
             overlay.m_mosaicPreview->click();
         }
         overlay.m_mosaicPreview->click();

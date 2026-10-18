@@ -36,6 +36,18 @@ QIcon cardIcon(Icon icon, int size = 16);
 
 QToolButton *iconButton(Icon icon, const QString &tip);
 
+// Capture bar palette: dark surface tokens shared by the capture toolbar and its option strip.
+namespace Bar {
+inline const QColor surface{0x18, 0x18, 0x1b}, ink{0xfc, 0xfc, 0xfc}, dim{0x27, 0x27, 0x2a},
+    accent{0x33, 0x88, 0xff}, field{0x06, 0x06, 0x07}, divider{0x23, 0x23, 0x26}, muted{0x71, 0x71, 0x7b};
+constexpr int button = 31, icon = 21, radius = 8, gap = 8;
+}
+// Capture bar glyphs: light ink, accent when checked, dim when disabled.
+QIcon barIcon(Icon icon, int size = Bar::icon);
+QToolButton *barButton(Icon icon, const QString &tip);
+// Rounded track slider for the dark capture bars.
+extern const QString darkSliderQss;
+
 // A toolbar button with a solid color chip; checkable by the caller.
 QToolButton *colorButton(const QColor &color, const QString &tip, int size = 32);
 
@@ -43,7 +55,7 @@ QToolButton *colorButton(const QColor &color, const QString &tip, int size = 32)
 extern const QString lightSliderQss;
 
 // 1px vertical divider between toolbar groups, styled by the bar stylesheet.
-QWidget *barSeparator();
+QWidget *barSeparator(bool dark = false);
 
 // ---------- Color strip: current-color button plus a 2x10 preset grid. ----------
 class ColorBoard : public QWidget
