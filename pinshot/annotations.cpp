@@ -736,6 +736,13 @@ bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
         for (QWidget *w = static_cast<QWidget *>(obj); w; w = w->parentWidget())
             if (w == this) return true;
     }
+    if (obj == m_sizeTip && !m_sel.isNull()
+        && (ev->type() == QEvent::MouseButtonPress || ev->type() == QEvent::MouseButtonRelease)) {
+        if (static_cast<QMouseEvent *>(ev)->button() == Qt::LeftButton
+            && ev->type() == QEvent::MouseButtonPress)
+            showCustomSizePopup();
+        return true;
+    }
     if (((m_sizeSlider && obj == m_sizeSlider) || obj == m_sizeButton) && ev->type() == QEvent::Wheel) {
         const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
         if (delta) setWidthControl(qRound(widthControlValue()) + (delta > 0 ? 1 : -1));

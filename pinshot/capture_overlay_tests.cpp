@@ -2,6 +2,7 @@
 #include <QClipboard>
 #include <QWindow>
 #include "output.h"
+#include "screen_capture.h"
 #include "test_support.h"
 #include "widgets.h"
 #include "pin_window.h"
@@ -28,6 +29,10 @@
 #include <QCursor>
 #include <QTemporaryDir>
 #include <QFileInfo>
+#include <QSpinBox>
+#include <QCheckBox>
+#include <QPushButton>
+#include <QSettings>
 #include <qt_windows.h>
 #include <cstdio>
 
@@ -172,6 +177,7 @@ int CaptureOverlay::testSelection()
                                               qRound(overlay.m_sel.width()*scale),qRound(overlay.m_sel.height()*scale)));
     expected.setDevicePixelRatio(1);
     check(overlay.cropped().toImage()==expected.toImage(),"output crops the adjusted region at the frozen image's native pixel scale");
+    failures += testCustomSize();
     overlay.resetSelection();
     check(overlay.m_sel.isEmpty() && overlay.m_mode==Selecting,"clearing the selection still permits a new capture");
     overlay.close();
@@ -179,6 +185,155 @@ int CaptureOverlay::testSelection()
     failures += testSelectionBorders();
     if (!failures) std::printf("PASS: eight-direction outside adjustment, cursor/region keys, screen toggle and crop output\n");
     return failures ? 1 : 0;
+}
+
+int CaptureOverlay::testCustomSize()
+{
+    int failures = 0;
+    const auto check = [&failures](bool ok, const char *message) {
+        if (!ok) { ++failures; std::fprintf(stderr, "FAIL: %s\n", message); }
+    };
+    QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+    const bool hadUnit = settings.contains(QStringLiteral("Capture/sizeUnit"));
+    const QVariant oldUnit = settings.value(QStringLiteral("Capture/sizeUnit"));
+    const bool hadPresets = settings.contains(QStringLiteral("Capture/presets"));
+    const QVariant oldPresets = settings.value(QStringLiteral("Capture/presets"));
+    const QRect screen = QGuiApplication::primaryScreen()->geometry();
+    const QRect frameRect(screen.topLeft(), QSize(800, 600));
+    QImage image(1600, 1200, QImage::Format_RGB32);
+    image.fill(QColor(120, 150, 180));
+    CaptureOverlay overlay({ScreenFrame{frameRect, QRect(0, 0, 1600, 1200), image}});
+    overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    const QPoint origin = overlay.localScreenRect(frameRect).topLeft();
+    overlay.m_mode = Adjusting;
+    overlay.m_sel = QRect(origin + QPoint(100, 100), QSize(120, 60));
+    overlay.m_sizeUnit = SizeUnit::Px;
+    overlay.updateTip();
+    check(overlay.m_sizeTip->text() == QStringLiteral("240 × 120 px"),
+          "the size label converts logical pixels to the selected px unit");
+    overlay.m_sizeUnit = SizeUnit::Dp;
+    overlay.updateTip();
+    check(overlay.m_sizeTip->text() == QStringLiteral("120 × 60 dp"),
+          "the size label switches to logical dp without moving the region");
+
+    overlay.m_sizeUnit = SizeUnit::Px;
+    overlay.updateTip();
+    const auto clickSizeLabel = [&overlay] {
+        const QPoint at(2, 2);
+        QMouseEvent press(QEvent::MouseButtonPress, at, overlay.m_sizeTip->mapToGlobal(at),
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(overlay.m_sizeTip, &press);
+        QApplication::processEvents();
+    };
+    clickSizeLabel();
+    auto *x = overlay.findChild<QSpinBox *>(QStringLiteral("customX"));
+    auto *y = overlay.findChild<QSpinBox *>(QStringLiteral("customY"));
+    auto *width = overlay.findChild<QSpinBox *>(QStringLiteral("customWidth"));
+    auto *height = overlay.findChild<QSpinBox *>(QStringLiteral("customHeight"));
+    auto *unit = overlay.findChild<QComboBox *>(QStringLiteral("customUnit"));
+    auto *lock = overlay.findChild<QCheckBox *>(QStringLiteral("customLockAspect"));
+    auto *preset = overlay.findChild<QComboBox *>(QStringLiteral("customPreset"));
+    auto *save = overlay.findChild<QPushButton *>(QStringLiteral("customPresetSave"));
+    auto *popup = overlay.m_customSizePopup.data();
+    check(popup && x && y && width && height && unit && lock && preset && save
+              && x->value() == 200 && y->value() == 200
+              && width->value() == 240 && height->value() == 120
+              && unit->currentText() == QStringLiteral("px"),
+          "clicking the size label opens an independent panel with live position and px size");
+    if (popup && QDir(QStringLiteral("debug/publish-checks")).exists()) {
+        popup->grab().save(QStringLiteral("debug/publish-checks/custom-size-panel.png"));
+        overlay.m_sizeTip->grab().save(QStringLiteral("debug/publish-checks/custom-size-label.png"));
+        const QImage framed = grabNative(nativeFromLogical(popup->frameGeometry()));
+        if (!framed.isNull())
+            framed.save(QStringLiteral("debug/publish-checks/custom-size-window.png"));
+    }
+    if (!popup || !x || !y || !width || !height || !unit || !lock || !preset || !save) {
+        settings.remove(QStringLiteral("Capture/sizeUnit"));
+        settings.remove(QStringLiteral("Capture/presets"));
+        if (hadUnit) settings.setValue(QStringLiteral("Capture/sizeUnit"), oldUnit);
+        if (hadPresets) settings.setValue(QStringLiteral("Capture/presets"), oldPresets);
+        if (popup) popup->close();
+        return failures;
+    }
+    const Qt::WindowFlags flags = popup->windowFlags();
+    check((flags & Qt::WindowType_Mask) == Qt::Tool
+              && !flags.testFlag(Qt::FramelessWindowHint)
+              && popup->windowTitle() == QStringLiteral("自定义截图"),
+          "the editor is a standalone titled window rather than an anchored frameless popup");
+    const QPoint panelPos = popup->pos();
+
+    width->setValue(300);
+    QApplication::processEvents();
+    check(overlay.m_sel.size() == QSize(150, 60) && popup->pos() == panelPos,
+          "editing width updates the selection immediately without moving the panel");
+
+    x->setValue(300);
+    QApplication::processEvents();
+    check(overlay.m_sel.topLeft() == origin + QPoint(150, 100) && popup->pos() == panelPos,
+          "editing position moves the selection immediately without moving the panel");
+    check(overlay.m_sel.width() == 150 && overlay.m_sel.height() == 60,
+          "editing position leaves the selection size unchanged");
+
+    lock->setChecked(true);
+    width->setValue(400);
+    QApplication::processEvents();
+    check(overlay.m_lockAspect && height->value() == 160
+              && overlay.m_sel.size() == QSize(200, 80) && popup->pos() == panelPos,
+          "locking the ratio keeps live width/height edits proportional and the panel fixed");
+
+    unit->setCurrentIndex(1);
+    QApplication::processEvents();
+    check(unit->currentText() == QStringLiteral("dp") && x->value() == 150 && y->value() == 100
+              && width->value() == 200 && height->value() == 80,
+          "switching the unit converts both live position and size fields");
+    width->setValue(300);
+    QApplication::processEvents();
+    check(overlay.m_sel.size() == QSize(300, 120) && height->value() == 120
+              && popup->pos() == panelPos,
+          "live dp size edits remain locked and keep the panel in place");
+
+    overlay.saveSizePreset(QStringLiteral("测试预设"));
+    check(overlay.m_sizePresets.size() == 1 && preset->currentText() == QStringLiteral("测试预设")
+              && settings.value(QStringLiteral("Capture/presets")).toStringList().size() == 1,
+          "saving a preset stores the current region and selects it");
+    x->setValue(200);
+    width->setValue(200);
+    QApplication::processEvents();
+    check(preset->currentIndex() == 0 && overlay.m_sel.size() == QSize(200, 80),
+          "editing after a preset returns the preset selector to the custom entry");
+    preset->setCurrentIndex(1);
+    QApplication::processEvents();
+    check(overlay.m_sel.topLeft() == origin + QPoint(150, 100)
+              && overlay.m_sel.size() == QSize(300, 120)
+              && x->value() == 150 && width->value() == 300 && popup->pos() == panelPos,
+          "selecting a preset updates the selection and fields without moving the panel");
+
+    popup->close();
+    clickSizeLabel();
+    check(overlay.m_customSizePopup && overlay.m_customSizePopup->isVisible()
+              && overlay.m_customSizePopup->pos() == panelPos,
+          "reopening the editor keeps its last window position");
+
+    overlay.m_sel = QRect(origin + QPoint(100, 100), QSize(200, 100));
+    overlay.m_lockAspect = true;
+    overlay.m_aspect = 2.0;
+    overlay.m_pressSel = overlay.m_sel;
+    overlay.m_pressPos = overlay.m_sel.topLeft();
+    const QRect corner = overlay.resizeBy(H_BR, overlay.m_sel.topLeft() + QPoint(299, 149));
+    check(corner.size() == QSize(300, 150), "a locked corner drag preserves the current ratio");
+    const QRect edge = overlay.resizeBy(H_R, overlay.m_sel.topLeft() + QPoint(299, 0));
+    check(edge.size() == QSize(300, 150) && edge.center().y() == overlay.m_sel.center().y(),
+          "a locked edge drag grows the other dimension around the center");
+    overlay.m_lockAspect = false;
+    const QRect free = overlay.resizeBy(H_BR, overlay.m_sel.topLeft() + QPoint(299, 299));
+    check(free.size() == QSize(300, 300), "unlocked handles resize each dimension independently");
+
+    if (hadUnit) settings.setValue(QStringLiteral("Capture/sizeUnit"), oldUnit);
+    else settings.remove(QStringLiteral("Capture/sizeUnit"));
+    if (hadPresets) settings.setValue(QStringLiteral("Capture/presets"), oldPresets);
+    else settings.remove(QStringLiteral("Capture/presets"));
+    overlay.close();
+    return failures;
 }
 
 int CaptureOverlay::testSelectionBorders()

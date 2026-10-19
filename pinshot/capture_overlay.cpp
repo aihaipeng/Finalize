@@ -37,10 +37,13 @@
 #include <QDialog>
 #include <QLineEdit>
 #include <QHBoxLayout>
+#include <QGridLayout>
+#include <QPushButton>
 #include <QFileDialog>
 #include <QStandardPaths>
 #include <QCursor>
 #include <QMessageBox>
+#include <QInputDialog>
 #include <QTimer>
 #include <QVariantAnimation>
 #include <QEventLoop>
@@ -95,6 +98,8 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
     m_roundEnabled = settings.value(QStringLiteral("Capture/roundEnabled"), false).toBool();
     m_roundRadius = qBound(0, settings.value(QStringLiteral("Capture/roundRadius"), 0).toInt(), 60);
+    m_sizeUnit = settings.value(QStringLiteral("Capture/sizeUnit"), QStringLiteral("px")).toString()
+                         .compare(QStringLiteral("dp"), Qt::CaseInsensitive) == 0 ? SizeUnit::Dp : SizeUnit::Px;
     m_frameSource = [] { return freezeScreens(); };
     buildShot(m_frames);
     }
@@ -103,6 +108,10 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     m_sizeTip = new QLabel(this);
     m_sizeTip->setStyleSheet(
         "background:#f2f2f2;color:#323232;padding:2px 6px;border:1px solid #2080f0;font-size:12px;");
+    m_sizeTip->setCursor(Qt::PointingHandCursor);
+    m_sizeTip->setAccessibleName(QStringLiteral("自定义截图"));
+    m_sizeTip->setAccessibleDescription(QStringLiteral("点击调整区域大小、尺寸单位和长宽比"));
+    m_sizeTip->installEventFilter(this);
     m_sizeTip->hide();
 
     // The overlay paints matching solid backgrounds for both toolbar containers.
@@ -769,6 +778,7 @@ void CaptureOverlay::wheelEvent(QWheelEvent *e)
 void CaptureOverlay::closeEvent(QCloseEvent *e)
 {
     if (m_colorDialog) m_colorDialog->close();
+    if (m_customSizePopup) m_customSizePopup->close();
     cancelDetection();
     if (m_detector) m_detector->stop();
     QWidget::closeEvent(e);
@@ -826,6 +836,7 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
         const QRect current = localScreenRect((screen ? screen : QGuiApplication::primaryScreen())->geometry());
         cancelDetection();
         m_sel = m_sel == current ? rect() : current;
+        if (m_lockAspect && m_sel.height() > 0) m_aspect = qreal(m_sel.width()) / m_sel.height();
         m_mode = Adjusting;
         m_hover = {};
         placeToolbar(); showToolBars(); updateTip(); update();
@@ -1225,6 +1236,11 @@ void CaptureOverlay::resetSelection()
 {
     stopItemDrag();
     if (m_colorDialog) m_colorDialog->close();
+    m_lockAspect = false;
+    if (m_customLock) {
+        const QSignalBlocker block(m_customLock);
+        m_customLock->setChecked(false);
+    }
     m_mode = Selecting;                         // m_hover is kept: the next mouse move refreshes it.
     m_sel = QRect();
     m_drag = H_None;
@@ -1313,6 +1329,39 @@ QRect CaptureOverlay::resizeBy(Handle h, const QPoint &pos)
     }
     default: break;
     }
+    const qreal aspect = (m_lockAspect && m_pressSel.width() > 0 && m_pressSel.height() > 0)
+        ? qreal(m_pressSel.width()) / m_pressSel.height() : 0;
+    if (aspect <= 0)
+        return QRect(QPoint(qMin(r.left(),r.right()),qMin(r.top(),r.bottom())),
+                     QPoint(qMax(r.left(),r.right()),qMax(r.top(),r.bottom())));
+    int w = r.width(), height = r.height();
+    const QPoint center = m_pressSel.center();
+    switch (h) {
+    case H_TL: case H_TR: case H_BL: case H_BR: {
+        // One fixed opposite corner; both edges grow together at the current ratio.
+        w = qMax(1, w);
+        height = qMax(1, height);
+        if (w / aspect >= height) height = qMax(1, qRound(w / aspect));
+        else w = qMax(1, qRound(height * aspect));
+        const bool leftEdge = h == H_TL || h == H_BL;
+        const bool topEdge = h == H_TL || h == H_TR;
+        const int x = leftEdge ? m_pressSel.right() - w + 1 : m_pressSel.left();
+        const int y = topEdge ? m_pressSel.bottom() - height + 1 : m_pressSel.top();
+        return QRect(x, y, w, height);
+    }
+    case H_L: case H_R:
+        w = qMax(1, w);
+        height = qMax(1, qRound(w / aspect));
+        return QRect(h == H_R ? m_pressSel.left() : m_pressSel.right() - w + 1,
+                     center.y() - (height - 1) / 2, w, height);
+    case H_T: case H_B:
+        height = qMax(1, height);
+        w = qMax(1, qRound(height * aspect));
+        return QRect(center.x() - (w - 1) / 2,
+                     h == H_B ? m_pressSel.top() : m_pressSel.bottom() - height + 1, w, height);
+    default:
+        break;
+    }
     return QRect(QPoint(qMin(r.left(),r.right()),qMin(r.top(),r.bottom())),
                  QPoint(qMax(r.left(),r.right()),qMax(r.top(),r.bottom())));
 }
@@ -1322,10 +1371,19 @@ void CaptureOverlay::updateTip()
     if (m_pinEdit) { m_sizeTip->hide(); return; }   // Size label is capture chrome.
     const QRect r = !m_hover.isNull() ? m_hover : m_sel;
     if (r.isNull()) { m_sizeTip->hide(); return; }
-    m_sizeTip->setText(QString("%1 × %2").arg(r.width()).arg(r.height()));
+    const QSize shown = sizeInUnit(r, m_sizeUnit);
+    QString text = QStringLiteral("%1 × %2 %3").arg(shown.width()).arg(shown.height())
+                       .arg(m_sizeUnit == SizeUnit::Dp ? QStringLiteral("dp") : QStringLiteral("px"));
+    if (m_lockAspect && r == m_sel) text += QStringLiteral(" · 锁定比例");
+    m_sizeTip->setText(text);
     m_sizeTip->adjustSize();
     m_sizeTip->move(r.topLeft() - QPoint(0, m_sizeTip->height() + 4));
     m_sizeTip->show();
+    if (m_customSizePopup && m_customSizePopup->isVisible() && !m_sel.isNull() && !m_updatingCustom) {
+        QWidget *focus = QApplication::focusWidget();
+        if (!focus || !m_customSizePopup->isAncestorOf(focus))
+            updateCustomSizeInputs();
+    }
 }
 
 void CaptureOverlay::buildToolLayout()
@@ -1494,6 +1552,351 @@ void CaptureOverlay::showRadiusPopup()
     popup->move(qBound(available.left(), below.x(), available.right() + 1 - popup->width()), y);
 }
 
+QRect CaptureOverlay::nativeFromGlobal(const QRect &global) const
+{
+    if (global.isEmpty()) return {};
+    for (const ScreenFrame &frame : m_frames) {
+        if (frame.logicalRect.isEmpty() || !frame.logicalRect.contains(global.center()))
+            continue;
+        const qreal sx = qreal(frame.pixelRect.width()) / frame.logicalRect.width();
+        const qreal sy = qreal(frame.pixelRect.height()) / frame.logicalRect.height();
+        if (sx <= 0 || sy <= 0) break;
+        return QRect(qRound(frame.pixelRect.left() + (global.left() - frame.logicalRect.left()) * sx),
+                     qRound(frame.pixelRect.top() + (global.top() - frame.logicalRect.top()) * sy),
+                     qRound(global.width() * sx), qRound(global.height() * sy));
+    }
+    return global;
+}
+
+QRect CaptureOverlay::globalFromUnit(int x, int y, int width, int height, SizeUnit unit) const
+{
+    if (unit == SizeUnit::Dp) return QRect(x, y, width, height);
+    const QPoint native(x, y);
+    for (const ScreenFrame &frame : m_frames) {
+        if (frame.pixelRect.isEmpty() || !frame.pixelRect.contains(native))
+            continue;
+        const qreal sx = qreal(frame.logicalRect.width()) / frame.pixelRect.width();
+        const qreal sy = qreal(frame.logicalRect.height()) / frame.pixelRect.height();
+        return QRect(qRound(frame.logicalRect.left() + (x - frame.pixelRect.left()) * sx),
+                     qRound(frame.logicalRect.top() + (y - frame.pixelRect.top()) * sy),
+                     qMax(1, qRound(width * sx)), qMax(1, qRound(height * sy)));
+    }
+    return QRect(x, y, width, height);
+}
+
+QRect CaptureOverlay::unitFromLocal(const QRect &local, SizeUnit unit) const
+{
+    if (local.isEmpty()) return {};
+    const QRect global = globalScreenRect(local);
+    return unit == SizeUnit::Dp ? global : nativeFromGlobal(global);
+}
+
+QSize CaptureOverlay::sizeInUnit(const QRect &local, SizeUnit unit) const
+{
+    return unitFromLocal(local, unit).size();
+}
+
+void CaptureOverlay::setSizeUnit(SizeUnit unit, bool persist)
+{
+    m_sizeUnit = unit;
+    if (persist) {
+        QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+        settings.setValue(QStringLiteral("Capture/sizeUnit"),
+                          unit == SizeUnit::Dp ? QStringLiteral("dp") : QStringLiteral("px"));
+    }
+    updateTip();
+}
+
+void CaptureOverlay::updateCustomSizeInputs()
+{
+    if (!m_customX || !m_customY || !m_customWidth || !m_customHeight || m_sel.isNull()) return;
+    const QRect shown = unitFromLocal(m_sel, m_sizeUnit);
+    m_updatingCustom = true;
+    m_customX->setValue(shown.x());
+    m_customY->setValue(shown.y());
+    m_customWidth->setValue(qMax(1, shown.width()));
+    m_customHeight->setValue(qMax(1, shown.height()));
+    if (m_customUnit) m_customUnit->setCurrentIndex(m_sizeUnit == SizeUnit::Dp ? 1 : 0);
+    if (m_customLock) m_customLock->setChecked(m_lockAspect);
+    m_updatingCustom = false;
+}
+
+void CaptureOverlay::showCustomSizePopup()
+{
+    if (m_embedded || m_pinEdit || m_sel.isNull()) return;
+    if (m_customSizePopup) {
+        loadSizePresets();
+        refreshPresetCombo();
+        updateCustomSizeInputs();
+        m_customSizePopup->show();
+        m_customSizePopup->raise();
+        m_customSizePopup->activateWindow();
+        return;
+    }
+    auto *popup = new QDialog(this, Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint
+                                        | Qt::WindowStaysOnTopHint);
+    m_customSizePopup = popup;
+    popup->setObjectName(QStringLiteral("customSizePanel"));
+    popup->setWindowTitle(QStringLiteral("自定义截图"));
+    popup->setModal(false);
+    popup->setAttribute(Qt::WA_DeleteOnClose, false);
+    popup->setStyleSheet(QStringLiteral(
+        "QDialog{background:#18181b;}"
+        "QLabel{color:#fcfcfc;font-size:12px;}"
+        "QSpinBox{color:#fcfcfc;background:#060607;border:1px solid #3c3c3c;border-radius:6px;"
+        "padding:2px 4px;min-height:22px;font-size:12px;}"
+        "QComboBox{color:#fcfcfc;background:#060607;border:1px solid #3c3c3c;border-radius:6px;"
+        "padding:2px 6px;min-height:22px;font-size:12px;}"
+        "QComboBox::drop-down{border:none;width:16px;background:transparent;}"
+        "QCheckBox{color:#fcfcfc;font-size:12px;spacing:6px;}"
+        "QPushButton{color:#fcfcfc;background:#262626;border:1px solid #3c3c3c;border-radius:6px;"
+        "padding:4px 12px;font-size:12px;}"
+        "QPushButton:hover{background:#303034;}"));
+    auto *grid = new QGridLayout(popup);
+    grid->setContentsMargins(10, 8, 10, 8);
+    grid->setSpacing(6);
+
+    auto makeSpin = [popup](const QString &name, int minimum, int maximum, int width) {
+        auto *spin = new QSpinBox(popup);
+        spin->setObjectName(name);
+        spin->setRange(minimum, maximum);
+        spin->setAlignment(Qt::AlignRight);
+        spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+        spin->setFixedWidth(width);
+        return spin;
+    };
+    m_customX = makeSpin(QStringLiteral("customX"), -999999, 999999, 70);
+    m_customX->setAccessibleName(QStringLiteral("区域横向位置"));
+    m_customY = makeSpin(QStringLiteral("customY"), -999999, 999999, 70);
+    m_customY->setAccessibleName(QStringLiteral("区域纵向位置"));
+    m_customWidth = makeSpin(QStringLiteral("customWidth"), 4, 99999, 64);
+    m_customWidth->setAccessibleName(QStringLiteral("区域宽度"));
+    m_customHeight = makeSpin(QStringLiteral("customHeight"), 4, 99999, 64);
+    m_customHeight->setAccessibleName(QStringLiteral("区域高度"));
+    m_customUnit = new QComboBox(popup);
+    m_customUnit->setObjectName(QStringLiteral("customUnit"));
+    m_customUnit->setAccessibleName(QStringLiteral("尺寸单位"));
+    m_customUnit->addItems({QStringLiteral("px"), QStringLiteral("dp")});
+    m_customUnit->setFixedWidth(56);
+    m_customLock = new QCheckBox(QStringLiteral("锁定长宽比"), popup);
+    m_customLock->setObjectName(QStringLiteral("customLockAspect"));
+    m_customLock->setAccessibleName(QStringLiteral("锁定长宽比"));
+
+    auto *positionLabel = new QLabel(QStringLiteral("位置"), popup);
+    auto *xLabel = new QLabel(QStringLiteral("X"), popup);
+    auto *yLabel = new QLabel(QStringLiteral("Y"), popup);
+    grid->addWidget(positionLabel, 0, 0);
+    grid->addWidget(xLabel, 0, 1);
+    grid->addWidget(m_customX, 0, 2);
+    grid->addWidget(yLabel, 0, 3);
+    grid->addWidget(m_customY, 0, 4);
+
+    auto *sizeLabel = new QLabel(QStringLiteral("大小"), popup);
+    auto *times = new QLabel(QStringLiteral("×"), popup);
+    times->setAlignment(Qt::AlignCenter);
+    grid->addWidget(sizeLabel, 1, 0);
+    grid->addWidget(m_customWidth, 1, 1);
+    grid->addWidget(times, 1, 2);
+    grid->addWidget(m_customHeight, 1, 3);
+    grid->addWidget(m_customUnit, 1, 4);
+    auto *hint = new QLabel(QStringLiteral("dp = px ÷ 屏幕缩放比"), popup);
+    hint->setStyleSheet(QStringLiteral("color:#a1a1aa;font-size:11px;"));
+    grid->addWidget(hint, 2, 0, 1, 5);
+    grid->addWidget(m_customLock, 3, 0, 1, 4);
+
+    auto *presetLabel = new QLabel(QStringLiteral("预设"), popup);
+    m_presetCombo = new QComboBox(popup);
+    m_presetCombo->setObjectName(QStringLiteral("customPreset"));
+    m_presetCombo->setAccessibleName(QStringLiteral("截图区域预设"));
+    m_presetCombo->setMinimumWidth(138);
+    auto *savePreset = new QPushButton(QStringLiteral("保存"), popup);
+    savePreset->setObjectName(QStringLiteral("customPresetSave"));
+    savePreset->setToolTip(QStringLiteral("保存当前区域为预设"));
+    grid->addWidget(presetLabel, 4, 0);
+    grid->addWidget(m_presetCombo, 4, 1, 1, 3);
+    grid->addWidget(savePreset, 4, 4);
+
+    auto *actions = new QHBoxLayout;
+    actions->setSpacing(6);
+    actions->addStretch();
+    auto *close = new QPushButton(QStringLiteral("关闭"), popup);
+    close->setObjectName(QStringLiteral("customSizeClose"));
+    actions->addWidget(close);
+    grid->addLayout(actions, 5, 0, 1, 5);
+
+    connect(m_customX, QOverload<int>::of(&QSpinBox::valueChanged), this, [this] {
+        if (!m_updatingCustom) customFieldsChanged();
+    });
+    connect(m_customY, QOverload<int>::of(&QSpinBox::valueChanged), this, [this] {
+        if (!m_updatingCustom) customFieldsChanged();
+    });
+    connect(m_customWidth, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        if (m_updatingCustom) return;
+        if (m_lockAspect && m_aspect > 0 && m_customHeight) {
+            const QSignalBlocker block(m_customHeight);
+            m_customHeight->setValue(qMax(4, qRound(value / m_aspect)));
+        }
+        customFieldsChanged();
+    });
+    connect(m_customHeight, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        if (m_updatingCustom) return;
+        if (m_lockAspect && m_aspect > 0 && m_customWidth) {
+            const QSignalBlocker block(m_customWidth);
+            m_customWidth->setValue(qMax(4, qRound(value * m_aspect)));
+        }
+        customFieldsChanged();
+    });
+    connect(m_customLock, &QCheckBox::toggled, this, [this](bool locked) {
+        m_lockAspect = locked;
+        if (locked && m_customWidth && m_customHeight && m_customHeight->value() > 0)
+            m_aspect = qreal(m_customWidth->value()) / m_customHeight->value();
+        updateTip();
+    });
+    connect(m_customUnit, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (m_updatingCustom) return;
+        const SizeUnit next = index == 1 ? SizeUnit::Dp : SizeUnit::Px;
+        if (next == m_sizeUnit) return;
+        setSizeUnit(next, true);
+        updateCustomSizeInputs();
+    });
+    connect(m_presetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (!m_updatingCustom && index > 0) applyCustomPreset(index);
+    });
+    connect(savePreset, &QPushButton::clicked, this, &CaptureOverlay::saveCurrentPreset);
+    connect(close, &QPushButton::clicked, popup, &QDialog::reject);
+    connect(popup, &QDialog::finished, this, [this] {
+        if (isVisible()) setFocus();
+        updateTip();
+    });
+    loadSizePresets();
+    refreshPresetCombo();
+    updateCustomSizeInputs();
+    popup->show();
+    popup->adjustSize();
+    const QPoint below = m_sizeTip->mapToGlobal(QPoint(0, m_sizeTip->height()));
+    const QScreen *screen = QGuiApplication::screenAt(below);
+    const QRect available = (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry();
+    const int y = below.y() + popup->height() <= available.bottom() + 1 ? below.y()
+        : qMax(available.top(), m_sizeTip->mapToGlobal(QPoint()).y() - popup->height());
+    popup->move(qBound(available.left(), below.x(), available.right() + 1 - popup->width()), y);
+}
+
+void CaptureOverlay::customFieldsChanged()
+{
+    if (m_updatingCustom || m_sel.isNull() || !m_customX || !m_customY
+        || !m_customWidth || !m_customHeight)
+        return;
+    const QRect global = globalFromUnit(m_customX->value(), m_customY->value(),
+                                        m_customWidth->value(), m_customHeight->value(), m_sizeUnit);
+    QRect local = localScreenRect(global).intersected(rect());
+    if (local.width() < 4 || local.height() < 4) return;
+    cancelDetection();
+    m_sel = local.normalized();
+    if (m_lockAspect && m_sel.height() > 0) m_aspect = qreal(m_sel.width()) / m_sel.height();
+    if (m_presetCombo) {
+        const QSignalBlocker block(m_presetCombo);
+        m_presetCombo->setCurrentIndex(0);
+    }
+    m_mode = Adjusting;
+    m_hover = {};
+    m_drag = H_None;
+    placeToolbar();
+    showToolBars();
+    updateTip();
+    updateInspector();
+    update();
+}
+
+void CaptureOverlay::applyCustomPreset(int index)
+{
+    if (index <= 0 || index > m_sizePresets.size() || m_sel.isNull()) return;
+    QRect local = localScreenRect(m_sizePresets.at(index - 1).global).intersected(rect());
+    if (local.width() < 4 || local.height() < 4) return;
+    cancelDetection();
+    m_sel = local;
+    if (m_lockAspect && m_sel.height() > 0) m_aspect = qreal(m_sel.width()) / m_sel.height();
+    m_mode = Adjusting;
+    m_hover = {};
+    m_drag = H_None;
+    updateCustomSizeInputs();
+    placeToolbar();
+    showToolBars();
+    updateTip();
+    updateInspector();
+    update();
+}
+
+void CaptureOverlay::loadSizePresets()
+{
+    m_sizePresets.clear();
+    QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+    for (const QString &entry : settings.value(QStringLiteral("Capture/presets")).toStringList()) {
+        const QStringList parts = entry.split(QLatin1Char('|'));
+        if (parts.size() != 5) continue;
+        const QRect global(parts.at(1).toInt(), parts.at(2).toInt(),
+                           parts.at(3).toInt(), parts.at(4).toInt());
+        if (global.width() < 4 || global.height() < 4) continue;
+        m_sizePresets.append({parts.at(0), global});
+        if (m_sizePresets.size() >= 50) break;
+    }
+}
+
+void CaptureOverlay::saveSizePresets() const
+{
+    QStringList entries;
+    for (const SizePreset &preset : m_sizePresets)
+        entries.append(QStringLiteral("%1|%2|%3|%4|%5").arg(preset.name)
+                           .arg(preset.global.x()).arg(preset.global.y())
+                           .arg(preset.global.width()).arg(preset.global.height()));
+    QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot"))
+        .setValue(QStringLiteral("Capture/presets"), entries);
+}
+
+void CaptureOverlay::refreshPresetCombo(const QString &selected)
+{
+    if (!m_presetCombo) return;
+    m_updatingCustom = true;
+    m_presetCombo->clear();
+    m_presetCombo->addItem(QStringLiteral("选择预设…"));
+    for (const SizePreset &preset : m_sizePresets) m_presetCombo->addItem(preset.name);
+    const int at = selected.isEmpty() ? 0 : m_presetCombo->findText(selected);
+    m_presetCombo->setCurrentIndex(at > 0 ? at : 0);
+    m_updatingCustom = false;
+}
+
+void CaptureOverlay::saveCurrentPreset()
+{
+    if (m_sel.isNull()) return;
+    bool ok = false;
+    const QString defaultName = QStringLiteral("预设 %1").arg(m_sizePresets.size() + 1);
+    const QString name = QInputDialog::getText(m_customSizePopup, QStringLiteral("保存预设"),
+                                               QStringLiteral("预设名称："), QLineEdit::Normal,
+                                               defaultName, &ok);
+    if (ok) saveSizePreset(name);
+}
+
+void CaptureOverlay::saveSizePreset(const QString &name)
+{
+    QString clean = name.trimmed();
+    clean.replace(QLatin1Char('|'), QLatin1Char(' '));
+    if (clean.isEmpty() || m_sel.isNull()) return;
+    const QRect global = globalScreenRect(m_sel);
+    bool replaced = false;
+    for (SizePreset &preset : m_sizePresets)
+        if (preset.name == clean) {
+            preset.global = global;
+            replaced = true;
+            break;
+        }
+    if (!replaced) m_sizePresets.append({clean, global});
+    saveSizePresets();
+    refreshPresetCombo(clean);
+    if (m_customSizePopup) {
+        m_customSizePopup->raise();
+        m_customSizePopup->activateWindow();
+    }
+}
+
 void CaptureOverlay::updateRefreshIcon()
 {
     if (!m_refreshButton) return;
@@ -1550,6 +1953,8 @@ void CaptureOverlay::refreshScreenshot()
     m_toolOptions->hide();
     m_inspector->hide();
     m_sizeTip->hide();
+    const bool customVisible = m_customSizePopup && m_customSizePopup->isVisible();
+    if (customVisible) m_customSizePopup->hide();
 
     const HWND hwnd = reinterpret_cast<HWND>(winId());
     // Excluding the capture window keeps the frame visible while the desktop
@@ -1563,9 +1968,10 @@ void CaptureOverlay::refreshScreenshot()
         m_desktopPreview = false;
         hide();
     }
-    QTimer::singleShot(150, this, [this, hwnd, excluded] {
+    QTimer::singleShot(150, this, [this, hwnd, excluded, customVisible] {
         if (!m_refreshing) {
             SetWindowDisplayAffinity(hwnd, WDA_NONE);
+            if (customVisible && m_customSizePopup) m_customSizePopup->show();
             return;
         }
         const QVector<ScreenFrame> frames = m_frameSource ? m_frameSource() : freezeScreens();
@@ -1583,6 +1989,7 @@ void CaptureOverlay::refreshScreenshot()
                 startDetector();
                 requestDetection(mapFromGlobal(QCursor::pos()));
             }
+            if (customVisible && m_customSizePopup) m_customSizePopup->show();
             showOutputError(QStringLiteral("刷新失败，请重试"));
             update();
             return;
@@ -1601,6 +2008,7 @@ void CaptureOverlay::refreshScreenshot()
             startDetector();
             requestDetection(mapFromGlobal(QCursor::pos()));
         }
+        if (customVisible && m_customSizePopup) m_customSizePopup->show();
         update();
     });
 }

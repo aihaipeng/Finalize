@@ -34,6 +34,8 @@
 #include <QDialog>
 #include <QColorDialog>
 #include <QLineEdit>
+#include <QSpinBox>
+#include <QCheckBox>
 #include <QCursor>
 #include <QTimer>
 #include <QPointer>
@@ -268,6 +270,23 @@ private:
     QPainterPath selectionPath(const QRect &r) const;
     void showRadiusPopup();
     void applyRoundSettings(bool persist);
+    enum class SizeUnit { Px, Dp };
+    struct SizePreset { QString name; QRect global; };
+    QRect nativeFromGlobal(const QRect &global) const;
+    QRect globalFromUnit(int x, int y, int width, int height, SizeUnit unit) const;
+    QRect unitFromLocal(const QRect &local, SizeUnit unit) const;
+    QSize sizeInUnit(const QRect &local, SizeUnit unit) const;
+    void setSizeUnit(SizeUnit unit, bool persist);
+    void showCustomSizePopup();
+    void updateCustomSizeInputs();
+    void customFieldsChanged();
+    void applyCustomPreset(int index);
+    void saveCurrentPreset();
+    void saveSizePreset(const QString &name);
+    void loadSizePresets();
+    void saveSizePresets() const;
+    void refreshPresetCombo(const QString &selected = QString());
+    static int testCustomSize();
     void beginDesktopPreview();
     void refreshScreenshot();
     void applyRefreshFrames(const QVector<ScreenFrame> &frames);
@@ -356,6 +375,16 @@ private:
     QPointer<QSlider> m_sizeSlider;
     QPointer<QLabel> m_sizeValue;
     bool m_sizeDragUndo = false;
+    QPointer<QDialog> m_customSizePopup;
+    QPointer<QSpinBox> m_customX, m_customY, m_customWidth, m_customHeight;
+    QPointer<QComboBox> m_customUnit;
+    QPointer<QCheckBox> m_customLock;
+    QPointer<QComboBox> m_presetCombo;
+    QVector<SizePreset> m_sizePresets;
+    bool m_updatingCustom = false;
+    SizeUnit m_sizeUnit = SizeUnit::Px;
+    bool m_lockAspect = false;
+    qreal m_aspect = 1.0;
     QToolButton *m_roundButton = nullptr;
     QToolButton *m_refreshButton = nullptr;
     QVariantAnimation *m_refreshAnimation = nullptr;
