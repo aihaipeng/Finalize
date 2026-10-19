@@ -92,7 +92,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         // Position the native window before freezing its local coordinate system.
         if (!SetWindowPos(reinterpret_cast<HWND>(winId()), nullptr, nativeDesktop.x(), nativeDesktop.y(),
                           nativeDesktop.width(), nativeDesktop.height(), SWP_NOZORDER | SWP_NOACTIVATE)) {
-            QMessageBox::warning(nullptr, QStringLiteral("pinshot"), QStringLiteral("无法定位截图覆盖层"));
+            QMessageBox::warning(nullptr, QStringLiteral("Finalize"), QStringLiteral("无法定位截图覆盖层"));
             deleteLater();
             return;
         }
@@ -111,7 +111,8 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
 
     m_sizeTip = new QLabel(this);
     m_sizeTip->setStyleSheet(
-        "background:#f2f2f2;color:#323232;padding:2px 6px;border:1px solid #2080f0;font-size:12px;");
+        "background:#18181b;color:#fcfcfc;padding:2px 6px;border:1px solid #0485f7;"
+        "border-radius:4px;font-size:12px;");
     m_sizeTip->setCursor(Qt::PointingHandCursor);
     m_sizeTip->setAccessibleName(QStringLiteral("自定义截图"));
     m_sizeTip->setAccessibleDescription(QStringLiteral("点击调整区域大小、尺寸单位和长宽比"));
@@ -130,7 +131,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         "QToolButton:pressed{background-color:#27272a;}"
         "QToolButton:checked{background:transparent;}"
         "QToolButton:checked:hover{background-color:#26262a;}"
-        "QFrame#barSeparator{background-color:#232326;margin:0px 6px;border:none;}");
+        "QFrame#barSeparator{background-color:#27272a;margin:0px 6px;border:none;}");
     m_tools->setStyleSheet(barQss);
     // Capture output actions; a pin edit session replaces them with one
     // confirm button that applies the result back to the pin.
@@ -140,12 +141,12 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         auto *copy = barButton(Icon::Copy, QStringLiteral("复制到剪贴板 (Ctrl+C)"));
         auto *pin = barButton(Icon::Pin, QStringLiteral("贴在屏幕上 (Enter / 双击)"));
         auto *scroll = barButton(Icon::LongShot, QStringLiteral("长截图：手动滚动拼接长图"));
-        auto *ocr = barButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)：截图与文本对照"));
+        auto *ocr = barButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)"));
         ocr->setObjectName(QStringLiteral("ocrButton"));
         ocr->setAccessibleName(QStringLiteral("文字识别 OCR"));
         const QString ocrMissing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
         if (!ocrMissing.isEmpty()) { ocr->setEnabled(false); ocr->setToolTip(ocrMissing); }
-        auto *translate = barButton(Icon::Translate, QStringLiteral("翻译：识别并翻译为中文"));
+        auto *translate = barButton(Icon::Translate, QStringLiteral("识别并翻译文字"));
         translate->setAccessibleName(QStringLiteral("翻译"));
         if (!ocrMissing.isEmpty()) { translate->setEnabled(false); translate->setToolTip(ocrMissing); }
         auto *barcode = barButton(Icon::Barcode, QStringLiteral("识别二维码/条形码"));
@@ -261,10 +262,10 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         "QComboBox:hover{background:#0c0c0e;}"
         "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
         "QComboBox::down-arrow{image:none;width:0px;height:0px;}"
-        "QComboBox QAbstractItemView{outline:0px;color:#fcfcfc;background:#262626;border:1px solid #3c3c3c;"
-        "padding:4px;selection-background-color:#3388ff;selection-color:#fcfcfc;}"
+        "QComboBox QAbstractItemView{outline:0px;color:#fcfcfc;background:#18181b;border:1px solid #27272a;"
+        "padding:4px;selection-background-color:#0485f7;selection-color:#fcfcfc;}"
         "QLineEdit{color:#fcfcfc;background:transparent;border:none;"
-        "selection-background-color:#3388ff;selection-color:#fcfcfc;}");
+        "selection-background-color:#0485f7;selection-color:#fcfcfc;}");
     if (m_embedded) {
         // The option strip detaches as a small top-level rounded bar;
         // the pin positions it below its own toolbar.
@@ -351,7 +352,7 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
     if (m_desktopPreview) {                       // Hold-to-refresh: keep the frame over the live desktop.
         if (!m_sel.isNull()) {
             p.setRenderHint(QPainter::Antialiasing);
-            p.setPen(QPen(QColor("#2080f0"), 1));
+            p.setPen(QPen(Bar::accent, 1));
             p.setBrush(QBrush(Qt::NoBrush));
             if (m_roundEnabled && m_roundRadius > 0 && !m_embedded) p.drawPath(selectionPath(m_sel));
             else p.drawRect(QRectF(m_sel).adjusted(0.5, 0.5, -0.5, -0.5));
@@ -378,7 +379,7 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         mask.addRect(QRectF(rect()));
         mask.addPath(selectionPath(hole));
         p.fillPath(mask, QColor(0, 0, 0, 120));
-        p.setPen(QPen(QColor("#2080f0"), 1));
+        p.setPen(QPen(Bar::accent, 1));
         p.setBrush(QBrush(Qt::NoBrush));
         if (m_roundEnabled && m_roundRadius > 0 && !m_embedded) {
             p.setRenderHint(QPainter::Antialiasing);
@@ -415,7 +416,7 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
             p.setBrush(Qt::NoBrush);
             p.drawRect(QRectF(box).adjusted(0, 0, 0.5, 0.5));
         } else {
-            QPen border(QColor("#2080f0"), 1);
+            QPen border(Bar::accent, 1);
             border.setDashPattern({4, 3});
             p.setPen(border);
             p.setBrush(Qt::NoBrush);
@@ -426,7 +427,7 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         if (ann.tool != ATool::Mosaic) {          // Mosaic regions move and resize without rotation.
             const QPoint base(box.center().x(), box.bottom() + 2);
             const QPoint knob(box.center().x(), box.bottom() + 22);
-            p.setPen(QPen(QColor("#2080f0"), 1));
+            p.setPen(QPen(Bar::accent, 1));
             p.drawLine(base, knob);
             paintHandle(p, knob);
         }
@@ -1675,7 +1676,7 @@ void CaptureOverlay::showCustomSizePopup()
         "QDialog{background:#18181b;}"
         "QLabel{color:#a1a1aa;background:transparent;font-size:12px;}"
         "QLabel#customSection{color:#fcfcfc;font-weight:600;}"
-        "QLabel#customHint{color:#71717a;font-size:11px;}"
+        "QLabel#customHint{color:#a1a1aa;font-size:12px;}"
         "QFrame#customCard{background:#060607;border:none;border-radius:12px;}"
         "QSpinBox{color:#fcfcfc;background:#101013;border:1px solid #27272a;border-radius:8px;"
         "padding:0 8px;min-height:30px;font-size:12px;selection-background-color:#0485f7;}"
@@ -1685,7 +1686,7 @@ void CaptureOverlay::showCustomSizePopup()
         "QComboBox:hover{background:#151518;} QComboBox:focus{border-color:#0485f7;}"
         "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
         "QComboBox::down-arrow{image:url(:/icons/chevron_down_light.png);width:10px;height:10px;}"
-        "QComboBox QAbstractItemView{color:#fcfcfc;background:#262626;border:1px solid #3c3c3c;"
+        "QComboBox QAbstractItemView{color:#fcfcfc;background:#18181b;border:1px solid #27272a;"
         "border-radius:8px;padding:4px;outline:0;selection-background-color:#0485f7;"
         "selection-color:#ffffff;}"
         "QComboBox QAbstractItemView::item{min-height:26px;padding-left:10px;padding-right:8px;}"
@@ -2315,7 +2316,7 @@ void CaptureOverlay::saveCapture()
     if (m_sel.isEmpty()) return;
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     const QString path = QFileDialog::getSaveFileName(
-        this, QStringLiteral("保存截图"),
+        this, QStringLiteral("保存图片"),
         dir + QStringLiteral("/pinshot.png"),
         QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
     if (path.isEmpty()) {

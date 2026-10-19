@@ -414,8 +414,8 @@ void CaptureOverlay::paintHandle(QPainter &p, const QPointF &center)
 {
     p.save();
     p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(QColor(0xf7, 0xf8, 0xfa), 1));   // Theme-blue dot inside a thin light ring.
-    p.setBrush(QColor(0x20, 0x80, 0xf0));
+    p.setPen(QPen(QColor(0xf7, 0xf8, 0xfa), 1));   // Accent dot inside a thin light ring.
+    p.setBrush(Bar::accent);
     p.drawEllipse(center, 4, 4);                 // Hit ranges stay unchanged.
     p.restore();
 }

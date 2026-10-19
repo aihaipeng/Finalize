@@ -41,6 +41,16 @@
 #include <QThread>
 #include <qt_windows.h>
 
+// Pin chrome uses the same dark glyph set as the capture bars, at a compact 28px rhythm.
+static QToolButton *pinButton(Icon icon, const QString &tip)
+{
+    auto *button = barButton(icon, tip);
+    button->setIcon(barIcon(icon, 18));
+    button->setIconSize(QSize(18, 18));
+    button->setFixedSize(28, 28);
+    return button;
+}
+
 PinWindow::PinWindow(const QPixmap &pix, const QRect &displayRect)
     : m_originalPix(pix), m_pix(pix), m_scale(pix.isNull() ? 1 : qMin(double(displayRect.width()) / pix.width(), double(displayRect.height()) / pix.height()))
 {
@@ -222,8 +232,8 @@ void PinWindow::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
     if (m_shadowOn) {
-        // Theme blue while the pin is active, neutral gray otherwise (both measured).
-        const QColor c = isActiveWindow() ? QColor(0x20, 0x80, 0xf0) : QColor(0x80, 0x80, 0x80);
+        // Accent while the pin is active, neutral gray otherwise.
+        const QColor c = isActiveWindow() ? Bar::accent : QColor(0x80, 0x80, 0x80);
         const qreal dpr = devicePixelRatioF();
         if (m_shadowCache.deviceIndependentSize().toSize() != size()
                 || m_shadowCache.devicePixelRatio() != dpr || m_shadowCache.text(QStringLiteral("c")) != c.name()) {
@@ -246,7 +256,9 @@ void PinWindow::paintEvent(QPaintEvent *)
 
         p.save();
         p.setRenderHint(QPainter::Antialiasing, true);
-        p.setBrush(QColor(32, 128, 240, 80)); // Semi-transparent theme blue highlight
+        QColor selectionFill = Bar::accent;
+        selectionFill.setAlpha(80);
+        p.setBrush(selectionFill);
         p.setPen(Qt::NoPen);
 
         for (int i = start; i <= end && i < m_charBoxes.size(); ++i) {
@@ -416,13 +428,13 @@ public:
         m_valLabel = new QLabel(QString::number(initialVal) + QStringLiteral("%"), this);
         m_valLabel->setFixedWidth(40);
         m_valLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        m_valLabel->setStyleSheet(QStringLiteral("color:#323232;font-size:13px;"));
+        m_valLabel->setStyleSheet(QStringLiteral("color:#fcfcfc;font-size:12px;"));
 
         m_slider = new QSlider(Qt::Horizontal, this);
         m_slider->setRange(minVal, maxVal);
         m_slider->setValue(initialVal);
         m_slider->setFixedHeight(22);
-        m_slider->setStyleSheet(lightSliderQss);
+        m_slider->setStyleSheet(darkSliderQss);
 
         layout->addWidget(m_slider, 1, Qt::AlignVCenter);
         layout->addWidget(m_valLabel, 0, Qt::AlignVCenter);
@@ -700,10 +712,10 @@ void PinWindow::ensureSelToolbar()
     // Scoped to the window: a bare QWidget selector would frame every child,
     // which is where the stray rounded border around the palette came from.
     m_selToolbar->setStyleSheet(QStringLiteral(
-        "#selToolbar { background: #f2f2f2; border: 1px solid #c8c8c8; border-radius: 4px; }"
-        "QToolButton { color: #323232; background: transparent; border: none; border-radius: 2px; padding: 4px; }"
-        "QToolButton:hover { background-color: #d4d4d4; }"
-        "QToolButton:pressed { background-color: #c8c8c8; }"
+        "#selToolbar { background: #18181b; border: 1px solid #27272a; border-radius: 8px; }"
+        "QToolButton { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 0; }"
+        "QToolButton:hover { background-color: #26262a; }"
+        "QToolButton:pressed { background-color: #27272a; }"
     ));
     auto *root = new QVBoxLayout(m_selToolbar);
     root->setContentsMargins(4, 2, 4, 2);
@@ -712,10 +724,10 @@ void PinWindow::ensureSelToolbar()
     row->setSpacing(0);
     root->addLayout(row);
 
-    auto *copyBtn = iconButton(Icon::Copy, QStringLiteral("复制"));
+    auto *copyBtn = pinButton(Icon::Copy, QStringLiteral("复制"));
     connect(copyBtn, &QToolButton::clicked, this, [this] {
         if (!copyTextToClipboard(selectedText()))
-            QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+            QMessageBox::warning(this, QStringLiteral("Finalize"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
         // Reference behavior: copying also dismisses the bar and the selection.
         m_selBarOpen = false;
         m_selAnchor = -1;
@@ -728,7 +740,7 @@ void PinWindow::ensureSelToolbar()
     // A quiet line between the tools and the colors, instead of a frame around them.
     auto *rule = new QFrame(m_selToolbar);
     rule->setFixedHeight(1);
-    rule->setStyleSheet(QStringLiteral("background:#dcdcdc;border:none;"));
+    rule->setStyleSheet(QStringLiteral("background:#27272a;border:none;"));
     root->addSpacing(3);
     root->addWidget(rule);
     root->addSpacing(3);
@@ -747,7 +759,7 @@ void PinWindow::ensureSelToolbar()
     };
     for (int t = 0; t < 4; ++t) {
         const auto &m = markups[t];
-        auto *btn = iconButton(m.icon, m.tip);
+        auto *btn = pinButton(m.icon, m.tip);
         row->addWidget(btn);
         // Buttons light up only while pressed (user-simplified): no persistent
         // selection state survives a click or the next selection.
@@ -760,7 +772,7 @@ void PinWindow::ensureSelToolbar()
             else drawTextDeco(t, m_decoToolColor[t]);
         });
     }
-    auto *closeBtn = iconButton(Icon::Cancel, QStringLiteral("关闭工具栏"));
+    auto *closeBtn = pinButton(Icon::Cancel, QStringLiteral("关闭工具栏"));
     connect(closeBtn, &QToolButton::clicked, this, [this] {
         m_selBarOpen = false;   // This selection only; the next finished drag shows it again.
         updateSelToolbar();
@@ -779,7 +791,7 @@ void PinWindow::ensureSelToolbar()
             drawTextDeco(m_decoTool, kDecoColors[i]);
         });
     }
-    auto *clearBtn = iconButton(Icon::Eraser, QStringLiteral("清除标注"));
+    auto *clearBtn = pinButton(Icon::Eraser, QStringLiteral("清除标注"));
     stripLay->addWidget(clearBtn);
     connect(clearBtn, &QToolButton::clicked, this, [this] {
         // User-simplified: one tap erases every mark on the selected
@@ -834,16 +846,19 @@ void PinWindow::toggleToolbar(bool enabled)
             m_toolbar = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint
                                                  | Qt::WindowDoesNotAcceptFocus);
             m_toolbar->setAttribute(Qt::WA_DeleteOnClose, false);
+            m_toolbar->setObjectName(QStringLiteral("pinToolbar"));
             m_toolbar->setStyleSheet(QStringLiteral(
-                "QWidget { background: #f2f2f2; border: 1px solid #c8c8c8; border-radius: 4px; }"
-                "QToolButton { color: #323232; background: transparent; border: none; border-radius: 2px; padding: 4px; }"
-                "QToolButton:hover { background-color: #d4d4d4; }"
-                "QToolButton:checked { background-color: #2080f0; }"
-                "QFrame#barSeparator { background-color: rgba(50,50,50,144); margin: 0px 2px; border: none; }"
+                "#pinToolbar { background: #18181b; border: 1px solid #27272a; border-radius: 8px; }"
+                "QToolButton { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 0; }"
+                "QToolButton:hover { background-color: #26262a; }"
+                "QToolButton:pressed { background-color: #27272a; }"
+                "QToolButton:checked { background: transparent; }"
+                "QToolButton:checked:hover { background-color: #26262a; }"
+                "QFrame#barSeparator { background-color: #27272a; margin: 0px 6px; border: none; }"
             ));
             auto *lay = new QHBoxLayout(m_toolbar);
-            lay->setContentsMargins(4, 4, 4, 4);
-            lay->setSpacing(2);
+            lay->setContentsMargins(6, 5, 6, 6);
+            lay->setSpacing(4);
 
             // The full annotation tool set: any tool arms the in-place canvas
             // inside the pin; reclicking disarms it. Options live on the strip
@@ -859,7 +874,7 @@ void PinWindow::toggleToolbar(bool enabled)
                 { CaptureOverlay::ATool::Eraser, Icon::Eraser, QStringLiteral("橡皮") },
             };
             for (const auto &t : annTools) {
-                auto *btn = iconButton(t.icon, t.tip);
+                auto *btn = pinButton(t.icon, t.tip);
                 btn->setCheckable(true);
                 btn->setFocusPolicy(Qt::NoFocus);
                 const int tool = int(t.tool);
@@ -874,14 +889,14 @@ void PinWindow::toggleToolbar(bool enabled)
             sep->setFixedSize(1, 22);
             lay->addWidget(sep);
 
-            m_undoBtn = iconButton(Icon::Undo, QStringLiteral("撤销 (Ctrl+Z)"));
+            m_undoBtn = pinButton(Icon::Undo, QStringLiteral("撤销 (Ctrl+Z)"));
             m_undoBtn->setEnabled(false);
             m_undoBtn->setFocusPolicy(Qt::NoFocus);
             connect(m_undoBtn, &QToolButton::clicked, this, [this] {
                 if (m_canvas) m_canvas->undoAnnotation();
             });
             lay->addWidget(m_undoBtn);
-            m_redoBtn = iconButton(Icon::Redo, QStringLiteral("重做 (Ctrl+Y)"));
+            m_redoBtn = pinButton(Icon::Redo, QStringLiteral("重做 (Ctrl+Y)"));
             m_redoBtn->setEnabled(false);
             m_redoBtn->setFocusPolicy(Qt::NoFocus);
             connect(m_redoBtn, &QToolButton::clicked, this, [this] {
@@ -894,39 +909,39 @@ void PinWindow::toggleToolbar(bool enabled)
             sep2->setFixedSize(1, 22);
             lay->addWidget(sep2);
 
-            auto *copyBtn = iconButton(Icon::Copy, QStringLiteral("复制图像"));
+            auto *copyBtn = pinButton(Icon::Copy, QStringLiteral("复制图片"));
             connect(copyBtn, &QToolButton::clicked, this, [this] {
                 if (!copyImageToClipboard(annotatedPix().toImage()))
-                    QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+                    QMessageBox::warning(this, QStringLiteral("Finalize"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
             });
             lay->addWidget(copyBtn);
 
-            auto *saveBtn = iconButton(Icon::Save, QStringLiteral("保存图像"));
+            auto *saveBtn = pinButton(Icon::Save, QStringLiteral("保存图片"));
             connect(saveBtn, &QToolButton::clicked, this, [this] {
                 const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
                 const QString path = QFileDialog::getSaveFileName(
                     this, QStringLiteral("保存图片"), dir + QStringLiteral("/pin.png"),
                     QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
                 if (!path.isEmpty() && !saveImageAtomic(annotatedPix().toImage(), path))
-                    QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("保存失败，请检查路径或磁盘空间后重试"));
+                    QMessageBox::warning(this, QStringLiteral("Finalize"), QStringLiteral("保存失败，请检查路径或磁盘空间后重试"));
             });
             lay->addWidget(saveBtn);
 
-            auto *ocrBtn = iconButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)"));
+            auto *ocrBtn = pinButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)"));
             connect(ocrBtn, &QToolButton::clicked, this, [this] {
                 showOcr(annotatedPix().toImage(), this, imageGeometry());
             });
             lay->addWidget(ocrBtn);
 
-            auto *translateBtn = iconButton(Icon::Translate, QStringLiteral("翻译：识别并翻译为中文"));
+            auto *translateBtn = pinButton(Icon::Translate, QStringLiteral("识别并翻译文字"));
             connect(translateBtn, &QToolButton::clicked, this, &PinWindow::openTranslate);
             lay->addWidget(translateBtn);
 
-            auto *barcodeBtn = iconButton(Icon::Barcode, QStringLiteral("识别二维码/条形码"));
+            auto *barcodeBtn = pinButton(Icon::Barcode, QStringLiteral("识别二维码/条形码"));
             connect(barcodeBtn, &QToolButton::clicked, this, &PinWindow::openBarcode);
             lay->addWidget(barcodeBtn);
 
-            m_backBtn = iconButton(Icon::Back, QStringLiteral("返回长截图"));
+            m_backBtn = pinButton(Icon::Back, QStringLiteral("返回长截图"));
             m_backBtn->setFocusPolicy(Qt::NoFocus);
             connect(m_backBtn, &QToolButton::clicked, this, [this] {
                 m_canGoBack = false;
@@ -936,7 +951,7 @@ void PinWindow::toggleToolbar(bool enabled)
             lay->addWidget(m_backBtn);
 
             // Done: hides the bar like the first Esc; the pin and its marks stay.
-            auto *doneBtn = iconButton(Icon::Check, QStringLiteral("完成"));
+            auto *doneBtn = pinButton(Icon::Check, QStringLiteral("完成"));
             doneBtn->setFocusPolicy(Qt::NoFocus);
             connect(doneBtn, &QToolButton::clicked, this, [this] { toggleToolbar(false); });
             lay->addWidget(doneBtn);
@@ -1083,13 +1098,7 @@ QPixmap PinWindow::annotatedPix() const
 QMenu *PinWindow::createContextMenu()
 {
     auto *m = new QMenu(this);
-    m->setStyleSheet(QStringLiteral(
-        "QMenu { background: #f2f2f2; color: #323232; border: 1px solid #c8c8c8; padding: 4px; border-radius: 4px; }"
-        "QMenu::item { padding: 6px 24px 6px 20px; border-radius: 2px; }"
-        "QMenu::item:selected { background: #e0e0e0; color: #323232; }"
-        "QMenu::item:disabled { color: #858585; }"
-        "QMenu::separator { height: 1px; background: #dcdcdc; margin: 4px 8px; }"
-    ));
+    m->setStyleSheet(darkMenuQss);
 
     // Section 1
     QAction *textSelect = m->addAction(QStringLiteral("文本可选择"));
@@ -1139,26 +1148,26 @@ QMenu *PinWindow::createContextMenu()
     QAction *resetProc = imgProc->addAction(QStringLiteral("重置所有处理"));
     connect(resetProc, &QAction::triggered, this, [this] { resetProcessing(); });
 
-    QAction *copy = m->addAction(QStringLiteral("复制图像"));
+    QAction *copy = m->addAction(QStringLiteral("复制图片"));
     connect(copy, &QAction::triggered, this, [this] {
         if (!copyImageToClipboard(m_pix.toImage()))
-            QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+            QMessageBox::warning(this, QStringLiteral("Finalize"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
     });
 
-    QAction *save = m->addAction(QStringLiteral("保存图像"));
+    QAction *save = m->addAction(QStringLiteral("保存图片"));
     connect(save, &QAction::triggered, this, [this] {
         const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
         const QString path = QFileDialog::getSaveFileName(
             this, QStringLiteral("保存图片"), dir + QStringLiteral("/pin.png"),
             QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
         if (!path.isEmpty() && !saveImageAtomic(m_pix.toImage(), path))
-            QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("保存失败，请检查路径或磁盘空间后重试"));
+            QMessageBox::warning(this, QStringLiteral("Finalize"), QStringLiteral("保存失败，请检查路径或磁盘空间后重试"));
     });
 
     m->addSeparator();
 
     // Section 3
-    QAction *showTools = m->addAction(QStringLiteral("显示工具条"));
+    QAction *showTools = m->addAction(QStringLiteral("显示工具栏"));
     showTools->setCheckable(true);
     showTools->setChecked(m_toolbarOn);
     connect(showTools, &QAction::toggled, this, [this](bool checked) { toggleToolbar(checked); });
@@ -1177,9 +1186,10 @@ void PinWindow::contextMenuEvent(QContextMenuEvent *e)
     if (m_textSelectable && m_selAnchor >= 0 && m_selLead >= 0 && !selectedText().isEmpty()) {
         QMenu m;
         m.setObjectName(QStringLiteral("selCopyMenu"));
+        m.setStyleSheet(darkMenuQss);
         if (m.exec(e->globalPos()) == m.addAction(QStringLiteral("复制"))) {
             if (!copyTextToClipboard(selectedText()))
-                QMessageBox::warning(this, QStringLiteral("pinshot"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+                QMessageBox::warning(this, QStringLiteral("Finalize"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
             m_selBarOpen = false;
             m_selAnchor = -1;
             m_selLead = -1;

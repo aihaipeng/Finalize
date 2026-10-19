@@ -369,10 +369,10 @@ int CaptureOverlay::testSelectionBorders()
         QPainter painter(&dot);
         paintHandle(painter, QPointF(20, 20));
         painter.end();
-        check(dot.pixelColor(qRound(20 * dpr), qRound(20 * dpr)) == QColor(0x20, 0x80, 0xf0)
+        check(dot.pixelColor(qRound(20 * dpr), qRound(20 * dpr)) == QColor(0x04, 0x85, 0xf7)
                   && dot.pixelColor(qRound(16 * dpr), qRound(16 * dpr)).alpha() == 0
                   && dot.pixelColor(qRound(26 * dpr), qRound(20 * dpr)).alpha() == 0,
-              "handles are theme-blue dots with a light ring and transparent corners at every DPR");
+              "handles are accent dots with a light ring and transparent corners at every DPR");
     }
     QVector<ScreenFrame> frames = freezeScreens();
     check(!frames.isEmpty(), "border fixture captures screen geometry");
@@ -446,9 +446,9 @@ int CaptureOverlay::testSelectionBorders()
     const QImage selection = render();
     for (const QRect &target : handleRects(overlay.m_sel)) {
         const QPoint center = target.center() + QPoint(1, 1);
-        check(selection.pixelColor(qRound(center.x() * dpr), qRound(center.y() * dpr)) == QColor(0x20, 0x80, 0xf0)
+        check(selection.pixelColor(qRound(center.x() * dpr), qRound(center.y() * dpr)) == QColor(0x04, 0x85, 0xf7)
                   && overlay.hitHandle(center) != H_None,
-              "all eight capture resize handles are theme-blue dots and remain draggable");
+              "all eight capture resize handles are accent dots and remain draggable");
     }
     if (!failures) std::puts("PASS: per-tool editing borders, circular nodes, hit targets and clean exports");
     return failures;

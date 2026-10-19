@@ -17,9 +17,6 @@
 #include <QWidget>
 #include <QScreen>
 #include <QPainter>
-#include <QLinearGradient>
-#include <QConicalGradient>
-#include <QRadialGradient>
 #include <QPaintEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -120,7 +117,7 @@ OcrImageView::OcrImageView(const QImage &image, QWidget *parent) : QGraphicsView
     native.setDevicePixelRatio(1);
     scene->addPixmap(QPixmap::fromImage(native));
     // The capture keeps its selection outline, so it reads as the region just framed.
-    QPen frame(QColor(0x20,0x80,0xf0), 1);
+    QPen frame(Bar::accent, 1);
     frame.setCosmetic(true);
     scene->addRect(QRectF(QPointF(), native.size()).adjusted(-0.5,-0.5,0.5,0.5), frame);
     const qreal margin = qMax(native.width(), native.height()) * 0.04 + 8;   // Graphite breathing room.
@@ -377,11 +374,13 @@ void OcrImageView::drawForeground(QPainter *painter, const QRectF &rect) {
             const QPolygonF &quad = m_barcodeRegions[i];
             if (quad.isEmpty()) continue;
             const bool active = i == m_barcodeSelected;
-            QPen pen(active ? QColor(0x16,0x83,0xff) : QColor(0x71,0x71,0x7a));
+            QPen pen(active ? Bar::accent : QColor(0x71,0x71,0x7a));
             pen.setCosmetic(true);
             pen.setWidthF(active ? 2.5 : 1.5);
             painter->setPen(pen);
-            if (active) painter->setBrush(QColor(0x16,0x83,0xff,55));
+            QColor activeFill = Bar::accent;
+            activeFill.setAlpha(55);
+            if (active) painter->setBrush(activeFill);
             else painter->setBrush(QBrush(Qt::NoBrush));
             if (quad.boundingRect().height() < 2) {   // 1D symbols are reported as a line.
                 painter->drawRoundedRect(quad.boundingRect().adjusted(-2,-7,2,7),3,3);
@@ -417,7 +416,9 @@ void OcrImageView::drawForeground(QPainter *painter, const QRectF &rect) {
     if (m_anchor >= 0 && m_lead >= 0) {
         QVector<int> range;
         for (int i = qMin(m_anchor,m_lead); i <= qMin(qMax(m_anchor,m_lead),int(m_glyphs.size())-1); ++i) range.append(i);
-        painter->setBrush(QColor(0x16,0x83,0xff,80));
+        QColor selectedFill = Bar::accent;
+        selectedFill.setAlpha(80);
+        painter->setBrush(selectedFill);
         paintRuns(range);
     }
     painter->restore();
@@ -452,8 +453,7 @@ void PickerCombo::paintEvent(QPaintEvent *)
                   underMouse() ? QIcon::Active : QIcon::Normal);
 }
 
-// Compact first-load strip: a blue-to-purple gradient outline, a turning colour orb
-// and one short phase label. It deliberately does not show the result panes yet.
+// Compact first-load strip: one dark rounded surface, a single accent spinner and one short label.
 class OcrLoadingBar : public QWidget {
 public:
     explicit OcrLoadingBar(QWidget *parent = nullptr) : QWidget(parent) {
@@ -476,33 +476,23 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
         const QRectF box = QRectF(rect()).adjusted(1.5,1.5,-1.5,-1.5);
-        QLinearGradient edge(box.topLeft(),box.topRight());
-        edge.setColorAt(0.0,QColor(QStringLiteral("#3b82f6")));
-        edge.setColorAt(1.0,QColor(QStringLiteral("#a855f7")));
-        painter.setPen(QPen(QBrush(edge),2.0));
-        painter.setBrush(QColor(QStringLiteral("#09090b")));
-        painter.drawRoundedRect(box,10,10);
+        painter.setPen(QPen(Bar::divider,1.0));
+        painter.setBrush(Bar::surface);
+        painter.drawRoundedRect(box,Bar::radius,Bar::radius);
 
-        const QPointF centre(box.left()+32,box.center().y());
-        const QRectF orb(centre.x()-11,centre.y()-11,22,22);
-        QConicalGradient colour(centre,m_angle);
-        colour.setColorAt(0.00,QColor(QStringLiteral("#f9a8d4")));
-        colour.setColorAt(0.35,QColor(QStringLiteral("#93c5fd")));
-        colour.setColorAt(0.70,QColor(QStringLiteral("#c084fc")));
-        colour.setColorAt(1.00,QColor(QStringLiteral("#f9a8d4")));
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(colour);
-        painter.drawEllipse(orb);
-        QRadialGradient shine(centre-QPointF(4,4),10);
-        shine.setColorAt(0.0,QColor(255,255,255,170));
-        shine.setColorAt(1.0,QColor(255,255,255,0));
-        painter.setBrush(shine);
-        painter.drawEllipse(orb.adjusted(2,2,-2,-2));
+        const QRectF ring(box.left()+20,box.center().y()-10,20,20);
+        painter.setPen(QPen(Bar::divider,2.0));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(ring);
+        QPen arc(Bar::accent,2.0);
+        arc.setCapStyle(Qt::RoundCap);
+        painter.setPen(arc);
+        painter.drawArc(ring,-m_angle*16,100*16);
 
         QFont label = font();
         label.setPointSizeF(qMax(11.0,font().pointSizeF()));
         painter.setFont(label);
-        painter.setPen(QColor(QStringLiteral("#f4f4f5")));
+        painter.setPen(Bar::ink);
         const QRectF text(box.left()+56,box.top(),box.width()-72,box.height());
         painter.drawText(text,Qt::AlignLeft|Qt::AlignVCenter,m_text);
     }
@@ -858,7 +848,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     textActions->addWidget(m_copy);
     QLabel *textCount = characters();
     textActions->addWidget(textCount);
-    if (!m_translate) {
+    if (!m_translate && !m_barcode) {
         search = iconButton(Icon::CardSearch,QStringLiteral("ocrSearch"),QStringLiteral("查找 (Ctrl+F)"));
         connect(search,&QToolButton::clicked,this,[this] { m_find->isVisible() ? hideFind() : showFind(false); });
     }
@@ -926,7 +916,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         m_sourcePane = new QPlainTextEdit;
         m_sourcePane->setObjectName(QStringLiteral("translateSourceText"));
         m_sourcePane->setAccessibleName(QStringLiteral("识别原文，可修改后重新翻译"));
-        m_sourcePane->setPlaceholderText(QStringLiteral("识别中…"));
+        m_sourcePane->setPlaceholderText(QStringLiteral("正在识别…"));
         m_sourcePane->setReadOnly(true);
         QFont sourceFont = font;
         sourceFont.setPointSizeF(qMax(10.5,font.pointSizeF()-1.5));
@@ -956,7 +946,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     }
     if (m_translate) font.setPointSizeF(font.pointSizeF()+1);   // The translation is what the card is for.
     m_text->setFont(font);
-    m_busy = new QLabel(QStringLiteral("· · ·"));
+    m_busy = new QLabel(QStringLiteral("正在识别…"));
     m_busy->setObjectName(QStringLiteral("ocrBusy"));
     QFont busyFont = font; busyFont.setPointSizeF(font.pointSizeF()*1.5);
     m_busy->setFont(m_translate ? font : busyFont);   // The translate card says what it is doing in words.
@@ -964,7 +954,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     m_busy->setAttribute(Qt::WA_TransparentForMouseEvents);
     m_busy->hide();
     (new QVBoxLayout(m_text->viewport()))->addWidget(m_busy);
-    m_status = new QLabel(QStringLiteral("识别中 · · ·"));
+    m_status = new QLabel(QStringLiteral("正在识别…"));
     m_status->setObjectName(QStringLiteral("ocrStatus"));
     m_status->setTextFormat(Qt::PlainText);
     m_status->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -1358,13 +1348,13 @@ void OcrDialog::start() {
         m_retry->setEnabled(false);
     }
     if (m_translate) {
-        m_sourcePane->setPlaceholderText(QStringLiteral("识别中…"));
+        m_sourcePane->setPlaceholderText(QStringLiteral("正在识别…"));
         m_text->setPlaceholderText(QString());
     }
-    m_busy->setText(m_translate ? QStringLiteral("识别中…") : QStringLiteral("· · ·"));
+    m_busy->setText(QStringLiteral("正在识别…"));
     if (initialLoad) showLoading(true,QStringLiteral("正在识别…"));
     else m_busy->show();
-    m_status->setText(m_translate ? QString() : QStringLiteral("识别中 · · ·"));
+    m_status->setText(m_translate ? QString() : QStringLiteral("正在识别…"));
     m_watcher.setFuture(QtConcurrent::run([&engine,image,cancel] {
         const OcrResult result = recognizeChunked(image,cancel);
         engine.busy.store(false);
@@ -1381,7 +1371,7 @@ void OcrDialog::startBarcode()
     m_barcodeItems.clear();
     m_barcodePicker->clear();
     m_barcodePicker->hide();
-    m_barcodeLabel->setText(QStringLiteral("识别中…"));
+    m_barcodeLabel->setText(QStringLiteral("正在识别…"));
     m_imageView->setBarcodeRegions({},-1);
     m_text->clear();
     m_text->setReadOnly(true);
@@ -1392,7 +1382,7 @@ void OcrDialog::startBarcode()
     if (initialLoad) {
         showLoading(true,QStringLiteral("正在识别二维码…"));
     } else {
-        m_busy->setText(QStringLiteral("识别中…"));
+        m_busy->setText(QStringLiteral("正在识别…"));
         m_busy->show();
     }
     const QImage image = m_image;
@@ -1494,7 +1484,7 @@ void OcrDialog::translateLines()
     m_text->clear();
     m_text->setReadOnly(true);
     m_text->setPlaceholderText(QString());
-    m_busy->setText(QStringLiteral("翻译中…"));
+    m_busy->setText(QStringLiteral("正在翻译…"));
     if (initialLoad) showLoading(true,QStringLiteral("正在翻译…"));
     else m_busy->show();
     m_status->clear();
@@ -1800,6 +1790,7 @@ void OcrDialog::highlightMatches(bool reveal) {
         QTextEdit::ExtraSelection mark;
         mark.cursor = found[i];
         mark.format.setBackground(i==m_match ? QColor(0xff,0x9f,0x1a) : QColor(0xff,0xe5,0x4c));
+        mark.format.setForeground(QColor(0x18,0x18,0x1b));   // Dark ink keeps find hits readable on amber.
         m_findMarks.append(mark);
     }
     applyHighlights(m_findTarget);

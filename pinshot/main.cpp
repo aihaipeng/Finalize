@@ -20,6 +20,8 @@
 #include <QtMath>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPalette>
+#include <QColor>
 #include <QElapsedTimer>
 #include <QThreadPool>
 #include <QTranslator>
@@ -30,10 +32,31 @@
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
-    app.styleHints()->setColorScheme(Qt::ColorScheme::Light);   // Standard dialogs match the light toolbars.
+    app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);   // Standard dialogs match the dark application chrome.
     QTranslator qtTranslator;                   // Chinese labels for standard Qt dialogs.
     if (qtTranslator.load(QStringLiteral("qtbase_zh_CN"), QCoreApplication::applicationDirPath() + QStringLiteral("/translations")))
         app.installTranslator(&qtTranslator);
+    // One palette for every unstyled control: menus, tooltips, message boxes and the color dialog.
+    QPalette dark;
+    dark.setColor(QPalette::Window, QColor(QStringLiteral("#18181b")));
+    dark.setColor(QPalette::WindowText, QColor(QStringLiteral("#fcfcfc")));
+    dark.setColor(QPalette::Base, QColor(QStringLiteral("#060607")));
+    dark.setColor(QPalette::AlternateBase, QColor(QStringLiteral("#101013")));
+    dark.setColor(QPalette::ToolTipBase, QColor(QStringLiteral("#18181b")));
+    dark.setColor(QPalette::ToolTipText, QColor(QStringLiteral("#fcfcfc")));
+    dark.setColor(QPalette::Text, QColor(QStringLiteral("#fcfcfc")));
+    dark.setColor(QPalette::Button, QColor(QStringLiteral("#18181b")));
+    dark.setColor(QPalette::ButtonText, QColor(QStringLiteral("#fcfcfc")));
+    dark.setColor(QPalette::BrightText, QColor(QStringLiteral("#ffffff")));
+    dark.setColor(QPalette::Link, QColor(QStringLiteral("#0485f7")));
+    dark.setColor(QPalette::Highlight, QColor(QStringLiteral("#264f78")));
+    dark.setColor(QPalette::HighlightedText, QColor(QStringLiteral("#fcfcfc")));
+    dark.setColor(QPalette::PlaceholderText, QColor(QStringLiteral("#8b8b94")));
+    dark.setColor(QPalette::Mid, QColor(QStringLiteral("#27272a")));
+    dark.setColor(QPalette::Dark, QColor(QStringLiteral("#060607")));
+    for (const auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
+        dark.setColor(QPalette::Disabled, role, QColor(QStringLiteral("#71717a")));
+    app.setPalette(dark);
     if (app.arguments().contains(QStringLiteral("--test-ocr-lifetime")))
         return OcrDialog::testLifetime();
     if (app.arguments().contains(QStringLiteral("--test-translate")))
@@ -146,14 +169,14 @@ int main(int argc, char **argv)
         return 0;
     }
     app.setQuitOnLastWindowClosed(false);            // Keep the tray active after all pins are closed.
-    app.setApplicationName(QStringLiteral("pinshot"));
+    app.setApplicationName(QStringLiteral("Finalize"));
 
     Controller ctrl;
     HotkeyFilter hf;
     hf.onHotkey = [&ctrl] { ctrl.startCapture(); };
     app.installNativeEventFilter(&hf);
     if (!RegisterHotKey(nullptr, 1, MOD_NOREPEAT, VK_F1))
-        QMessageBox::warning(nullptr, QStringLiteral("pinshot"),
+        QMessageBox::warning(nullptr, QStringLiteral("Finalize"),
                              QStringLiteral("注册 F1 热键失败（可能被其他截图工具占用）"));
 
     const int exitCode = app.exec();

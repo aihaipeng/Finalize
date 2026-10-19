@@ -1,4 +1,5 @@
 #include "pixel_inspector.h"
+#include "widgets.h"
 #include <QPoint>
 #include <QRect>
 #include <QRectF>
@@ -51,7 +52,7 @@ bool PixelInspector::setSample(const ScreenFrame &frame, const QPoint &globalPix
         mask.addRect(QRectF(origin, m_patch.size()));
         mask.addRect(selectionPixels);
         p.fillPath(mask, QColor(0, 0, 0, 120));
-        p.setPen(QPen(QColor("#2080f0"), 1));
+        p.setPen(QPen(Bar::accent, 1));
         p.drawRect(selectionPixels.adjusted(0, 0, -1, -1));
     }
     update();
@@ -78,8 +79,10 @@ void PixelInspector::paintEvent(QPaintEvent *)
     p.setClipRect(view);
     p.drawImage(view.adjusted(1, 1, -1, -1), m_patch);
     const QRect pixel(view.left() + 85, view.top() + 57, 7, 7);
-    p.fillRect(QRect(pixel.left(), view.top() + 1, 7, 119), QColor(32, 128, 240, 88));
-    p.fillRect(QRect(view.left() + 1, pixel.top(), 175, 7), QColor(32, 128, 240, 88));
+    QColor crosshair = Bar::accent;
+    crosshair.setAlpha(88);
+    p.fillRect(QRect(pixel.left(), view.top() + 1, 7, 119), crosshair);
+    p.fillRect(QRect(view.left() + 1, pixel.top(), 175, 7), crosshair);
     p.fillRect(pixel, m_color);
     p.setPen(Qt::black);
     p.drawRect(pixel.adjusted(-1, -1, 0, 0));

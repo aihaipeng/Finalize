@@ -375,8 +375,8 @@ int LongCapture::testOutput()
     session.buildUi();
     QStringList tips;
     for (QToolButton *b : session.m_bar->findChildren<QToolButton *>()) tips << b->toolTip();
-    const QString ocrTip = session.m_ocrMissing.isEmpty() ? QStringLiteral("文字识别 (OCR)：截图与文本对照") : session.m_ocrMissing;
-    const QString translateTip = session.m_ocrMissing.isEmpty() ? QStringLiteral("翻译：识别并翻译为中文") : session.m_ocrMissing;
+    const QString ocrTip = session.m_ocrMissing.isEmpty() ? QStringLiteral("文字识别 (OCR)") : session.m_ocrMissing;
+    const QString translateTip = session.m_ocrMissing.isEmpty() ? QStringLiteral("识别并翻译文字") : session.m_ocrMissing;
     check(tips == QStringList{QStringLiteral("自动向上滚动截图"), QStringLiteral("自动向下滚动截图"),
                               QStringLiteral("裁剪"), QStringLiteral("编辑"), ocrTip, translateTip,
                               QStringLiteral("识别二维码/条形码"),
@@ -401,7 +401,7 @@ int LongCapture::testOutput()
     check(!session.m_crop->isEnabled() && session.m_cropStart->toolTip() == QStringLiteral("裁剪顶部")
               && session.m_cropEnd->toolTip() == QStringLiteral("裁剪底部"),
           "crop waits for a captured image and its panel crops top and bottom");
-    check(session.m_label->text() == QStringLiteral("400 x 300") && session.m_dir->currentText() == QStringLiteral("纵向"),
+    check(session.m_label->text() == QStringLiteral("400 × 300") && session.m_dir->currentText() == QStringLiteral("纵向"),
           "bar starts with the selection size and vertical direction");
     bool allDisabled = true;
     for (QToolButton *b : session.m_gated) allDisabled = allDisabled && !b->isEnabled();
@@ -416,7 +416,7 @@ int LongCapture::testOutput()
               && (session.m_ocrMissing.isEmpty()
                       ? session.m_gated.at(1)->isEnabled() && session.m_gated.at(2)->isEnabled()
                       : !session.m_gated.at(1)->isEnabled() && !session.m_gated.at(2)->isEnabled())
-              && session.m_label->text() == QStringLiteral("400 x 300"),
+              && session.m_label->text() == QStringLiteral("400 × 300"),
           "captured rows enable the bounded outputs and the label shows the stitched size");
     session.m_rowEnd = session.m_rowStart + 29001;          // Length gate only; rows are never read here.
     session.updateButtons();
@@ -433,7 +433,7 @@ int LongCapture::testOutput()
     check(session.moveRegion(QPoint(0, 5000)).isNull(), "a jump beyond a third of the screen is ignored");
     session.m_dir->setCurrentIndex(1);
     check(!session.m_vertical && session.logicalLength() == 0 && session.m_autoScroll == 0
-              && session.m_label->text() == QStringLiteral("400 x 300"),
+              && session.m_label->text() == QStringLiteral("400 × 300"),
           "switching direction restarts the capture");
     check(session.moveRegion(QPoint(25, 25)) == QPoint(25, 0), "horizontal sessions move along x");
     check(session.m_cropStart->toolTip() == QStringLiteral("裁剪左侧") && session.m_cropEnd->toolTip() == QStringLiteral("裁剪右侧"),

@@ -122,6 +122,8 @@ int OcrDialog::testBarcode(const QString &previewPath)
     auto *picker = card.findChild<QComboBox *>(QStringLiteral("barcodePicker"));
     auto *kind = card.findChild<QLabel *>(QStringLiteral("barcodeKind"));
     check(text && retry && copy && open && picker && kind, "barcode card exposes its result controls");
+    check(card.findChild<QToolButton *>(QStringLiteral("ocrSearch")) == nullptr,
+          "barcode card has no stray search button in its header");
     waitFor([&] { return retry->isEnabled() && !text->toPlainText().isEmpty(); });
     check(card.windowTitle() == QStringLiteral("Finalize 二维码/条形码"),
           "barcode card title names both symbol families");

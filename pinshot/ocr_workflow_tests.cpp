@@ -383,14 +383,11 @@ int CaptureOverlay::testOcr(const QString &previewPath)
         const double first=luminance(a),second=luminance(b);
         return (qMax(first,second)+0.05)/(qMin(first,second)+0.05);
     };
-    check(contrast(QColor("#323232"),QColor("#ffffff"))>=4.5
-              && contrast(QColor("#5b5b5b"),QColor("#f2f2f2"))>=4.5
-              && contrast(QColor("#2080f0"),QColor("#2f3236"))>=3
-              && contrast(QColor("#5b5b5b"),QColor("#ffffff"))>=4.5
-              && contrast(QColor("#323232"),QColor("#a3d6ff"))>=4.5
-              && contrast(QColor("#858585"),QColor("#ffffff"))>=3
-              && contrast(QColor("#2080f0"),QColor("#ffffff"))>=3,
-          "OCR text, metadata, accent buttons, control outlines and focus cues meet their contrast budgets");
+    check(contrast(QColor("#fcfcfc"),QColor("#060607"))>=7
+              && contrast(QColor("#a1a1aa"),QColor("#060607"))>=4.5
+              && contrast(QColor("#0485f7"),QColor("#18181b"))>=3
+              && contrast(QColor("#fcfcfc"),QColor("#264f78"))>=4.5,
+          "card text, muted metadata, accent controls and text selection meet their contrast budgets");
     const QList<QWidget *> tabOrder{back,
         dialog->findChild<QToolButton *>(QStringLiteral("ocrPin")),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrMinimize")),dialog->findChild<QToolButton *>(QStringLiteral("ocrMaximize")),

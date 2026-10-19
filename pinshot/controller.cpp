@@ -1,4 +1,5 @@
 #include "controller.h"
+#include "widgets.h"
 #include <QGuiApplication>
 #include <QPixmap>
 #include <QVector>
@@ -28,8 +29,9 @@ bool HotkeyFilter::nativeEventFilter(const QByteArray &, void *message, qintptr 
 Controller::Controller()
 {
     m_tray.setIcon(QApplication::windowIcon());
-    m_tray.setToolTip(QStringLiteral("pinshot — F1 截图"));
+    m_tray.setToolTip(QStringLiteral("Finalize · F1 截图"));
     QMenu *m = &m_menu;
+    m->setStyleSheet(darkMenuQss);
     m->addAction(QStringLiteral("截图 (F1)"), this, &Controller::startCapture);
     QMenu *detection = m->addMenu(QStringLiteral("窗口/UI 检测"));
     QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
@@ -68,7 +70,7 @@ void Controller::startCapture()
     if (m_capture && m_capture->isVisible()) { m_capture->raise(); m_capture->activateWindow(); return; }
     const QVector<ScreenFrame> frames = freezeScreens();   // Freeze before showing the selection overlay.
     if (frames.isEmpty()) {
-        QMessageBox::warning(nullptr, QStringLiteral("pinshot"), QStringLiteral("无法读取屏幕像素"));
+        QMessageBox::warning(nullptr, QStringLiteral("Finalize"), QStringLiteral("无法读取屏幕像素"));
         return;
     }
     QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));

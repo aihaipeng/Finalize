@@ -108,7 +108,10 @@ int OcrDialog::testLifetime()
     finder.showFind(true);
     finder.m_findEdit->setText(QStringLiteral("ab"));
     finder.m_replaceEdit->setText(QStringLiteral("x"));
-    const bool counted = finder.matches().size() == 3 && edit->extraSelections().size() == 3;
+    bool readable = edit->extraSelections().size() == 3;
+    for (const QTextEdit::ExtraSelection &mark : edit->extraSelections())
+        readable = readable && mark.format.foreground().color() == QColor(0x18, 0x18, 0x1b);
+    const bool counted = finder.matches().size() == 3 && edit->extraSelections().size() == 3 && readable;
     finder.replaceOne();
     const bool one = edit->toPlainText() == QStringLiteral("x ab ab");
     finder.replaceAll();

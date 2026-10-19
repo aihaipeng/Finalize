@@ -164,7 +164,7 @@ int PinWindow::testPlacement()
         check(opacityMenu->findChildren<QLabel *>().size() == 1
                   && opacityMenu->findChildren<QLabel *>().first()->text().endsWith(QLatin1Char('%')),
               "slider flyout shows only the percentage, not a title");
-        check(osliders.first()->styleSheet() == lightSliderQss && osliders.first()->height() == 22,
+        check(osliders.first()->styleSheet() == darkSliderQss && osliders.first()->height() == 22,
               "pin slider uses the mosaic slider style and stays vertically centered");
         check(bsliders.first()->maximum() == 200, "brightness slider keeps its 0..200 percent range");
         // Menus are never shown raw in tests because popups outside exec() leave
@@ -475,7 +475,7 @@ int PinWindow::testPlacement()
     return 0;
     }
     QAction *toolbarAction = actions.at(actions.size() - 2);
-    check(toolbarAction->text() == QStringLiteral("显示工具条") && toolbarAction->isCheckable(),
+    check(toolbarAction->text() == QStringLiteral("显示工具栏") && toolbarAction->isCheckable(),
           "toolbar action is checkable");
     toolbarAction->trigger(); // Enable toolbar
     check(longPin.m_toolbarOn && longPin.m_toolbar != nullptr && longPin.m_toolbar->isVisible(),
@@ -528,7 +528,7 @@ int PinWindow::testPlacement()
     QToolButton *barcodeBtn = nullptr;
     for (QToolButton *b : barButtons) {
         if (b->toolTip() == QStringLiteral("形状：矩形/椭圆")) shapeBtn = b;
-        if (b->toolTip() == QStringLiteral("翻译：识别并翻译为中文")) translateBtn = b;
+        if (b->toolTip() == QStringLiteral("识别并翻译文字")) translateBtn = b;
         if (b->toolTip() == QStringLiteral("识别二维码/条形码")) barcodeBtn = b;
     }
     check(shapeBtn != nullptr && shapeBtn->isCheckable(), "the shape tool sits on the pin toolbar");
@@ -633,7 +633,11 @@ int PinWindow::testPlacement()
     check(editPin.imageGeometry() == pinBefore, "drawing does not move the pin");
     {
         const QImage shown = editPin.grab(editPin.imageRect()).toImage();
-        check(QColor(shown.pixel(105, 30)) != Qt::white && QColor(shown.pixel(10, 10)) == Qt::white,
+        const qreal shotDpr = shown.devicePixelRatio();
+        const auto shotPixel = [&](int x, int y) {
+            return shown.pixelColor(qRound(x * shotDpr), qRound(y * shotDpr));
+        };
+        check(shotPixel(105, 30) != Qt::white && shotPixel(10, 10) == Qt::white,
               "the rectangle shows on the pin in place");
         const QImage out = editPin.annotatedPix().toImage();
         check(QColor(out.pixel(105, 30)) != Qt::white, "copy/save/OCR pixels carry the marks");
@@ -672,14 +676,19 @@ int PinWindow::testPlacement()
         shapeBtn->click();
         QApplication::processEvents();
     }
+    const auto pinPixel = [&](int x, int y) {
+        const QImage shot = editPin.grab(editPin.imageRect()).toImage();
+        const qreal dpr = shot.devicePixelRatio();
+        return shot.pixelColor(qRound(x * dpr), qRound(y * dpr));
+    };
     editPin.m_undoBtn->click();
     QApplication::processEvents();
     check(!editPin.m_canvas->hasAnnotations() && editPin.m_redoBtn->isEnabled()
-              && QColor(editPin.grab(editPin.imageRect()).toImage().pixel(105, 30)) == Qt::white,
+              && pinPixel(105, 30) == Qt::white,
           "pin undo removes the mark");
     editPin.m_redoBtn->click();
     QApplication::processEvents();
-    check(editPin.m_canvas->hasAnnotations() && QColor(editPin.grab(editPin.imageRect()).toImage().pixel(105, 30)) != Qt::white,
+    check(editPin.m_canvas->hasAnnotations() && pinPixel(105, 30) != Qt::white,
           "pin redo restores the mark");
 
     {   // Disarming with the cursor over the pin maps it through the child canvas, never a null window.
@@ -748,7 +757,7 @@ int PinWindow::testPlacement()
         canvasMouse(QEvent::MouseButtonRelease, b);
         QApplication::processEvents();
         check(editPin.m_canvas->hasAnnotations()
-                  && QColor(editPin.grab(editPin.imageRect()).toImage().pixel(a.x() + 12, a.y())) != Qt::white,
+                  && pinPixel(a.x() + 12, a.y()) != Qt::white,
               "after zoom the canvas clips marks to the whole pin, not its old size");
     }
     {   // Esc ladder end to end: bar first, then the pin.

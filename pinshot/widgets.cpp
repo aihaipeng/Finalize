@@ -23,13 +23,6 @@
 #include <QSvgRenderer>
 #include <qt_windows.h>
 
-const QString lightSliderQss = QStringLiteral(
-    "QSlider{margin:0px 1px 0px 1px;}"
-    "QSlider::groove:horizontal{border:none;background:#bdb8b9;height:2px;border-radius:1px;margin:3px 0px 3px 0px;}"
-    "QSlider::handle:horizontal{background:#fff;width:7px;margin:-4px 0px -4px 0px;border-radius:4px;border:1px solid #2080f0;}"
-    "QSlider::handle:horizontal:hover{background:#2080f0;width:7px;margin:-4px 0px -4px 0px;border:1px solid #2080f0;}"
-    "QSlider::sub-page:horizontal{border-radius:1px;background:#2080f0;margin:3px 0px 3px 0px;}");
-
 namespace {
 struct IconVariant { QColor color; QIcon::State state; QList<QIcon::Mode> modes; };
 
@@ -130,8 +123,15 @@ QToolButton *barButton(Icon icon, const QString &tip)
 const QString darkSliderQss = QStringLiteral(
     "QSlider{margin:0px 1px 0px 1px;}"
     "QSlider::groove:horizontal{border:none;background:#27272a;height:14px;border-radius:7px;}"
-    "QSlider::sub-page:horizontal{background:#3388ff;border-radius:7px;}"
+    "QSlider::sub-page:horizontal{background:#0485f7;border-radius:7px;}"
     "QSlider::handle:horizontal{background:#f4f4f4;width:10px;margin:2px 2px;border-radius:5px;}");
+
+const QString darkMenuQss = QStringLiteral(
+    "QMenu{background:#18181b;color:#fcfcfc;border:1px solid #27272a;padding:4px;border-radius:8px;}"
+    "QMenu::item{padding:6px 24px 6px 20px;border-radius:6px;}"
+    "QMenu::item:selected{background:#0485f7;color:#ffffff;}"
+    "QMenu::item:disabled{color:#52525b;}"
+    "QMenu::separator{height:1px;background:#27272a;margin:4px 8px;}");
 
 QToolButton *colorButton(const QColor &color, const QString &tip, int size)
 {
@@ -140,8 +140,11 @@ QToolButton *colorButton(const QColor &color, const QString &tip, int size)
     QPixmap chip(size, size);
     chip.fill(Qt::transparent);
     QPainter painter(&chip);
-    const QRect box(2, 2, size - 4, size - 4);
-    painter.fillRect(box, color);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QRectF box(2, 2, size - 4, size - 4);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+    painter.drawRoundedRect(box, 4, 4);
     painter.end();
     button->setIcon(QIcon(chip));
     button->setIconSize(chip.size());

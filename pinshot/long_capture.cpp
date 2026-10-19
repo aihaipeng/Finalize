@@ -588,15 +588,15 @@ void LongCapture::buildUi()
         "QToolButton:pressed{background-color:#27272a;}"
         "QToolButton:checked{background:transparent;}"
         "QToolButton:checked:hover{background-color:#26262a;}"
-        "QFrame#barSeparator{background-color:#232326;margin:0px 6px;border:none;}"
-        "QLabel{color:#a1a1aa;font-size:13px;background:transparent;padding:0px 4px;}"
+        "QFrame#barSeparator{background-color:#27272a;margin:0px 6px;border:none;}"
+        "QLabel{color:#a1a1aa;font-size:12px;background:transparent;padding:0px 4px;}"
         "QComboBox{color:#fcfcfc;background:#060607;border:none;border-radius:12px;"
         "padding:1px 4px 1px 12px;font-size:12px;}"
         "QComboBox:hover{background:#0c0c0e;}"
         "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
         "QComboBox::down-arrow{image:none;width:0px;height:0px;}"
-        "QComboBox QAbstractItemView{outline:0px;color:#fcfcfc;background:#262626;border:1px solid #3c3c3c;"
-        "padding:4px;selection-background-color:#3388ff;selection-color:#fcfcfc;}"));
+        "QComboBox QAbstractItemView{outline:0px;color:#fcfcfc;background:#18181b;border:1px solid #27272a;"
+        "padding:4px;selection-background-color:#0485f7;selection-color:#fcfcfc;}"));
     auto *lay = new QHBoxLayout(m_bar);
     lay->setContentsMargins(7, 6, 7, 7);             // 42px surface inside a 1px rim.
     lay->setSpacing(4);
@@ -632,8 +632,8 @@ void LongCapture::buildUi()
         "QToolButton{background:transparent;border:none;border-radius:4px;padding:5px;}"
         "QToolButton:hover{background-color:#26262a;}"
         "QToolButton:pressed{background-color:#27272a;}"
-        "QFrame#barSeparator{background-color:#232326;margin:0px 6px;border:none;}"
-        "QCheckBox{color:#fcfcfc;font-size:13px;background:transparent;spacing:6px;}"));
+        "QFrame#barSeparator{background-color:#27272a;margin:0px 6px;border:none;}"
+        "QCheckBox{color:#fcfcfc;font-size:12px;background:transparent;spacing:6px;}"));
     auto *cropLay = new QHBoxLayout(m_cropPanel);
     cropLay->setContentsMargins(8, 4, 8, 4);
     cropLay->setSpacing(4);
@@ -664,8 +664,8 @@ void LongCapture::buildUi()
     connect(m_cropEnd, &QToolButton::clicked, this, &LongCapture::cropAfter);
     connect(m_autoCropBox, &QCheckBox::toggled, this, &LongCapture::setAutoCrop);
     auto *edit = barButton(Icon::Pen, QStringLiteral("编辑"));
-    m_ocr = barButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)：截图与文本对照"));
-    m_translate = barButton(Icon::Translate, QStringLiteral("翻译：识别并翻译为中文"));
+    m_ocr = barButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)"));
+    m_translate = barButton(Icon::Translate, QStringLiteral("识别并翻译文字"));
     m_barcode = barButton(Icon::Barcode, QStringLiteral("识别二维码/条形码"));
     m_barcode->setObjectName(QStringLiteral("barcodeButton"));
     m_ocrMissing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
@@ -744,7 +744,7 @@ void LongCapture::updateLabel()
     if (!m_label) return;
     const int rows = logicalLength();
     const QSize size = rows <= 0 ? m_region.size() : m_vertical ? QSize(m_width, rows) : QSize(rows, m_width);
-    m_label->setText(QStringLiteral("%1 x %2").arg(size.width()).arg(size.height()));
+    m_label->setText(QStringLiteral("%1 × %2").arg(size.width()).arg(size.height()));
     placeBar();
 }
 
@@ -1089,8 +1089,8 @@ void LongCapture::saveCapture()
     for (QWidget *w : {m_mask, m_bar, static_cast<QWidget *>(m_preview), m_cropPanel}) if (w) w->hide();
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     const QString path = QFileDialog::getSaveFileName(
-        nullptr, QStringLiteral("保存图像"), dir + QStringLiteral("/longshot.png"),
-        QStringLiteral("PNG 图片 (*.png);;JPG 图片 (*.jpg)"));
+        nullptr, QStringLiteral("保存图片"), dir + QStringLiteral("/longshot.png"),
+        QStringLiteral("PNG 图片 (*.png);;JPEG 图片 (*.jpg)"));
     if (m_done) return;
     const bool saved = !path.isEmpty() && saveImageAtomic(img, path);
     if (saved) { cancel(); return; }
