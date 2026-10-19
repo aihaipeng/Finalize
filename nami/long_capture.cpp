@@ -327,16 +327,15 @@ void LongCapture::captureFrame()
         else if (!m_failClock.isValid()) m_failClock.start();
         else if (!m_failWarned && m_failClock.elapsed() >= 3000) {
             m_failWarned = true;
-            notice(QStringLiteral("匹配失败"),
-                   QStringLiteral("图片匹配失败，可能原因：\n1. 滚动速度过快。\n2. 截图过程中切换了其他窗口。\n"
-                                  "3. 截图背景为动态图像。\n\n请尝试返回最后一次成功匹配的帧后继续截图。"),
+            notice(tr("匹配失败"),
+                   tr("图片匹配失败，可能原因：\n1. 滚动速度过快。\n2. 截图过程中切换了其他窗口。\n3. 截图背景为动态图像。\n\n请尝试返回最后一次成功匹配的帧后继续截图。"),
                    QStringLiteral("LongShot/MatchFailWarningNoAsk"));
         }
         if (m_storageFull && !m_storageWarned) {
             m_storageWarned = true;
             updateUi();
-            notice(QStringLiteral("长截图"),
-                   QStringLiteral("当前截图已达到最大拼接范围，无法继续拼接。\n请保存或贴图。"), QString());
+            notice(tr("长截图"),
+                   tr("当前截图已达到最大拼接范围，无法继续拼接。\n请保存或贴图。"), QString());
         }
     }
     nextTick(int(frameClock.elapsed()));
@@ -451,7 +450,7 @@ void LongCapture::autoCrop(int growth)
 void LongCapture::setAutoCrop(bool on)
 {
     m_autoCrop = on;
-    QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot")).setValue(QStringLiteral("LongShot/AutoCrop"), on);
+    QSettings(QStringLiteral("Nami"), QStringLiteral("Nami")).setValue(QStringLiteral("LongShot/AutoCrop"), on);
     if (m_autoCropBox && m_autoCropBox->isChecked() != on) {
         const QSignalBlocker block(m_autoCropBox);
         m_autoCropBox->setChecked(on);
@@ -464,8 +463,8 @@ void LongCapture::updateCropDirection()
     if (!m_cropStart || !m_cropEnd) return;
     for (QToolButton *b : {m_cropStart, m_cropEnd}) {
         const bool start = b == m_cropStart;
-        const QString tip = m_vertical ? (start ? QStringLiteral("裁剪顶部") : QStringLiteral("裁剪底部"))
-                                       : (start ? QStringLiteral("裁剪左侧") : QStringLiteral("裁剪右侧"));
+        const QString tip = m_vertical ? (start ? tr("裁剪顶部") : tr("裁剪底部"))
+                                       : (start ? tr("裁剪左侧") : tr("裁剪右侧"));
         b->setToolTip(tip);
         b->setAccessibleName(tip);
     }
@@ -607,19 +606,19 @@ void LongCapture::buildUi()
     m_label = new QLabel;
     m_axis = new QWidget;
     m_axis->setFixedSize(Bar::button, Bar::button);
-    m_axis->setToolTip(QStringLiteral("移动截图区域"));
+    m_axis->setToolTip(tr("移动截图区域"));
     m_axis->setCursor(Qt::SizeVerCursor);
     m_axis->installEventFilter(this);
     m_dir = flatComboBox();
-    m_dir->addItems({QStringLiteral("纵向"), QStringLiteral("横向")});
-    m_dir->setFixedSize(98, 24);
+    m_dir->addItems({tr("纵向"), tr("横向")});
+    m_dir->setFixedSize(qMax(98, m_dir->sizeHint().width()), 24);
     m_dir->setFocusPolicy(Qt::NoFocus);
-    m_autoUp = barButton(Icon::LongShot, QStringLiteral("自动向上滚动截图"));
+    m_autoUp = barButton(Icon::LongShot, tr("自动向上滚动截图"));
     m_autoUp->setCheckable(true);
     m_autoUp->setIcon(rotatedIcon(barIcon(Icon::LongShot), Bar::icon, 180));
-    m_auto = barButton(Icon::LongShot, QStringLiteral("自动向下滚动截图"));
+    m_auto = barButton(Icon::LongShot, tr("自动向下滚动截图"));
     m_auto->setCheckable(true);
-    m_crop = barButton(Icon::Crop, QStringLiteral("裁剪"));
+    m_crop = barButton(Icon::Crop, tr("裁剪"));
     m_crop->installEventFilter(this);
     // Hover panel under the crop button: crop to the current frame at either end, and the auto crop switch.
     m_cropPanel = new QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint
@@ -639,15 +638,15 @@ void LongCapture::buildUi()
     cropLay->setSpacing(4);
     m_cropStart = barButton(Icon::CropStart, QString());
     m_cropEnd = barButton(Icon::CropEnd, QString());
-    m_autoCropBox = new QCheckBox(QStringLiteral("自动裁剪"));
-    m_autoCropBox->setToolTip(QStringLiteral("自动裁剪"));
+    m_autoCropBox = new QCheckBox(tr("自动裁剪"));
+    m_autoCropBox->setToolTip(tr("自动裁剪"));
     m_autoCropBox->setCursor(Qt::PointingHandCursor);
     for (QWidget *w : {static_cast<QWidget *>(m_cropStart), static_cast<QWidget *>(m_cropEnd),
                        barSeparator(true), static_cast<QWidget *>(m_autoCropBox)}) {
         w->setFocusPolicy(Qt::NoFocus);
         cropLay->addWidget(w);
     }
-    m_autoCrop = QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot"))
+    m_autoCrop = QSettings(QStringLiteral("Nami"), QStringLiteral("Nami"))
                      .value(QStringLiteral("LongShot/AutoCrop"), false).toBool();
     m_autoCropBox->setChecked(m_autoCrop);
     updateCropDirection();
@@ -663,18 +662,18 @@ void LongCapture::buildUi()
     connect(m_cropStart, &QToolButton::clicked, this, &LongCapture::cropBefore);
     connect(m_cropEnd, &QToolButton::clicked, this, &LongCapture::cropAfter);
     connect(m_autoCropBox, &QCheckBox::toggled, this, &LongCapture::setAutoCrop);
-    auto *edit = barButton(Icon::Pen, QStringLiteral("编辑"));
-    m_ocr = barButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)"));
-    m_translate = barButton(Icon::Translate, QStringLiteral("识别并翻译文字"));
-    m_barcode = barButton(Icon::Barcode, QStringLiteral("识别二维码/条形码"));
+    auto *edit = barButton(Icon::Pen, tr("编辑"));
+    m_ocr = barButton(Icon::Ocr, tr("文字识别 (OCR)"));
+    m_translate = barButton(Icon::Translate, tr("识别并翻译文字"));
+    m_barcode = barButton(Icon::Barcode, tr("识别二维码/条形码"));
     m_barcode->setObjectName(QStringLiteral("barcodeButton"));
     m_ocrMissing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
     if (!m_ocrMissing.isEmpty()) m_ocr->setToolTip(m_ocrMissing);
     if (!m_ocrMissing.isEmpty()) m_translate->setToolTip(m_ocrMissing);
-    auto *pin = barButton(Icon::Pin, QStringLiteral("贴图"));
-    auto *save = barButton(Icon::Save, QStringLiteral("保存"));
-    auto *close = barButton(Icon::Cancel, QStringLiteral("关闭"));
-    auto *copy = barButton(Icon::Copy, QStringLiteral("复制并关闭"));
+    auto *pin = barButton(Icon::Pin, tr("贴图"));
+    auto *save = barButton(Icon::Save, tr("保存"));
+    auto *close = barButton(Icon::Cancel, tr("关闭"));
+    auto *copy = barButton(Icon::Copy, tr("复制并关闭"));
     m_gated = {edit, m_ocr, m_translate, m_barcode, pin, copy};
     m_save = save;
     lay->addWidget(m_grip);
@@ -869,12 +868,12 @@ void LongCapture::setVertical(bool vertical)
     }
     if (m_auto) {
         m_auto->setIcon(vertical ? barIcon(Icon::LongShot) : rotatedIcon(barIcon(Icon::LongShot), Bar::icon));
-        m_auto->setToolTip(vertical ? QStringLiteral("自动向下滚动截图") : QStringLiteral("自动向右滚动截图"));
+        m_auto->setToolTip(vertical ? tr("自动向下滚动截图") : tr("自动向右滚动截图"));
     }
     if (m_autoUp) {
         m_autoUp->setIcon(vertical ? rotatedIcon(barIcon(Icon::LongShot), Bar::icon, 180)
                                    : rotatedIcon(barIcon(Icon::LongShot), Bar::icon, 90));
-        m_autoUp->setToolTip(vertical ? QStringLiteral("自动向上滚动截图") : QStringLiteral("自动向左滚动截图"));
+        m_autoUp->setToolTip(vertical ? tr("自动向上滚动截图") : tr("自动向左滚动截图"));
     }
     updateCropDirection();
     if (m_axis) { m_axis->setCursor(vertical ? Qt::SizeVerCursor : Qt::SizeHorCursor); m_axis->update(); }
@@ -1005,18 +1004,18 @@ bool LongCapture::eventFilter(QObject *watched, QEvent *event)
 
 void LongCapture::notice(const QString &title, const QString &text, const QString &noAskKey)
 {
-    QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
     if (!noAskKey.isEmpty() && settings.value(noAskKey, false).toBool()) return;
     if (m_notice) return;
     auto *box = new QMessageBox(QMessageBox::Warning, title, text, QMessageBox::Ok);
     box->setWindowFlag(Qt::WindowStaysOnTopHint);
     box->setAttribute(Qt::WA_DeleteOnClose);
-    if (!noAskKey.isEmpty()) box->setCheckBox(new QCheckBox(QStringLiteral("不再提示")));
+    if (!noAskKey.isEmpty()) box->setCheckBox(new QCheckBox(tr("不再提示")));
     m_notice = box;
     m_paused = true;                             // The dialog may cover the selection.
     connect(box, &QMessageBox::finished, this, [this, box, noAskKey] {
         if (!noAskKey.isEmpty() && box->checkBox() && box->checkBox()->isChecked())
-            QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot")).setValue(noAskKey, true);
+            QSettings(QStringLiteral("Nami"), QStringLiteral("Nami")).setValue(noAskKey, true);
         m_paused = false;                        // The dialog closed; capturing may resume.
     });
     box->show();
@@ -1035,7 +1034,7 @@ void LongCapture::finish(bool edit)
         return;
     const QPixmap pix = QPixmap::fromImage(exportImage());
     if (pix.isNull()) {
-        fail(QStringLiteral("导出失败，请释放内存后重试"));
+        fail(tr("导出失败，请释放内存后重试"));
         return;
     }
     if (edit) {                                   // The editor can come back here, so the session only steps aside.
@@ -1080,7 +1079,7 @@ void LongCapture::saveCapture()
 {
     const QImage img = exportImage();
     if (img.isNull()) {
-        fail(QStringLiteral("导出失败，请释放内存后重试"));
+        fail(tr("导出失败，请释放内存后重试"));
         return;
     }
     // The dialog is not topmost; the session steps aside and stops capturing while it is open.
@@ -1089,26 +1088,26 @@ void LongCapture::saveCapture()
     for (QWidget *w : {m_mask, m_bar, static_cast<QWidget *>(m_preview), m_cropPanel}) if (w) w->hide();
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     const QString path = QFileDialog::getSaveFileName(
-        nullptr, QStringLiteral("保存图片"), dir + QStringLiteral("/longshot.png"),
-        QStringLiteral("PNG 图片 (*.png);;JPEG 图片 (*.jpg)"));
+        nullptr, tr("保存图片"), dir + QStringLiteral("/longshot.png"),
+        tr("PNG 图片 (*.png);;JPEG 图片 (*.jpg)"));
     if (m_done) return;
     const bool saved = !path.isEmpty() && saveImageAtomic(img, path);
     if (saved) { cancel(); return; }
     for (QWidget *w : {m_mask, m_bar}) if (w) w->show();
     if (m_preview && !m_preview->image.isNull()) m_preview->show();
     m_paused = false;
-    if (!path.isEmpty()) fail(QStringLiteral("保存失败，请检查路径或释放内存后重试"));
+    if (!path.isEmpty()) fail(tr("保存失败，请检查路径或释放内存后重试"));
 }
 
 void LongCapture::copyCapture()
 {
     const QImage img = exportImage();
     if (img.isNull()) {
-        fail(QStringLiteral("导出失败，请释放内存后重试"));
+        fail(tr("导出失败，请释放内存后重试"));
         return;
     }
     if (!copyImageToClipboard(img)) {
-        fail(QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+        fail(tr("复制失败，剪贴板可能被占用，请重试"));
         return;
     }
     cancel();
@@ -1118,7 +1117,7 @@ void LongCapture::openTextCard(bool translate, bool barcode)
 {
     const QImage img = exportImage();
     if (img.isNull()) {
-        fail(QStringLiteral("导出失败，请释放内存后重试"));
+        fail(tr("导出失败，请释放内存后重试"));
         return;
     }
     // The card replaces the session; back resumes it, while closing ends the capture.
@@ -1128,7 +1127,7 @@ void LongCapture::openTextCard(bool translate, bool barcode)
     m_ocrDialog = dialog;
     if (!dialog) {
         resume();
-        fail(barcode ? QStringLiteral("无法打开二维码识别窗口") : QStringLiteral("无法打开识别窗口"));
+        fail(barcode ? tr("无法打开二维码识别窗口") : tr("无法打开识别窗口"));
         return;
     }
     connect(dialog, &QDialog::finished, this, [this,dialog] {

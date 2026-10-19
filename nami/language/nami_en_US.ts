@@ -1,0 +1,1629 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="en_US" sourcelanguage="zh_CN">
+<context>
+    <name>BarcodeEngine</name>
+    <message>
+        <location filename="../barcode_engine.cpp" line="+26"/>
+        <source>识别失败：截图区域为空</source>
+        <translation>Recognition failed: the capture area is empty</translation>
+    </message>
+    <message>
+        <location line="+37"/>
+        <source>识别失败：%1</source>
+        <translation>Recognition failed: %1</translation>
+    </message>
+</context>
+<context>
+    <name>CaptureOverlay</name>
+    <message>
+        <location filename="../annotations.cpp" line="+1211"/>
+        <source>智能擦除：点击切换为像素化</source>
+        <translation>Smart Erase: click to switch to Pixelate</translation>
+    </message>
+    <message>
+        <location line="+14"/>
+        <source>模糊：点击切换为智能擦除</source>
+        <translation>Blur: click to switch to Smart Erase</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>像素化：点击切换为模糊，滚轮调强度</source>
+        <translation>Pixelate: click to switch to Blur; scroll to adjust strength</translation>
+    </message>
+    <message>
+        <location line="+12"/>
+        <source>马赛克强度 %1：拖动调节，数值越大像素块越大</source>
+        <translation>Mosaic strength %1: drag to adjust; higher values make larger blocks</translation>
+    </message>
+    <message>
+        <location line="+378"/>
+        <source>选择颜色</source>
+        <translation>Select color</translation>
+    </message>
+    <message>
+        <location line="+186"/>
+        <location filename="../capture_overlay.cpp" line="+1759"/>
+        <source>大小</source>
+        <translation>Size</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <location line="+37"/>
+        <source>粗细</source>
+        <translation>Width</translation>
+    </message>
+    <message>
+        <location line="-6"/>
+        <source>标准字号 (pt)：小四=12，五号=10.5</source>
+        <translation>Standard font sizes (pt): Small 4 = 12, No. 5 = 10.5</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>输入、下拉选择或滚轮调节粗细</source>
+        <translation>Type, choose from the list, or scroll to adjust width</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>字号</source>
+        <translation>Font size</translation>
+    </message>
+    <message>
+        <location line="+29"/>
+        <source>矩形</source>
+        <translation>Rectangle</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>椭圆</source>
+        <translation>Ellipse</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>填充 (F)</source>
+        <translation>Fill (F)</translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <source>矩形高亮</source>
+        <translation>Rectangle highlight</translation>
+    </message>
+    <message>
+        <location line="+55"/>
+        <source>单向箭头</source>
+        <translation>Single arrow</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>单向镂空箭头</source>
+        <translation>Single outline arrow</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>双向箭头</source>
+        <translation>Double arrow</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>双向镂空箭头</source>
+        <translation>Double outline arrow</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>无箭头</source>
+        <translation>No arrow</translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <source>直线</source>
+        <translation>Straight line</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>曲线</source>
+        <translation>Curve</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>虚线</source>
+        <translation>Dashed line</translation>
+    </message>
+    <message>
+        <location line="+9"/>
+        <location line="+9"/>
+        <source>粗体</source>
+        <translation>Bold</translation>
+    </message>
+    <message>
+        <location line="-8"/>
+        <location line="+9"/>
+        <source>斜体</source>
+        <translation>Italic</translation>
+    </message>
+    <message>
+        <location line="+12"/>
+        <source>字体</source>
+        <translation>Font</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <location line="+2"/>
+        <source>字体：%1</source>
+        <translation>Font: %1</translation>
+    </message>
+    <message>
+        <location line="+11"/>
+        <source>矩形马赛克</source>
+        <translation>Rectangle mosaic</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>马赛克笔：滚轮调节笔宽</source>
+        <translation>Mosaic brush: scroll to adjust brush width</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>像素化 / 模糊</source>
+        <translation>Pixelate / Blur</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>切换像素化 / 模糊</source>
+        <translation>Switch between Pixelate and Blur</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <location line="+13"/>
+        <source>马赛克强度</source>
+        <translation>Mosaic strength</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>马赛克强度：拖动左侧滑条或滚轮调节</source>
+        <translation>Mosaic strength: drag the slider on the left or scroll to adjust</translation>
+    </message>
+    <message>
+        <location line="+11"/>
+        <source>画笔橡皮擦</source>
+        <translation>Brush eraser</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>矩形橡皮擦</source>
+        <translation>Rectangle eraser</translation>
+    </message>
+    <message>
+        <location line="+47"/>
+        <source>序号样式</source>
+        <translation>Number style</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>实心</source>
+        <translation>Filled</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>空心</source>
+        <translation>Outline</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>仅序号</source>
+        <translation>Number only</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>序号格式</source>
+        <translation>Number format</translation>
+    </message>
+    <message>
+        <location filename="../capture_overlay.cpp" line="-1664"/>
+        <source>无法定位截图覆盖层</source>
+        <translation>Cannot locate the capture overlay</translation>
+    </message>
+    <message>
+        <location line="+22"/>
+        <location line="+1555"/>
+        <source>自定义截图</source>
+        <translation>Custom capture</translation>
+    </message>
+    <message>
+        <location line="-1554"/>
+        <source>点击调整区域大小、尺寸单位和长宽比</source>
+        <translation>Click to adjust area size, units, and aspect ratio</translation>
+    </message>
+    <message>
+        <location line="+22"/>
+        <source>保存到文件 (Ctrl+S)</source>
+        <translation>Save to file (Ctrl+S)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>复制到剪贴板 (Ctrl+C)</source>
+        <translation>Copy to clipboard (Ctrl+C)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>贴在屏幕上 (Enter / 双击)</source>
+        <translation>Pin to screen (Enter / Double-click)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>长截图：手动滚动拼接长图</source>
+        <translation>Scrolling capture: scroll manually to stitch a long image</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>文字识别 (OCR)</source>
+        <translation>Text recognition (OCR)</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>文字识别 OCR</source>
+        <translation>Text recognition (OCR)</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>识别并翻译文字</source>
+        <translation>Recognize and translate text</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>翻译</source>
+        <translation>Translate</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <location line="+2"/>
+        <source>识别二维码/条形码</source>
+        <translation>Scan QR code / barcode</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <location line="+2"/>
+        <source>圆角截图</source>
+        <translation>Rounded corners</translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <source>刷新截图（按住持续刷新）</source>
+        <translation>Refresh screenshot (hold to keep refreshing)</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>刷新截图</source>
+        <translation>Refresh screenshot</translation>
+    </message>
+    <message>
+        <location line="+34"/>
+        <source>撤销 (Ctrl+Z)</source>
+        <translation>Undo (Ctrl+Z)</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>重做 (Ctrl+Y)</source>
+        <translation>Redo (Ctrl+Y)</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>形状：矩形/椭圆 (R=矩形 / O=椭圆)</source>
+        <translation>Shape: Rectangle/Ellipse (R = Rectangle / O = Ellipse)</translation>
+    </message>
+    <message>
+        <location line="+12"/>
+        <location filename="../main.cpp" line="+82"/>
+        <source>箭头 (A)</source>
+        <translation>Arrow (A)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>画笔 (P)</source>
+        <translation>Pen (P)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>荧光笔 (H)</source>
+        <translation>Highlighter (H)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>文字 (T)</source>
+        <translation>Text (T)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>序号 (N)</source>
+        <translation>Number (N)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>马赛克 (M)</source>
+        <translation>Mosaic (M)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>橡皮 (E)</source>
+        <translation>Eraser (E)</translation>
+    </message>
+    <message>
+        <location line="+14"/>
+        <source>完成编辑 (Enter)</source>
+        <translation>Finish editing (Enter)</translation>
+    </message>
+    <message>
+        <location line="+690"/>
+        <location line="+1413"/>
+        <source>复制失败，剪贴板可能被占用，请重试</source>
+        <translation>Copy failed. The clipboard may be in use. Please try again.</translation>
+    </message>
+    <message>
+        <location line="-966"/>
+        <source> · 锁定比例</source>
+        <translation> · Aspect ratio locked</translation>
+    </message>
+    <message>
+        <location line="+146"/>
+        <location line="+3"/>
+        <source>圆角半径</source>
+        <translation>Corner radius</translation>
+    </message>
+    <message>
+        <location line="+192"/>
+        <source>区域横向位置</source>
+        <translation>Area horizontal position</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>区域纵向位置</source>
+        <translation>Area vertical position</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>区域宽度</source>
+        <translation>Area width</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>区域高度</source>
+        <translation>Area height</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>尺寸单位</source>
+        <translation>Size unit</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <location line="+2"/>
+        <source>锁定长宽比</source>
+        <translation>Lock aspect ratio</translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <source>位置</source>
+        <translation>Position</translation>
+    </message>
+    <message>
+        <location line="+24"/>
+        <source>dp = px ÷ 屏幕缩放比</source>
+        <translation>dp = px ÷ screen scaling</translation>
+    </message>
+    <message>
+        <location line="+11"/>
+        <source>预设</source>
+        <translation>Preset</translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <source>常用尺寸和已保存区域</source>
+        <translation>Common sizes and saved areas</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>保存当前</source>
+        <translation>Save current</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>保存当前区域为预设</source>
+        <translation>Save current area as preset</translation>
+    </message>
+    <message>
+        <location line="+155"/>
+        <source>选择预设…</source>
+        <translation>Select preset…</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>已保存</source>
+        <translation>Saved</translation>
+    </message>
+    <message>
+        <location line="+18"/>
+        <source>预设 %1</source>
+        <translation>Preset %1</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>保存预设</source>
+        <translation>Save preset</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>预设名称</source>
+        <translation>Preset name</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>保存</source>
+        <translation>Save</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>取消</source>
+        <translation>Cancel</translation>
+    </message>
+    <message>
+        <location line="+131"/>
+        <source>刷新失败，请重试</source>
+        <translation>Refresh failed. Try again.</translation>
+    </message>
+    <message>
+        <location line="+142"/>
+        <location line="+2"/>
+        <source>识别失败，请先选择有效截图区域</source>
+        <translation>Recognition failed. Select a valid capture area first.</translation>
+    </message>
+    <message>
+        <location line="-1"/>
+        <source>翻译失败，请先选择有效截图区域</source>
+        <translation>Translation failed. Select a valid capture area first.</translation>
+    </message>
+    <message>
+        <location line="+64"/>
+        <source>保存图片</source>
+        <translation>Save image</translation>
+    </message>
+    <message>
+        <location line="+14"/>
+        <source>保存失败，请检查路径或磁盘空间后重试</source>
+        <translation>Save failed. Check the path or disk space and try again.</translation>
+    </message>
+    <message>
+        <location line="+31"/>
+        <source>贴图失败，请确认选区有效并检查内存后重试</source>
+        <translation>Pin failed. Make sure the selection is valid and check available memory, then try again.</translation>
+    </message>
+</context>
+<context>
+    <name>ColorBoard</name>
+    <message>
+        <location filename="../widgets.cpp" line="+177"/>
+        <source>颜色</source>
+        <translation>Color</translation>
+    </message>
+</context>
+<context>
+    <name>Controller</name>
+    <message>
+        <location filename="../controller.cpp" line="+34"/>
+        <source>Nami · F1 截图</source>
+        <translation>Nami · F1 Screenshot</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <location filename="../main.cpp" line="-2"/>
+        <source>截图 (F1)</source>
+        <translation>Screenshot (F1)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>窗口/UI 检测</source>
+        <translation>Window/UI Detection</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>自动检测窗口</source>
+        <translation>Auto-detect Windows</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>自动检测 UI 元素</source>
+        <translation>Auto-detect UI Elements</translation>
+    </message>
+    <message>
+        <location line="+9"/>
+        <source>排除程序…</source>
+        <translation>Exclude Programs…</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>排除窗口检测</source>
+        <translation>Exclude Window Detection</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>每行一个程序文件名，例如 example.exe（不区分大小写，下次截图生效）：</source>
+        <translation>One program file name per line, for example example.exe (case-insensitive; applies to the next screenshot):</translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <location line="+11"/>
+        <source>语言</source>
+        <translation>Language</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>语言将在下次启动 Nami 时生效。</source>
+        <translation>The language will take effect the next time Nami starts.</translation>
+    </message>
+    <message>
+        <location line="+8"/>
+        <source>退出</source>
+        <translation>Exit</translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <source>无法读取屏幕像素</source>
+        <translation>Unable to read screen pixels</translation>
+    </message>
+</context>
+<context>
+    <name>I18n</name>
+    <message>
+        <location filename="../i18n.cpp" line="+113"/>
+        <source>跟随系统</source>
+        <translation>Follow system</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>简体中文</source>
+        <translation>Simplified Chinese</translation>
+    </message>
+</context>
+<context>
+    <name>LongCapture</name>
+    <message>
+        <location filename="../long_capture.cpp" line="+330"/>
+        <source>匹配失败</source>
+        <translation>Matching failed</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>图片匹配失败，可能原因：
+1. 滚动速度过快。
+2. 截图过程中切换了其他窗口。
+3. 截图背景为动态图像。
+
+请尝试返回最后一次成功匹配的帧后继续截图。</source>
+        <translation>Image matching failed. Possible causes:
+1. Scrolling too fast.
+2. Another window was activated during capture.
+3. The captured background is animated.
+
+Try returning to the last successfully matched frame and continue capturing.</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>长截图</source>
+        <translation>Scrolling capture</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>当前截图已达到最大拼接范围，无法继续拼接。
+请保存或贴图。</source>
+        <translation>The capture has reached the maximum stitching limit and cannot continue.
+Save or pin it.</translation>
+    </message>
+    <message>
+        <location line="+128"/>
+        <source>裁剪顶部</source>
+        <translation>Crop top</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>裁剪底部</source>
+        <translation>Crop bottom</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>裁剪左侧</source>
+        <translation>Crop left</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>裁剪右侧</source>
+        <translation>Crop right</translation>
+    </message>
+    <message>
+        <location line="+142"/>
+        <source>移动截图区域</source>
+        <translation>Move capture area</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>纵向</source>
+        <translation>Vertical</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>横向</source>
+        <translation>Horizontal</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <location line="+260"/>
+        <source>自动向上滚动截图</source>
+        <translation>Auto-scroll up and capture</translation>
+    </message>
+    <message>
+        <location line="-257"/>
+        <location line="+252"/>
+        <source>自动向下滚动截图</source>
+        <translation>Auto-scroll down and capture</translation>
+    </message>
+    <message>
+        <location line="-250"/>
+        <source>裁剪</source>
+        <translation>Crop</translation>
+    </message>
+    <message>
+        <location line="+20"/>
+        <location line="+1"/>
+        <source>自动裁剪</source>
+        <translation>Auto crop</translation>
+    </message>
+    <message>
+        <location line="+23"/>
+        <source>编辑</source>
+        <translation>Edit</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>文字识别 (OCR)</source>
+        <translation>Text recognition (OCR)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>识别并翻译文字</source>
+        <translation>Recognize and translate text</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>识别二维码/条形码</source>
+        <translation>Scan QR code / barcode</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>贴图</source>
+        <translation>Pin</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>保存</source>
+        <translation>Save</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>关闭</source>
+        <translation>Close</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>复制并关闭</source>
+        <translation>Copy and close</translation>
+    </message>
+    <message>
+        <location line="+195"/>
+        <source>自动向右滚动截图</source>
+        <translation>Auto-scroll right and capture</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>自动向左滚动截图</source>
+        <translation>Auto-scroll left and capture</translation>
+    </message>
+    <message>
+        <location line="+137"/>
+        <source>不再提示</source>
+        <translation>Don&apos;t show again</translation>
+    </message>
+    <message>
+        <location line="+24"/>
+        <location line="+45"/>
+        <location line="+24"/>
+        <location line="+14"/>
+        <source>导出失败，请释放内存后重试</source>
+        <translation>Export failed. Free up memory and try again.</translation>
+    </message>
+    <message>
+        <location line="-29"/>
+        <source>保存图片</source>
+        <translation>Save image</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>PNG 图片 (*.png);;JPEG 图片 (*.jpg)</source>
+        <translation>PNG images (*.png);;JPEG images (*.jpg)</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>保存失败，请检查路径或释放内存后重试</source>
+        <translation>Save failed. Check the path or free up memory, then try again.</translation>
+    </message>
+    <message>
+        <location line="+11"/>
+        <source>复制失败，剪贴板可能被占用，请重试</source>
+        <translation>Copy failed. The clipboard may be in use. Please try again.</translation>
+    </message>
+    <message>
+        <location line="+20"/>
+        <source>无法打开二维码识别窗口</source>
+        <translation>Cannot open the QR code window</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>无法打开识别窗口</source>
+        <translation>Cannot open the recognition window</translation>
+    </message>
+</context>
+<context>
+    <name>Main</name>
+    <message>
+        <location filename="../main.cpp" line="+135"/>
+        <source>注册 F1 热键失败（可能被其他截图工具占用）</source>
+        <translation>Failed to register the F1 hotkey (another screenshot tool may be using it)</translation>
+    </message>
+</context>
+<context>
+    <name>OcrDialog</name>
+    <message>
+        <location filename="../ocr_dialog.cpp" line="+512"/>
+        <source>Nami 二维码/条形码</source>
+        <translation>Nami QR Code/Barcode</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Nami 翻译</source>
+        <translation>Nami Translation</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Nami OCR</source>
+        <translation>Nami OCR</translation>
+    </message>
+    <message>
+        <location line="+103"/>
+        <source>返回</source>
+        <translation>Back</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <location line="+12"/>
+        <source>置顶二维码卡片</source>
+        <translation>Pin QR code card on top</translation>
+    </message>
+    <message>
+        <location line="-12"/>
+        <location line="+13"/>
+        <source>置顶 OCR 卡片</source>
+        <translation>Pin OCR card on top</translation>
+    </message>
+    <message>
+        <location line="-5"/>
+        <source>切换置顶失败，请重试</source>
+        <translation>Could not change always-on-top. Please try again.</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>取消置顶二维码卡片</source>
+        <translation>Unpin QR code card</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>取消置顶 OCR 卡片</source>
+        <translation>Unpin OCR card</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>最小化</source>
+        <translation>Minimize</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <location line="+1437"/>
+        <source>最大化</source>
+        <translation>Maximize</translation>
+    </message>
+    <message>
+        <location line="-1434"/>
+        <source>关闭 (Esc)</source>
+        <translation>Close (Esc)</translation>
+    </message>
+    <message>
+        <location line="+50"/>
+        <source>滚轮缩放 · 拖动查看 · 双击适应</source>
+        <translation>Scroll to zoom · Drag to pan · Double-click to fit</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>复制图片</source>
+        <translation>Copy image</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>已复制图片</source>
+        <translation>Image copied</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <location line="+24"/>
+        <location line="+316"/>
+        <location line="+83"/>
+        <source>复制失败，剪贴板可能被占用，请重试</source>
+        <translation>Copy failed. The clipboard may be in use. Please try again.</translation>
+    </message>
+    <message>
+        <location line="-420"/>
+        <source>放大</source>
+        <translation>Zoom in</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>缩小</source>
+        <translation>Zoom out</translation>
+    </message>
+    <message>
+        <location line="+13"/>
+        <source>原始大小 (1:1)</source>
+        <translation>Actual size (1:1)</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>适应窗口</source>
+        <translation>Fit to window</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>已复制选中文字</source>
+        <translation>Selected text copied</translation>
+    </message>
+    <message>
+        <location line="+15"/>
+        <source>排版</source>
+        <translation>Format</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>自动</source>
+        <translation>Auto</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>移除换行符</source>
+        <translation>Remove line breaks</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>移除空格</source>
+        <translation>Remove spaces</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>全角符号</source>
+        <translation>Full-width punctuation</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>半角符号</source>
+        <translation>Half-width punctuation</translation>
+    </message>
+    <message>
+        <location line="+35"/>
+        <source>原文语言</source>
+        <translation>Source language</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>译文语言</source>
+        <translation>Target language</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>翻译引擎：自动会在失败时换下一家</source>
+        <translation>Translation engine: Auto falls back to the next provider on failure</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>自动选择</source>
+        <translation>Auto</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Edge</source>
+        <translation>Edge</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Google</source>
+        <translation>Google</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>有道</source>
+        <translation>Youdao</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>搜狗</source>
+        <translation>Sogou</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>腾讯交互翻译</source>
+        <translation>Tencent Transmart</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>火山</source>
+        <translation>Volcengine</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>DeepL</source>
+        <translation>DeepL</translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <source>翻译为</source>
+        <translation>Translate to</translation>
+    </message>
+    <message>
+        <location line="+14"/>
+        <source>显示内容</source>
+        <translation>Show content</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>图片、原文和译文</source>
+        <translation>Image, source text and translation</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>原文和译文</source>
+        <translation>Source text and translation</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>仅译文</source>
+        <translation>Translation only</translation>
+    </message>
+    <message>
+        <location line="+13"/>
+        <source>重新翻译 (Ctrl+Enter)</source>
+        <translation>Translate again (Ctrl+Enter)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <location line="+230"/>
+        <source>重新翻译</source>
+        <translation>Translate again</translation>
+    </message>
+    <message>
+        <location line="-225"/>
+        <location line="+1"/>
+        <location line="+486"/>
+        <source>重新识别</source>
+        <translation>Recognize again</translation>
+    </message>
+    <message>
+        <location line="-486"/>
+        <source>重新识别并翻译</source>
+        <translation>Recognize and translate again</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>复制内容</source>
+        <translation>Copy content</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>复制译文</source>
+        <translation>Copy translation</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>复制全部</source>
+        <translation>Copy all</translation>
+    </message>
+    <message>
+        <location line="+14"/>
+        <source>查找 (Ctrl+F)</source>
+        <translation>Find (Ctrl+F)</translation>
+    </message>
+    <message>
+        <location line="+13"/>
+        <source>切换替换</source>
+        <translation>Toggle replace</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <location line="+1"/>
+        <location line="+203"/>
+        <source>查找</source>
+        <translation>Find</translation>
+    </message>
+    <message>
+        <location line="-194"/>
+        <source>上一个 (Shift+Enter)</source>
+        <translation>Previous (Shift+Enter)</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>下一个 (Enter)</source>
+        <translation>Next (Enter)</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>关闭查找 (Esc)</source>
+        <translation>Close find (Esc)</translation>
+    </message>
+    <message>
+        <location line="+8"/>
+        <location line="+5"/>
+        <location line="+177"/>
+        <source>替换</source>
+        <translation>Replace</translation>
+    </message>
+    <message>
+        <location line="-181"/>
+        <source>替换为</source>
+        <translation>Replace with</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>全部替换</source>
+        <translation>Replace all</translation>
+    </message>
+    <message>
+        <location line="+20"/>
+        <source>识别原文，可修改后重新翻译</source>
+        <translation>Recognized source text. Edit it, then translate again</translation>
+    </message>
+    <message>
+        <location filename="../main.cpp" line="-134"/>
+        <location filename="../ocr_dialog.cpp" line="+1"/>
+        <location line="+30"/>
+        <location line="+8"/>
+        <location line="+178"/>
+        <location line="+216"/>
+        <location line="+3"/>
+        <location line="+1"/>
+        <location line="+2"/>
+        <location line="+17"/>
+        <location line="+11"/>
+        <source>正在识别…</source>
+        <translation>Recognizing…</translation>
+    </message>
+    <message>
+        <location filename="../ocr_dialog.cpp" line="-447"/>
+        <source>二维码/条形码内容</source>
+        <translation>QR code/barcode content</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>译文</source>
+        <translation>Translation</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>OCR 识别文本</source>
+        <translation>OCR text</translation>
+    </message>
+    <message>
+        <location line="+32"/>
+        <source>打开链接</source>
+        <translation>Open link</translation>
+    </message>
+    <message>
+        <location line="+31"/>
+        <source>选择二维码/条形码</source>
+        <translation>Select QR code/barcode</translation>
+    </message>
+    <message>
+        <location line="+33"/>
+        <source>复制原文</source>
+        <translation>Copy source text</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>已复制原文</source>
+        <translation>Source text copied</translation>
+    </message>
+    <message>
+        <location line="+22"/>
+        <source>原文已修改，点击重新翻译 (Ctrl+Enter)</source>
+        <translation>Source text changed. Click Translate again (Ctrl+Enter)</translation>
+    </message>
+    <message>
+        <location line="+63"/>
+        <source>已复制内容</source>
+        <translation>Content copied</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>已复制全部文本</source>
+        <translation>All text copied</translation>
+    </message>
+    <message>
+        <location line="+12"/>
+        <location line="+248"/>
+        <source>正在识别二维码…</source>
+        <translation>Recognizing QR code…</translation>
+    </message>
+    <message>
+        <location line="-231"/>
+        <source>未识别到文字，可在此输入原文</source>
+        <translation>No text recognized. You can enter source text here</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <location line="+318"/>
+        <source>在上方输入原文后点击重新翻译</source>
+        <translation>Enter source text above, then click Translate again</translation>
+    </message>
+    <message>
+        <location line="-317"/>
+        <source>未识别到文字</source>
+        <translation>No text recognized</translation>
+    </message>
+    <message>
+        <location line="+11"/>
+        <source>识别未完成，可点击重新识别</source>
+        <translation>Recognition did not finish. You can click Recognize again</translation>
+    </message>
+    <message>
+        <location line="+16"/>
+        <source>未识别到文字，可在此输入文本。</source>
+        <translation>No text recognized. You can enter text here.</translation>
+    </message>
+    <message>
+        <location line="+137"/>
+        <source>重新识别会替换已修改的文本，是否继续？</source>
+        <translation>Recognizing again will replace your edited text. Continue?</translation>
+    </message>
+    <message>
+        <location line="+8"/>
+        <source>上一项识别正在结束，请稍候再点击重新识别</source>
+        <translation>The previous recognition is still finishing. Please wait before clicking Recognize again.</translation>
+    </message>
+    <message>
+        <location line="+79"/>
+        <source>识别失败</source>
+        <translation>Recognition failed</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>未识别到码</source>
+        <translation>No code found</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>未识别到二维码或条形码</source>
+        <translation>No QR code or barcode found</translation>
+    </message>
+    <message>
+        <location line="+78"/>
+        <location line="+1"/>
+        <source>正在翻译…</source>
+        <translation>Translating…</translation>
+    </message>
+    <message>
+        <location line="+19"/>
+        <source>暂不支持这组语言，请更换原文或译文语言</source>
+        <translation>This language pair is not supported. Change the source or target language.</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>翻译服务暂时不可用，请检查网络后重试</source>
+        <translation>Translation service is unavailable. Check your network and try again.</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>%1暂时无法翻译，请稍后重试或切换为其他翻译引擎</source>
+        <translation>%1 cannot translate right now. Try again later or switch to another translation engine.</translation>
+    </message>
+    <message>
+        <location line="+186"/>
+        <source>自动检测</source>
+        <translation>Auto-detect</translation>
+    </message>
+    <message>
+        <location line="+37"/>
+        <source>语言</source>
+        <translation>Language</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>语言检测</source>
+        <translation>Language detection</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>引擎</source>
+        <translation>Engine</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>翻译引擎</source>
+        <translation>Translation engine</translation>
+    </message>
+    <message>
+        <location line="+98"/>
+        <source>无结果</source>
+        <translation>No results</translation>
+    </message>
+    <message>
+        <location line="+240"/>
+        <source>还原</source>
+        <translation>Restore</translation>
+    </message>
+</context>
+<context>
+    <name>OcrEngine</name>
+    <message>
+        <location filename="../ocr_engine.cpp" line="+40"/>
+        <source>缺少 OCR 文件：%1
+请将运行时与模型放回程序目录后重试。</source>
+        <translation>Missing OCR file: %1
+Put the runtime and models back in the program folder and try again.</translation>
+    </message>
+    <message>
+        <location line="+67"/>
+        <source>OCR 加载失败：%1</source>
+        <translation>OCR load failed: %1</translation>
+    </message>
+    <message>
+        <location line="+68"/>
+        <source>识别失败：%1</source>
+        <translation>Recognition failed: %1</translation>
+    </message>
+</context>
+<context>
+    <name>OcrImageView</name>
+    <message>
+        <location filename="../ocr_dialog.cpp" line="-1948"/>
+        <source>截图对照：滚轮缩放，拖动查看</source>
+        <translation>Screenshot reference: scroll to zoom, drag to pan</translation>
+    </message>
+    <message>
+        <location line="+229"/>
+        <source>复制</source>
+        <translation>Copy</translation>
+    </message>
+</context>
+<context>
+    <name>PinWindow</name>
+    <message>
+        <location filename="../pin_window.cpp" line="+61"/>
+        <source>贴图</source>
+        <translation>Pin</translation>
+    </message>
+    <message>
+        <location line="+649"/>
+        <source>选字工具栏</source>
+        <translation>Text selection toolbar</translation>
+    </message>
+    <message>
+        <location line="+17"/>
+        <location line="+463"/>
+        <source>复制</source>
+        <translation>Copy</translation>
+    </message>
+    <message>
+        <location line="-460"/>
+        <location line="+185"/>
+        <location line="+239"/>
+        <location line="+38"/>
+        <source>复制失败，剪贴板可能被占用，请重试</source>
+        <translation>Copy failed. The clipboard may be in use. Please try again.</translation>
+    </message>
+    <message>
+        <location line="-437"/>
+        <location line="+115"/>
+        <source>荧光笔</source>
+        <translation>Highlighter</translation>
+    </message>
+    <message>
+        <location line="-114"/>
+        <source>波浪线</source>
+        <translation>Wavy underline</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>直线</source>
+        <translation>Straight line</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>删除线</source>
+        <translation>Strikethrough</translation>
+    </message>
+    <message>
+        <location line="+17"/>
+        <source>关闭工具栏</source>
+        <translation>Close toolbar</translation>
+    </message>
+    <message>
+        <location line="+19"/>
+        <source>清除标注</source>
+        <translation>Clear annotations</translation>
+    </message>
+    <message>
+        <location line="+73"/>
+        <source>形状：矩形/椭圆</source>
+        <translation>Shape: Rectangle/Ellipse</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>箭头</source>
+        <translation>Arrow</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>画笔</source>
+        <translation>Pen</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>马赛克</source>
+        <translation>Mosaic</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>文字</source>
+        <translation>Text</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>序号</source>
+        <translation>Number</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>橡皮</source>
+        <translation>Eraser</translation>
+    </message>
+    <message>
+        <location line="+18"/>
+        <source>撤销 (Ctrl+Z)</source>
+        <translation>Undo (Ctrl+Z)</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>重做 (Ctrl+Y)</source>
+        <translation>Redo (Ctrl+Y)</translation>
+    </message>
+    <message>
+        <location line="+13"/>
+        <location line="+239"/>
+        <source>复制图片</source>
+        <translation>Copy image</translation>
+    </message>
+    <message>
+        <location line="-232"/>
+        <location line="+4"/>
+        <location line="+234"/>
+        <location line="+4"/>
+        <source>保存图片</source>
+        <translation>Save image</translation>
+    </message>
+    <message>
+        <location line="-235"/>
+        <location line="+238"/>
+        <source>保存失败，请检查路径或磁盘空间后重试</source>
+        <translation>Save failed. Check the path or disk space and try again.</translation>
+    </message>
+    <message>
+        <location line="-234"/>
+        <source>文字识别 (OCR)</source>
+        <translation>Text recognition (OCR)</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>识别并翻译文字</source>
+        <translation>Recognize and translate text</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <location line="+172"/>
+        <source>识别二维码/条形码</source>
+        <translation>Scan QR code / barcode</translation>
+    </message>
+    <message>
+        <location line="-168"/>
+        <source>返回长截图</source>
+        <translation>Back to scrolling capture</translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <source>完成</source>
+        <translation>Done</translation>
+    </message>
+    <message>
+        <location line="+150"/>
+        <source>文本可选择</source>
+        <translation>Selectable text</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>翻译</source>
+        <translation>Translate</translation>
+    </message>
+    <message>
+        <location line="+9"/>
+        <source>图像处理</source>
+        <translation>Image adjustments</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>向左旋转</source>
+        <translation>Rotate left</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>向右旋转</source>
+        <translation>Rotate right</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>水平翻转</source>
+        <translation>Flip horizontally</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>垂直翻转</source>
+        <translation>Flip vertically</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>反色</source>
+        <translation>Invert colors</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>不透明度</source>
+        <translation>Opacity</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>亮度</source>
+        <translation>Brightness</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>重置所有处理</source>
+        <translation>Reset all adjustments</translation>
+    </message>
+    <message>
+        <location line="+22"/>
+        <source>显示工具栏</source>
+        <translation>Show toolbar</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>窗口阴影</source>
+        <translation>Window shadow</translation>
+    </message>
+</context>
+<context>
+    <name>PixelInspector</name>
+    <message>
+        <location filename="../pixel_inspector.cpp" line="+30"/>
+        <source>&lt;div align=&apos;center&apos; style=&apos;color:white&apos;&gt;按 &lt;b&gt;C&lt;/b&gt; 复制颜色值&lt;br&gt;按 &lt;b&gt;Shift&lt;/b&gt; 切换 RGB/HEX&lt;/div&gt;</source>
+        <translation>&lt;div align=&apos;center&apos; style=&apos;color:white&apos;&gt;Press &lt;b&gt;C&lt;/b&gt; to copy the color value&lt;br&gt;Press &lt;b&gt;Shift&lt;/b&gt; to switch RGB/HEX&lt;/div&gt;</translation>
+    </message>
+</context>
+<context>
+    <name>SmartErase</name>
+    <message>
+        <location filename="../smart_erase.cpp" line="+219"/>
+        <source>智能擦除需要尺寸一致的有效图像与掩模</source>
+        <translation>Smart Erase requires a valid image and mask of the same size</translation>
+    </message>
+    <message>
+        <location line="+39"/>
+        <source>擦除区域周围没有可参考的像素</source>
+        <translation>No reference pixels around the erased area</translation>
+    </message>
+</context>
+<context>
+    <name>TranslateGateway</name>
+    <message>
+        <location filename="../translate_gateway.cpp" line="+226"/>
+        <source>简体中文</source>
+        <translation>Simplified Chinese</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>繁体中文</source>
+        <translation>Traditional Chinese</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>英语</source>
+        <translation>English</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>日语</source>
+        <translation>Japanese</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>韩语</source>
+        <translation>Korean</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>法语</source>
+        <translation>French</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>德语</source>
+        <translation>German</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>西班牙语</source>
+        <translation>Spanish</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>葡萄牙语</source>
+        <translation>Portuguese</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>意大利语</source>
+        <translation>Italian</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>俄语</source>
+        <translation>Russian</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>荷兰语</source>
+        <translation>Dutch</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>印尼语</source>
+        <translation>Indonesian</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>马来语</source>
+        <translation>Malay</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>土耳其语</source>
+        <translation>Turkish</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>泰语</source>
+        <translation>Thai</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>越南语</source>
+        <translation>Vietnamese</translation>
+    </message>
+</context>
+</TS>

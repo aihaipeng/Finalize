@@ -37,7 +37,7 @@ QString OcrEngine::assetError(const QString &root) {
     for (const QString &file : {QStringLiteral("onnxruntime.dll"), QStringLiteral("models/PP-OCRv6_det_small.onnx"),
                                QStringLiteral("models/PP-OCRv6_rec_small.onnx")})
         if (!QFileInfo(root + QLatin1Char('/') + file).isFile())
-            return QStringLiteral("缺少 OCR 文件：%1\n请将运行时与模型放回程序目录后重试。").arg(file);
+            return tr("缺少 OCR 文件：%1\n请将运行时与模型放回程序目录后重试。").arg(file);
     return {};
 }
 
@@ -55,7 +55,7 @@ QString OcrEngine::load(const QString &root) {
         if (!entry || !(m_api = entry()->GetApi(ORT_API_VERSION)))
             throw std::runtime_error("Incompatible OCR runtime API");
         m_version = QString::fromLatin1(entry()->GetVersionString());
-        checked(m_api->CreateEnv(ORT_LOGGING_LEVEL_ERROR, "pinshot-ocr", &m_env));
+        checked(m_api->CreateEnv(ORT_LOGGING_LEVEL_ERROR, "nami-ocr", &m_env));
         OrtSessionOptions *raw = nullptr;
         checked(m_api->CreateSessionOptions(&raw));
         std::unique_ptr<OrtSessionOptions, decltype(m_api->ReleaseSessionOptions)> options(raw, m_api->ReleaseSessionOptions);
@@ -104,7 +104,7 @@ QString OcrEngine::load(const QString &root) {
         return {};
     } catch (const std::exception &error) {
         reset();
-        return QStringLiteral("OCR 加载失败：%1").arg(QString::fromUtf8(error.what()));
+        return tr("OCR 加载失败：%1").arg(QString::fromUtf8(error.what()));
     }
 }
 
@@ -172,7 +172,7 @@ OcrResult OcrEngine::recognize(QImage image, const OcrCancel &cancel) {
         if (result.cancelled) result.lines.clear();
     } catch (const std::exception &error) {
         result.lines.clear();
-        result.error = QStringLiteral("识别失败：%1").arg(QString::fromUtf8(error.what()));
+        result.error = tr("识别失败：%1").arg(QString::fromUtf8(error.what()));
     }
     result.elapsed = timer.elapsed();
     return result;

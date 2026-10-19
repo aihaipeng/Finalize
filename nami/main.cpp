@@ -1,9 +1,10 @@
 #include "onnxruntime_c_api.h"
 #include <QClipboard>
-// pinshot — screenshot capture, pinned images, scrolling capture, and offline OCR (Qt 6 / MinGW).
+// nami — screenshot capture, pinned images, scrolling capture, and offline OCR (Qt 6 / MinGW).
 // shortcut: Screen captures run serially; use concurrent streamers if synchronized frames are required.
 
 #include "controller.h"
+#include "i18n.h"
 #include "long_capture.h"
 #include "ocr_engine.h"
 #include "capture_overlay.h"
@@ -25,17 +26,43 @@
 #include <QElapsedTimer>
 #include <QThreadPool>
 #include <QTranslator>
+#include <QSettings>
 #include <QStyleHints>
 #include <qt_windows.h>
 #include <cstdio>
 
+static void migrateLegacySettings()
+{
+    QSettings current(QStringLiteral("Nami"), QStringLiteral("Nami"));
+    const QString marker = QStringLiteral("UI/migratedFromPinshot");
+    if (!current.contains(marker)) {
+        QSettings legacy(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+        for (const QString &key : legacy.allKeys())
+            if (!current.contains(key)) current.setValue(key, legacy.value(key));
+        current.setValue(marker, true);
+    }
+    // The self-crash list stores executable names; replace the old app name.
+    for (const QString &key : {QStringLiteral("Snip/crashes"), QStringLiteral("Snip/exclude_from_detection")}) {
+        QStringList names = current.value(key).toStringList();
+        QStringList updated;
+        for (const QString &name : names)
+            updated.append(name.compare(QStringLiteral("pinshot.exe"), Qt::CaseInsensitive) == 0
+                               ? QStringLiteral("nami.exe") : name);
+        if (updated != names) current.setValue(key, updated);
+    }
+    current.sync();
+}
+
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
+    app.setApplicationName(QStringLiteral("Nami"));
     app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);   // Standard dialogs match the dark application chrome.
-    QTranslator qtTranslator;                   // Chinese labels for standard Qt dialogs.
-    if (qtTranslator.load(QStringLiteral("qtbase_zh_CN"), QCoreApplication::applicationDirPath() + QStringLiteral("/translations")))
-        app.installTranslator(&qtTranslator);
+    migrateLegacySettings();
+    QTranslator applicationTranslator, qtTranslator;
+    const bool i18nTest = app.arguments().contains(QStringLiteral("--test-i18n"));
+    I18n::install(&applicationTranslator, &qtTranslator, I18n::effectiveLocale(app.arguments()),
+                  !I18n::isTestMode(app.arguments()) || i18nTest);
     // One palette for every unstyled control: menus, tooltips, message boxes and the color dialog.
     QPalette dark;
     dark.setColor(QPalette::Window, QColor(QStringLiteral("#18181b")));
@@ -57,6 +84,25 @@ int main(int argc, char **argv)
     for (const auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
         dark.setColor(QPalette::Disabled, role, QColor(QStringLiteral("#71717a")));
     app.setPalette(dark);
+    if (app.arguments().contains(QStringLiteral("--test-i18n"))) {
+        const QString locale = I18n::effectiveLocale(app.arguments());
+        const bool english = locale.startsWith(QStringLiteral("en"));
+        const QString capture = QCoreApplication::translate("Controller", "截图 (F1)");
+        const QString loading = QCoreApplication::translate("OcrDialog", "正在识别…");
+        const QString arrow = QCoreApplication::translate("CaptureOverlay", "箭头 (A)");
+        const bool hasEnglish = I18n::availableLocales().contains(QStringLiteral("en_US"));
+        const bool ok = hasEnglish
+                && (english ? capture == QStringLiteral("Screenshot (F1)")
+                                  && loading == QStringLiteral("Recognizing…")
+                                  && arrow == QStringLiteral("Arrow (A)")
+                            : capture == QStringLiteral("截图 (F1)")
+                                  && loading == QStringLiteral("正在识别…")
+                                  && arrow == QStringLiteral("箭头 (A)"));
+        std::printf("%s locale=%s locales=%s capture=[%s] loading=[%s] arrow=[%s]\n", ok ? "PASS" : "FAIL",
+                    qPrintable(locale), qPrintable(I18n::availableLocales().join(QLatin1Char(','))),
+                    qPrintable(capture), qPrintable(loading), qPrintable(arrow));
+        return ok ? 0 : 1;
+    }
     if (app.arguments().contains(QStringLiteral("--test-ocr-lifetime")))
         return OcrDialog::testLifetime();
     if (app.arguments().contains(QStringLiteral("--test-translate")))
@@ -169,15 +215,14 @@ int main(int argc, char **argv)
         return 0;
     }
     app.setQuitOnLastWindowClosed(false);            // Keep the tray active after all pins are closed.
-    app.setApplicationName(QStringLiteral("Finalize"));
 
     Controller ctrl;
     HotkeyFilter hf;
     hf.onHotkey = [&ctrl] { ctrl.startCapture(); };
     app.installNativeEventFilter(&hf);
     if (!RegisterHotKey(nullptr, 1, MOD_NOREPEAT, VK_F1))
-        QMessageBox::warning(nullptr, QStringLiteral("Finalize"),
-                             QStringLiteral("注册 F1 热键失败（可能被其他截图工具占用）"));
+        QMessageBox::warning(nullptr, QStringLiteral("Nami"),
+                             QCoreApplication::translate("Main", "注册 F1 热键失败（可能被其他截图工具占用）"));
 
     const int exitCode = app.exec();
     QThreadPool::globalInstance()->waitForDone();

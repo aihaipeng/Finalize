@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QCoreApplication>
 #include <QImage>
 #include <QPolygonF>
 #include <QRectF>
@@ -28,6 +29,7 @@ using BarcodeCancel = std::shared_ptr<std::atomic_bool>;
 
 class BarcodeEngine
 {
+    Q_DECLARE_TR_FUNCTIONS(BarcodeEngine)
 public:
     // Decodes QR, matrix and 1D symbols from a QImage without network access.
     static BarcodeResult recognize(QImage image, const BarcodeCancel &cancel = {});

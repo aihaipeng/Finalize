@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QCoreApplication>
 #include <QImage>
 #include <QVector>
 #include <QPointF>
@@ -43,6 +44,7 @@ using OcrCancel = std::shared_ptr<std::atomic_bool>;
 
 class OcrEngine
 {
+    Q_DECLARE_TR_FUNCTIONS(OcrEngine)
 public:
     static OcrEngine &instance();
     ~OcrEngine();

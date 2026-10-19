@@ -23,7 +23,7 @@ BarcodeResult BarcodeEngine::recognize(QImage image, const BarcodeCancel &cancel
             return result;
         }
         if (image.isNull() || image.width() <= 0 || image.height() <= 0) {
-            result.error = QStringLiteral("识别失败：截图区域为空");
+            result.error = tr("识别失败：截图区域为空");
             return result;
         }
         // zxing reads luminance rows directly; QImage's row padding is passed
@@ -60,7 +60,7 @@ BarcodeResult BarcodeEngine::recognize(QImage image, const BarcodeCancel &cancel
         if (result.cancelled) result.items.clear();
     } catch (const std::exception &error) {
         result.items.clear();
-        result.error = QStringLiteral("识别失败：%1").arg(QString::fromUtf8(error.what()));
+        result.error = tr("识别失败：%1").arg(QString::fromUtf8(error.what()));
     }
     result.elapsed = timer.elapsed();
     return result;

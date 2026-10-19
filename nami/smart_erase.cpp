@@ -1,4 +1,5 @@
 #include "smart_erase.h"
+#include <QCoreApplication>
 #include <QPoint>
 #include <QRect>
 #include <QtMath>
@@ -215,7 +216,7 @@ QImage SmartErase::erase(const QImage &image, const QImage &mask, QString *error
 {
     if (error) error->clear();
     if (image.isNull() || mask.isNull() || image.size() != mask.size()) {
-        if (error) *error = QStringLiteral("智能擦除需要尺寸一致的有效图像与掩模");
+        if (error) *error = QCoreApplication::translate("SmartErase", "智能擦除需要尺寸一致的有效图像与掩模");
         return {};
     }
     const QImage gray = mask.convertToFormat(QImage::Format_Grayscale8);
@@ -254,7 +255,7 @@ QImage SmartErase::erase(const QImage &image, const QImage &mask, QString *error
         }
     }
     if (s.corpus.empty()) {
-        if (error) *error = QStringLiteral("擦除区域周围没有可参考的像素");
+        if (error) *error = QCoreApplication::translate("SmartErase", "擦除区域周围没有可参考的像素");
         return {};
     }
     keepBackground(s, targets);

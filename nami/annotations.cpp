@@ -1208,7 +1208,7 @@ void CaptureOverlay::syncSizeInput()
     if (m_mosaicPreview) {
         if (mosaicSmart()) {
             m_mosaicPreview->setIcon(barIcon(Icon::Eraser));
-            m_mosaicPreview->setToolTip(QStringLiteral("智能擦除：点击切换为像素化"));
+            m_mosaicPreview->setToolTip(tr("智能擦除：点击切换为像素化"));
         } else {
             QImage preview(24, 24, QImage::Format_ARGB32);
             preview.fill(Qt::transparent);
@@ -1222,8 +1222,8 @@ void CaptureOverlay::syncSizeInput()
                                    : mosaicTiles(preview, mosaicStrength(), 1).scaled(24, 24);
             m_mosaicPreview->setIcon(QIcon(QPixmap::fromImage(preview)));
             m_mosaicPreview->setToolTip(mosaicBlur()
-                ? QStringLiteral("模糊：点击切换为智能擦除")
-                : QStringLiteral("像素化：点击切换为模糊，滚轮调强度"));
+                ? tr("模糊：点击切换为智能擦除")
+                : tr("像素化：点击切换为模糊，滚轮调强度"));
         }
     }
     const bool smartMosaic = mosaicSmart();
@@ -1235,7 +1235,7 @@ void CaptureOverlay::syncSizeInput()
         m_mosaicSlider->setVisible(!smartMosaic);
         const QSignalBlocker lock(m_mosaicSlider);
         m_mosaicSlider->setValue(mosaicStrength());
-        m_mosaicSlider->setToolTip(QStringLiteral("马赛克强度 %1：拖动调节，数值越大像素块越大").arg(mosaicStrength()));
+        m_mosaicSlider->setToolTip(tr("马赛克强度 %1：拖动调节，数值越大像素块越大").arg(mosaicStrength()));
     }
     if (m_sizeButton) {                          // Line-width glyph with the value beside it.
         // Glyph and value pill share one fixed 16+4+28 canvas, so the button never resizes as the value changes.
@@ -1613,7 +1613,7 @@ void CaptureOverlay::showColorPalette()
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setOption(QColorDialog::ShowAlphaChannel);
     dialog->setOption(QColorDialog::DontUseNativeDialog);
-    dialog->setWindowTitle(QStringLiteral("选择颜色"));
+    dialog->setWindowTitle(tr("选择颜色"));
     connect(dialog, &QColorDialog::currentColorChanged, this, [this](const QColor &c) { pickToolColor(c, false); });
     connect(dialog, &QDialog::finished, this, [this, dialog, oldColor, before](int result) {
         m_colorDialog.clear();                   // Deletion is deferred; allow reopening right away.
@@ -1799,7 +1799,7 @@ void CaptureOverlay::updateToolOptions()
                       maximum = tool == ATool::Number ? 96 : 50;
             m_sizeButton = new QToolButton;
             m_sizeButton->setObjectName(QStringLiteral("sizeButton"));
-            m_sizeButton->setAccessibleName(tool == ATool::Number ? QStringLiteral("大小") : QStringLiteral("粗细"));
+            m_sizeButton->setAccessibleName(tool == ATool::Number ? tr("大小") : tr("粗细"));
             m_sizeButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
             m_sizeButton->setIconSize(QSize(48, 24));
             m_sizeButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);   // Width hugs glyph + value.
@@ -1830,13 +1830,13 @@ void CaptureOverlay::updateToolOptions()
         } else {
             for (int size = minimum; size <= maximum; ++size) m_sizeInput->addItem(QString::number(size));
         }
-        m_sizeInput->setToolTip(texty ? QStringLiteral("标准字号 (pt)：小四=12，五号=10.5")
-                                    : QStringLiteral("输入、下拉选择或滚轮调节粗细"));
+        m_sizeInput->setToolTip(texty ? tr("标准字号 (pt)：小四=12，五号=10.5")
+                                    : tr("输入、下拉选择或滚轮调节粗细"));
         m_sizeInput->setFocusPolicy(Qt::ClickFocus);
         m_sizeInput->setFixedSize(texty ? 62 : 46, 24);
         m_sizeInput->setStyleSheet(QStringLiteral("QComboBox{padding:1px 2px 1px 4px;border-radius:6px;}QComboBox::drop-down{width:14px;}"));   // Room for 1637.5.
         m_sizeInput->lineEdit()->setAlignment(Qt::AlignCenter);
-        m_sizeInput->setAccessibleName(texty ? QStringLiteral("字号") : QStringLiteral("粗细"));
+        m_sizeInput->setAccessibleName(texty ? tr("字号") : tr("粗细"));
         m_sizeInput->installEventFilter(this);
         m_sizeInput->lineEdit()->installEventFilter(this);
         syncSizeInput();
@@ -1865,11 +1865,11 @@ void CaptureOverlay::updateToolOptions()
             updateToolOptions();
             update();
         };
-        addOption(lay, Icon::Rect, QStringLiteral("矩形"), !m_shapeEllipse,
+        addOption(lay, Icon::Rect, tr("矩形"), !m_shapeEllipse,
                   [pickShape] { pickShape(ATool::Rect); });
-        addOption(lay, Icon::Ellipse, QStringLiteral("椭圆"), m_shapeEllipse,
+        addOption(lay, Icon::Ellipse, tr("椭圆"), m_shapeEllipse,
                   [pickShape] { pickShape(ATool::Ellipse); });
-        addOption(lay, Icon::Fill, QStringLiteral("填充 (F)"),
+        addOption(lay, Icon::Fill, tr("填充 (F)"),
                   !m_live && m_selAnn >= 0 && m_selAnn < m_anns.size() ? m_anns[m_selAnn].fill : m_afill,
                   [this] { toggleFill(); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("fillButton"));
@@ -1879,7 +1879,7 @@ void CaptureOverlay::updateToolOptions()
         break;
     }
     case ATool::Marker:
-        addOption(lay, Icon::MarkerRect, QStringLiteral("矩形高亮"), m_markerFill, [this] { toggleFill(); });
+        addOption(lay, Icon::MarkerRect, tr("矩形高亮"), m_markerFill, [this] { toggleFill(); });
         if (auto *b = qobject_cast<QToolButton *>(lay->itemAt(lay->count() - 1)->widget())) {
             b->setObjectName(QStringLiteral("fillButton"));
             b->setIcon(barIcon(Icon::MarkerRect));
@@ -1933,9 +1933,13 @@ void CaptureOverlay::updateToolOptions()
         addCombo(lay, m_arrowStyle, 5,                 // Heads only.
                  [&](int k) { return glyph(k, 0); },
                  [](int k) {
-                     const char *const names[] = {"单向箭头", "单向镂空箭头", "双向箭头",
-                                                  "双向镂空箭头", "无箭头"};
-                     return QString::fromUtf8(names[k]);
+                     const char *const names[] = {
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "单向箭头"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "单向镂空箭头"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "双向箭头"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "双向镂空箭头"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "无箭头")};
+                     return QCoreApplication::translate("CaptureOverlay", names[k]);
                  },
                  [this](int k) { pickArrowStyle(k); });
         const bool editing = !m_live && m_selAnn >= 0 && m_selAnn < m_anns.size()
@@ -1943,11 +1947,13 @@ void CaptureOverlay::updateToolOptions()
         addCombo(lay, m_arrowLineStyle, 2,             // Path only; dashing is its own toggle.
                  [&](int k) { return glyph(4, k); },
                  [](int k) {
-                     const char *const names[] = {"直线", "曲线"};
-                     return QString::fromUtf8(names[k]);
+                     const char *const names[] = {
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "直线"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "曲线")};
+                     return QCoreApplication::translate("CaptureOverlay", names[k]);
                  },
                  [this](int k) { pickArrowLineStyle(k); });
-        addOption(lay, Icon::Dashed, QStringLiteral("虚线"), editing ? m_anns[m_selAnn].dashed : m_arrowDashed,
+        addOption(lay, Icon::Dashed, tr("虚线"), editing ? m_anns[m_selAnn].dashed : m_arrowDashed,
                   [this] { toggleArrowDashed(); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("dashedButton"));
         addSize();
@@ -1956,8 +1962,8 @@ void CaptureOverlay::updateToolOptions()
         break;
     }
     case ATool::Text: {
-        auto *bold = barButton(Icon::Bold, QStringLiteral("粗体"));
-        auto *italic = barButton(Icon::Italic, QStringLiteral("斜体"));
+        auto *bold = barButton(Icon::Bold, tr("粗体"));
+        auto *italic = barButton(Icon::Italic, tr("斜体"));
         for (auto *b : {bold, italic}) {
             b->setFocusPolicy(Qt::NoFocus);
             b->setCheckable(true);
@@ -1965,8 +1971,8 @@ void CaptureOverlay::updateToolOptions()
         }
         bold->setChecked(editorActive() ? m_editBold : m_abold);
         italic->setChecked(editorActive() ? m_editItalic : m_aitalic);
-        bold->setToolTip(QStringLiteral("粗体"));
-        italic->setToolTip(QStringLiteral("斜体"));
+        bold->setToolTip(tr("粗体"));
+        italic->setToolTip(tr("斜体"));
         connect(bold, &QToolButton::toggled, this, &CaptureOverlay::setTextBold);
         connect(italic, &QToolButton::toggled, this, &CaptureOverlay::setTextItalic);
         lay->addWidget(bold);
@@ -1978,12 +1984,12 @@ void CaptureOverlay::updateToolOptions()
         font->setFocusPolicy(Qt::NoFocus);
         font->setFixedSize(140, 24);
         font->view()->setMinimumWidth(200);
-        font->setAccessibleName(QStringLiteral("字体"));
+        font->setAccessibleName(tr("字体"));
         font->setCurrentText(editorActive() ? m_editFamily
             : m_selAnn >= 0 && m_selAnn < m_anns.size() ? m_anns[m_selAnn].family : m_afamily);
-        font->setToolTip(QStringLiteral("字体：%1").arg(font->currentText()));
+        font->setToolTip(tr("字体：%1").arg(font->currentText()));
         connect(font, &QComboBox::currentTextChanged, this, [this, font](const QString &family) {
-            font->setToolTip(QStringLiteral("字体：%1").arg(family));
+            font->setToolTip(tr("字体：%1").arg(family));
             setTextFamily(QFont(family));
         });
         lay->addWidget(font);
@@ -1994,22 +2000,22 @@ void CaptureOverlay::updateToolOptions()
     }
     case ATool::Mosaic: {
         const bool brush = mosaicBrush();
-        addOption(lay, Icon::Rect, QStringLiteral("矩形马赛克"), !brush,
+        addOption(lay, Icon::Rect, tr("矩形马赛克"), !brush,
                   [this] { selectMosaicMode(false); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("mosaicRectangle"));
-        addOption(lay, Icon::Pen, QStringLiteral("马赛克笔：滚轮调节笔宽"), brush,
+        addOption(lay, Icon::Pen, tr("马赛克笔：滚轮调节笔宽"), brush,
                   [this] { selectMosaicMode(true); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("mosaicBrush"));
-        m_mosaicPreview = barButton(Icon::Mosaic, QStringLiteral("像素化 / 模糊"));
+        m_mosaicPreview = barButton(Icon::Mosaic, tr("像素化 / 模糊"));
         m_mosaicPreview->setObjectName(QStringLiteral("mosaicEffectPreview"));
-        m_mosaicPreview->setAccessibleName(QStringLiteral("切换像素化 / 模糊"));
+        m_mosaicPreview->setAccessibleName(tr("切换像素化 / 模糊"));
         m_mosaicPreview->setFocusPolicy(Qt::NoFocus);
         m_mosaicPreview->installEventFilter(this);
         connect(m_mosaicPreview, &QToolButton::clicked, this, &CaptureOverlay::switchMosaicEffect);
         lay->addWidget(m_mosaicPreview);
         m_mosaicSlider = new QSlider(Qt::Horizontal);
         m_mosaicSlider->setObjectName(QStringLiteral("mosaicStrength"));
-        m_mosaicSlider->setAccessibleName(QStringLiteral("马赛克强度"));
+        m_mosaicSlider->setAccessibleName(tr("马赛克强度"));
         m_mosaicSlider->setRange(3, 24);
         m_mosaicSlider->setPageStep(1);
         m_mosaicSlider->setFixedSize(128, 22);
@@ -2022,8 +2028,8 @@ void CaptureOverlay::updateToolOptions()
         lay->addWidget(m_mosaicSlider);
         m_mosaicStrengthLabel = new QLabel;
         m_mosaicStrengthLabel->setObjectName(QStringLiteral("mosaicStrengthValue"));
-        m_mosaicStrengthLabel->setAccessibleName(QStringLiteral("马赛克强度"));
-        m_mosaicStrengthLabel->setToolTip(QStringLiteral("马赛克强度：拖动左侧滑条或滚轮调节"));
+        m_mosaicStrengthLabel->setAccessibleName(tr("马赛克强度"));
+        m_mosaicStrengthLabel->setToolTip(tr("马赛克强度：拖动左侧滑条或滚轮调节"));
         m_mosaicStrengthLabel->setAlignment(Qt::AlignCenter);
         m_mosaicStrengthLabel->setFixedWidth(24);
         m_mosaicStrengthLabel->installEventFilter(this);
@@ -2034,9 +2040,9 @@ void CaptureOverlay::updateToolOptions()
     }
     case ATool::Eraser: {                        // Brush and rectangle modes; only the brush has a width.
         const bool rect = eraserRect();
-        addOption(lay, Icon::Pen, QStringLiteral("画笔橡皮擦"), !rect, [this] { selectEraserMode(false); });
+        addOption(lay, Icon::Pen, tr("画笔橡皮擦"), !rect, [this] { selectEraserMode(false); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("eraserBrush"));
-        addOption(lay, Icon::Rect, QStringLiteral("矩形橡皮擦"), rect, [this] { selectEraserMode(true); });
+        addOption(lay, Icon::Rect, tr("矩形橡皮擦"), rect, [this] { selectEraserMode(true); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("eraserRectangle"));
         addSize();
         lay->removeWidget(m_sizeButton);         // Brush, rectangle, then the width button.
@@ -2083,9 +2089,9 @@ void CaptureOverlay::updateToolOptions()
             lay->addWidget(combo);
         };
         addSize();
-        addList(QStringLiteral("序号样式"), {QStringLiteral("实心"), QStringLiteral("空心"), QStringLiteral("仅序号")},
+        addList(tr("序号样式"), {tr("实心"), tr("空心"), tr("仅序号")},
                 editing ? m_anns[m_selAnn].numberStyle : m_numberStyle, false);
-        addList(QStringLiteral("序号格式"), {QStringLiteral("1 2 3"), QStringLiteral("I II III"), QStringLiteral("A B C"),
+        addList(tr("序号格式"), {QStringLiteral("1 2 3"), QStringLiteral("I II III"), QStringLiteral("A B C"),
                                           QStringLiteral("a b c"), QStringLiteral("一 二 三")},
                 editing ? m_anns[m_selAnn].numberFormat : m_numberFormat, true);
         addSeparator(lay);

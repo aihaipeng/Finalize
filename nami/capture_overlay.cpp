@@ -92,14 +92,14 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         // Position the native window before freezing its local coordinate system.
         if (!SetWindowPos(reinterpret_cast<HWND>(winId()), nullptr, nativeDesktop.x(), nativeDesktop.y(),
                           nativeDesktop.width(), nativeDesktop.height(), SWP_NOZORDER | SWP_NOACTIVATE)) {
-            QMessageBox::warning(nullptr, QStringLiteral("Finalize"), QStringLiteral("无法定位截图覆盖层"));
+            QMessageBox::warning(nullptr, QStringLiteral("Nami"), tr("无法定位截图覆盖层"));
             deleteLater();
             return;
         }
         QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     }
 
-    QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
     m_roundEnabled = settings.value(QStringLiteral("Capture/roundEnabled"), false).toBool();
     m_roundRadius = qBound(0, settings.value(QStringLiteral("Capture/roundRadius"), 0).toInt(), 60);
     m_sizeUnit = settings.value(QStringLiteral("Capture/sizeUnit"), QStringLiteral("px")).toString()
@@ -114,8 +114,8 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         "background:#18181b;color:#fcfcfc;padding:2px 6px;border:1px solid #0485f7;"
         "border-radius:4px;font-size:12px;");
     m_sizeTip->setCursor(Qt::PointingHandCursor);
-    m_sizeTip->setAccessibleName(QStringLiteral("自定义截图"));
-    m_sizeTip->setAccessibleDescription(QStringLiteral("点击调整区域大小、尺寸单位和长宽比"));
+    m_sizeTip->setAccessibleName(tr("自定义截图"));
+    m_sizeTip->setAccessibleDescription(tr("点击调整区域大小、尺寸单位和长宽比"));
     m_sizeTip->installEventFilter(this);
     m_sizeTip->hide();
 
@@ -137,24 +137,24 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     // confirm button that applies the result back to the pin.
     QList<QWidget *> outputButtons;
     if (!pinEdit) {
-        auto *save = barButton(Icon::Save, QStringLiteral("保存到文件 (Ctrl+S)"));
-        auto *copy = barButton(Icon::Copy, QStringLiteral("复制到剪贴板 (Ctrl+C)"));
-        auto *pin = barButton(Icon::Pin, QStringLiteral("贴在屏幕上 (Enter / 双击)"));
-        auto *scroll = barButton(Icon::LongShot, QStringLiteral("长截图：手动滚动拼接长图"));
-        auto *ocr = barButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)"));
+        auto *save = barButton(Icon::Save, tr("保存到文件 (Ctrl+S)"));
+        auto *copy = barButton(Icon::Copy, tr("复制到剪贴板 (Ctrl+C)"));
+        auto *pin = barButton(Icon::Pin, tr("贴在屏幕上 (Enter / 双击)"));
+        auto *scroll = barButton(Icon::LongShot, tr("长截图：手动滚动拼接长图"));
+        auto *ocr = barButton(Icon::Ocr, tr("文字识别 (OCR)"));
         ocr->setObjectName(QStringLiteral("ocrButton"));
-        ocr->setAccessibleName(QStringLiteral("文字识别 OCR"));
+        ocr->setAccessibleName(tr("文字识别 OCR"));
         const QString ocrMissing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
         if (!ocrMissing.isEmpty()) { ocr->setEnabled(false); ocr->setToolTip(ocrMissing); }
-        auto *translate = barButton(Icon::Translate, QStringLiteral("识别并翻译文字"));
-        translate->setAccessibleName(QStringLiteral("翻译"));
+        auto *translate = barButton(Icon::Translate, tr("识别并翻译文字"));
+        translate->setAccessibleName(tr("翻译"));
         if (!ocrMissing.isEmpty()) { translate->setEnabled(false); translate->setToolTip(ocrMissing); }
-        auto *barcode = barButton(Icon::Barcode, QStringLiteral("识别二维码/条形码"));
+        auto *barcode = barButton(Icon::Barcode, tr("识别二维码/条形码"));
         barcode->setObjectName(QStringLiteral("barcodeButton"));
-        barcode->setAccessibleName(QStringLiteral("识别二维码/条形码"));
-        m_roundButton = barButton(Icon::RoundRect, QStringLiteral("圆角截图"));
+        barcode->setAccessibleName(tr("识别二维码/条形码"));
+        m_roundButton = barButton(Icon::RoundRect, tr("圆角截图"));
         m_roundButton->setObjectName(QStringLiteral("roundButton"));
-        m_roundButton->setAccessibleName(QStringLiteral("圆角截图"));
+        m_roundButton->setAccessibleName(tr("圆角截图"));
         m_roundButton->setCheckable(true);
         m_roundButton->setChecked(m_roundEnabled);
         connect(m_roundButton, &QToolButton::clicked, this, [this](bool checked) {
@@ -164,9 +164,9 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
             else if (m_radiusPopup) m_radiusPopup->close();
             update();
         });
-        m_refreshButton = barButton(Icon::Refresh, QStringLiteral("刷新截图（按住持续刷新）"));
+        m_refreshButton = barButton(Icon::Refresh, tr("刷新截图（按住持续刷新）"));
         m_refreshButton->setObjectName(QStringLiteral("refreshButton"));
-        m_refreshButton->setAccessibleName(QStringLiteral("刷新截图"));
+        m_refreshButton->setAccessibleName(tr("刷新截图"));
         m_refreshButton->setCheckable(true);
         m_refreshAnimation = new QVariantAnimation(m_refreshButton);
         m_refreshAnimation->setDuration(1000);
@@ -200,17 +200,17 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     // Instant annotation tools: draw inside the committed selection; every capture
     // action composes them in. One shape button covers rect / ellipse; per-tool
     // options (sub-shape, arrow style, colors, text weight) live on the strip below.
-    auto *undo = barButton(Icon::Undo, QStringLiteral("撤销 (Ctrl+Z)"));
+    auto *undo = barButton(Icon::Undo, tr("撤销 (Ctrl+Z)"));
     connect(undo, &QToolButton::clicked, this, &CaptureOverlay::undoAnnotation);
     m_undoButton = undo;
-    auto *redo = barButton(Icon::Redo, QStringLiteral("重做 (Ctrl+Y)"));
+    auto *redo = barButton(Icon::Redo, tr("重做 (Ctrl+Y)"));
     connect(redo, &QToolButton::clicked, this, &CaptureOverlay::redoAnnotation);
     m_redoButton = redo;
     syncUndoButtons();                             // Empty stacks: both start greyed out.
     m_shapeButton = new QToolButton;               // One button for both shapes.
     m_shapeButton->setIcon(barIcon(Icon::Rect));
     m_shapeButton->setIconSize(QSize(Bar::icon, Bar::icon));
-    m_shapeButton->setToolTip(QStringLiteral("形状：矩形/椭圆 (R=矩形 / O=椭圆)"));
+    m_shapeButton->setToolTip(tr("形状：矩形/椭圆 (R=矩形 / O=椭圆)"));
     m_shapeButton->setCheckable(true);
     m_shapeButton->setCursor(Qt::PointingHandCursor);
     connect(m_shapeButton, &QToolButton::clicked, this, [this] {
@@ -222,16 +222,16 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     m_toolBtn.fill(nullptr, int(ATool::Eraser) + 1);
     m_toolBtn[int(ATool::Rect)] = m_toolBtn[int(ATool::Ellipse)] = m_shapeButton;
     struct { ATool tool; Icon icon; const char *tip; } const tools[] = {
-        {ATool::Arrow, Icon::Arrow, "箭头 (A)"},
-        {ATool::Pen, Icon::Pen, "画笔 (P)"},
-        {ATool::Marker, Icon::Marker, "荧光笔 (H)"},
-        {ATool::Text, Icon::Text, "文字 (T)"},
-        {ATool::Number, Icon::Number, "序号 (N)"},
-        {ATool::Mosaic, Icon::Mosaic, "马赛克 (M)"},
-        {ATool::Eraser, Icon::Eraser, "橡皮 (E)"},
+        {ATool::Arrow, Icon::Arrow, QT_TRANSLATE_NOOP("CaptureOverlay", "箭头 (A)")},
+        {ATool::Pen, Icon::Pen, QT_TRANSLATE_NOOP("CaptureOverlay", "画笔 (P)")},
+        {ATool::Marker, Icon::Marker, QT_TRANSLATE_NOOP("CaptureOverlay", "荧光笔 (H)")},
+        {ATool::Text, Icon::Text, QT_TRANSLATE_NOOP("CaptureOverlay", "文字 (T)")},
+        {ATool::Number, Icon::Number, QT_TRANSLATE_NOOP("CaptureOverlay", "序号 (N)")},
+        {ATool::Mosaic, Icon::Mosaic, QT_TRANSLATE_NOOP("CaptureOverlay", "马赛克 (M)")},
+        {ATool::Eraser, Icon::Eraser, QT_TRANSLATE_NOOP("CaptureOverlay", "橡皮 (E)")},
     };
     for (const auto &t : tools) {
-        auto *button = barButton(t.icon, QString::fromUtf8(t.tip));
+        auto *button = barButton(t.icon, tr(t.tip));
         button->setCheckable(true);
         const ATool tool = t.tool;
         connect(button, &QToolButton::clicked, this, [this, tool] {
@@ -242,7 +242,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     }
     // Drawing tools | undo, redo | capture actions ending with pin, save, copy.
     if (pinEdit) {
-        auto *done = barButton(Icon::Check, QStringLiteral("完成编辑 (Enter)"));
+        auto *done = barButton(Icon::Check, tr("完成编辑 (Enter)"));
         connect(done, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
         m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
                          m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
@@ -932,7 +932,7 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
         } else if (!(e->modifiers() & (Qt::AltModifier | Qt::MetaModifier))
                    && m_inspector->isVisible() && !m_inspector->colorText().isEmpty()) {
             if (!copyTextToClipboard(m_inspector->colorText()))
-                showOutputError(QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+                showOutputError(tr("复制失败，剪贴板可能被占用，请重试"));
             else m_sizeTip->hide();
         }
         break;
@@ -1102,7 +1102,7 @@ void CaptureOverlay::recoverDetector()
             if (!m_detectionOptions.disabledUiPrograms.contains(win.program, Qt::CaseInsensitive)) {
                 m_detectionOptions.disabledUiPrograms.append(win.program);
                 if (windowHung(win.hwnd)) {
-                    QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+                    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
                     QStringList disabled = settings.value(QStringLiteral("Snip/crashes")).toStringList();
                     if (!disabled.contains(win.program, Qt::CaseInsensitive)) disabled.append(win.program);
                     settings.setValue(QStringLiteral("Snip/crashes"), disabled);
@@ -1379,7 +1379,7 @@ void CaptureOverlay::updateTip()
     const QSize shown = sizeInUnit(r, m_sizeUnit);
     QString text = QStringLiteral("%1 × %2 %3").arg(shown.width()).arg(shown.height())
                        .arg(m_sizeUnit == SizeUnit::Dp ? QStringLiteral("dp") : QStringLiteral("px"));
-    if (m_lockAspect && r == m_sel) text += QStringLiteral(" · 锁定比例");
+    if (m_lockAspect && r == m_sel) text += tr(" · 锁定比例");
     m_sizeTip->setText(text);
     m_sizeTip->adjustSize();
     m_sizeTip->move(r.topLeft() - QPoint(0, m_sizeTip->height() + 4));
@@ -1506,7 +1506,7 @@ void CaptureOverlay::applyRoundSettings(bool persist)
     }
     if (m_radiusValue) m_radiusValue->setText(QString::number(m_roundRadius));
     if (persist) {
-        QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+        QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
         settings.setValue(QStringLiteral("Capture/roundEnabled"), m_roundEnabled);
         settings.setValue(QStringLiteral("Capture/roundRadius"), m_roundRadius);
     }
@@ -1525,10 +1525,10 @@ void CaptureOverlay::showRadiusPopup()
     auto *row = new QHBoxLayout(popup);
     row->setContentsMargins(8, 6, 8, 6);
     row->setSpacing(6);
-    auto *label = new QLabel(QStringLiteral("圆角半径"), popup);
+    auto *label = new QLabel(tr("圆角半径"), popup);
     m_radiusSlider = new QSlider(Qt::Horizontal, popup);
     m_radiusSlider->setObjectName(QStringLiteral("roundRadiusSlider"));
-    m_radiusSlider->setAccessibleName(QStringLiteral("圆角半径"));
+    m_radiusSlider->setAccessibleName(tr("圆角半径"));
     m_radiusSlider->setRange(0, 60);
     m_radiusSlider->setPageStep(1);
     m_radiusSlider->setFixedSize(128, 22);
@@ -1605,7 +1605,7 @@ void CaptureOverlay::setSizeUnit(SizeUnit unit, bool persist)
 {
     m_sizeUnit = unit;
     if (persist) {
-        QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+        QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
         settings.setValue(QStringLiteral("Capture/sizeUnit"),
                           unit == SizeUnit::Dp ? QStringLiteral("dp") : QStringLiteral("px"));
     }
@@ -1669,7 +1669,7 @@ void CaptureOverlay::showCustomSizePopup()
                                         | Qt::WindowStaysOnTopHint);
     m_customSizePopup = popup;
     popup->setObjectName(QStringLiteral("customSizePanel"));
-    popup->setWindowTitle(QStringLiteral("自定义截图"));
+    popup->setWindowTitle(tr("自定义截图"));
     popup->setModal(false);
     popup->setAttribute(Qt::WA_DeleteOnClose, false);
     popup->setStyleSheet(QStringLiteral(
@@ -1720,23 +1720,23 @@ void CaptureOverlay::showCustomSizePopup()
         return spin;
     };
     m_customX = makeSpin(QStringLiteral("customX"), -999999, 999999, 84);
-    m_customX->setAccessibleName(QStringLiteral("区域横向位置"));
+    m_customX->setAccessibleName(tr("区域横向位置"));
     m_customX->setPrefix(QStringLiteral("X  "));
     m_customY = makeSpin(QStringLiteral("customY"), -999999, 999999, 84);
-    m_customY->setAccessibleName(QStringLiteral("区域纵向位置"));
+    m_customY->setAccessibleName(tr("区域纵向位置"));
     m_customY->setPrefix(QStringLiteral("Y  "));
     m_customWidth = makeSpin(QStringLiteral("customWidth"), 4, 99999, 70);
-    m_customWidth->setAccessibleName(QStringLiteral("区域宽度"));
+    m_customWidth->setAccessibleName(tr("区域宽度"));
     m_customHeight = makeSpin(QStringLiteral("customHeight"), 4, 99999, 70);
-    m_customHeight->setAccessibleName(QStringLiteral("区域高度"));
+    m_customHeight->setAccessibleName(tr("区域高度"));
     m_customUnit = new QComboBox(popup);
     m_customUnit->setObjectName(QStringLiteral("customUnit"));
-    m_customUnit->setAccessibleName(QStringLiteral("尺寸单位"));
+    m_customUnit->setAccessibleName(tr("尺寸单位"));
     m_customUnit->addItems({QStringLiteral("px"), QStringLiteral("dp")});
     m_customUnit->setFixedWidth(58);
-    m_customLock = new QCheckBox(QStringLiteral("锁定长宽比"), popup);
+    m_customLock = new QCheckBox(tr("锁定长宽比"), popup);
     m_customLock->setObjectName(QStringLiteral("customLockAspect"));
-    m_customLock->setAccessibleName(QStringLiteral("锁定长宽比"));
+    m_customLock->setAccessibleName(tr("锁定长宽比"));
 
     auto *card = new QFrame(popup);
     card->setObjectName(QStringLiteral("customCard"));
@@ -1746,9 +1746,8 @@ void CaptureOverlay::showCustomSizePopup()
 
     auto *positionRow = new QHBoxLayout;
     positionRow->setSpacing(8);
-    auto *positionLabel = new QLabel(QStringLiteral("位置"), card);
+    auto *positionLabel = new QLabel(tr("位置"), card);
     positionLabel->setObjectName(QStringLiteral("customSection"));
-    positionLabel->setFixedWidth(30);
     positionRow->addWidget(positionLabel);
     positionRow->addWidget(m_customX);
     positionRow->addWidget(m_customY);
@@ -1757,9 +1756,8 @@ void CaptureOverlay::showCustomSizePopup()
 
     auto *sizeRow = new QHBoxLayout;
     sizeRow->setSpacing(8);
-    auto *sizeLabel = new QLabel(QStringLiteral("大小"), card);
+    auto *sizeLabel = new QLabel(tr("大小"), card);
     sizeLabel->setObjectName(QStringLiteral("customSection"));
-    sizeLabel->setFixedWidth(30);
     auto *times = new QLabel(QStringLiteral("×"), card);
     times->setAlignment(Qt::AlignCenter);
     sizeRow->addWidget(sizeLabel);
@@ -1772,9 +1770,10 @@ void CaptureOverlay::showCustomSizePopup()
 
     auto *hintRow = new QHBoxLayout;
     hintRow->setSpacing(8);
-    auto *hint = new QLabel(QStringLiteral("dp = px ÷ 屏幕缩放比"), card);
+    auto *hint = new QLabel(tr("dp = px ÷ 屏幕缩放比"), card);
     hint->setObjectName(QStringLiteral("customHint"));
-    hintRow->addSpacing(38);
+    auto *hintSpacer = new QSpacerItem(38, 0);
+    hintRow->addSpacerItem(hintSpacer);
     hintRow->addWidget(hint);
     hintRow->addStretch();
     hintRow->addWidget(m_customLock);
@@ -1782,18 +1781,23 @@ void CaptureOverlay::showCustomSizePopup()
 
     auto *presetRow = new QHBoxLayout;
     presetRow->setSpacing(8);
-    auto *presetLabel = new QLabel(QStringLiteral("预设"), popup);
+    auto *presetLabel = new QLabel(tr("预设"), popup);
     presetLabel->setObjectName(QStringLiteral("customSection"));
-    presetLabel->setFixedWidth(30);
+    const int sectionWidth = qMax(30, qMax(positionLabel->sizeHint().width(),
+                                            qMax(sizeLabel->sizeHint().width(), presetLabel->sizeHint().width())));
+    positionLabel->setFixedWidth(sectionWidth);
+    sizeLabel->setFixedWidth(sectionWidth);
+    presetLabel->setFixedWidth(sectionWidth);
+    hintSpacer->changeSize(sectionWidth + 8, 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
     m_presetCombo = new QComboBox(popup);
     m_presetCombo->setObjectName(QStringLiteral("customPreset"));
-    m_presetCombo->setAccessibleName(QStringLiteral("常用尺寸和已保存区域"));
+    m_presetCombo->setAccessibleName(tr("常用尺寸和已保存区域"));
     m_presetCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_presetCombo->setMinimumWidth(190);
     m_presetCombo->setMaxVisibleItems(16);
-    auto *savePreset = new QPushButton(QStringLiteral("保存当前"), popup);
+    auto *savePreset = new QPushButton(tr("保存当前"), popup);
     savePreset->setObjectName(QStringLiteral("customPresetSave"));
-    savePreset->setToolTip(QStringLiteral("保存当前区域为预设"));
+    savePreset->setToolTip(tr("保存当前区域为预设"));
     savePreset->setFixedHeight(30);
     presetRow->addWidget(presetLabel);
     presetRow->addWidget(m_presetCombo, 1);
@@ -1920,7 +1924,7 @@ void CaptureOverlay::applyCustomPreset(int index)
 void CaptureOverlay::loadSizePresets()
 {
     m_sizePresets.clear();
-    QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
     for (const QString &entry : settings.value(QStringLiteral("Capture/presets")).toStringList()) {
         const QStringList parts = entry.split(QLatin1Char('|'));
         if (parts.size() != 5) continue;
@@ -1939,7 +1943,7 @@ void CaptureOverlay::saveSizePresets() const
         entries.append(QStringLiteral("%1|%2|%3|%4|%5").arg(preset.name)
                            .arg(preset.global.x()).arg(preset.global.y())
                            .arg(preset.global.width()).arg(preset.global.height()));
-    QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot"))
+    QSettings(QStringLiteral("Nami"), QStringLiteral("Nami"))
         .setValue(QStringLiteral("Capture/presets"), entries);
 }
 
@@ -1948,13 +1952,13 @@ void CaptureOverlay::refreshPresetCombo(const QString &selected)
     if (!m_presetCombo) return;
     m_updatingCustom = true;
     m_presetCombo->clear();
-    m_presetCombo->addItem(QStringLiteral("选择预设…"));
+    m_presetCombo->addItem(tr("选择预设…"));
     for (const QSize &size : kCommonSizePresets) {
         m_presetCombo->addItem(QStringLiteral("%1 × %2 px").arg(size.width()).arg(size.height()),
                                size);
     }
     if (!m_sizePresets.isEmpty()) {
-        m_presetCombo->addItem(QStringLiteral("已保存"));
+        m_presetCombo->addItem(tr("已保存"));
         if (auto *model = qobject_cast<QStandardItemModel *>(m_presetCombo->model())) {
             if (auto *item = model->item(m_presetCombo->count() - 1)) {
                 item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
@@ -1972,13 +1976,13 @@ void CaptureOverlay::refreshPresetCombo(const QString &selected)
 void CaptureOverlay::saveCurrentPreset()
 {
     if (m_sel.isNull()) return;
-    const QString defaultName = QStringLiteral("预设 %1").arg(m_sizePresets.size() + 1);
+    const QString defaultName = tr("预设 %1").arg(m_sizePresets.size() + 1);
     QInputDialog dialog(m_customSizePopup);
-    dialog.setWindowTitle(QStringLiteral("保存预设"));
-    dialog.setLabelText(QStringLiteral("预设名称"));
+    dialog.setWindowTitle(tr("保存预设"));
+    dialog.setLabelText(tr("预设名称"));
     dialog.setTextValue(defaultName);
-    dialog.setOkButtonText(QStringLiteral("保存"));
-    dialog.setCancelButtonText(QStringLiteral("取消"));
+    dialog.setOkButtonText(tr("保存"));
+    dialog.setCancelButtonText(tr("取消"));
     dialog.setInputMode(QInputDialog::TextInput);
     dialog.setWindowFlag(Qt::WindowStaysOnTopHint, true);
     dialog.setStyleSheet(QStringLiteral(
@@ -2109,7 +2113,7 @@ void CaptureOverlay::refreshScreenshot()
                 requestDetection(mapFromGlobal(QCursor::pos()));
             }
             if (customVisible && m_customSizePopup) m_customSizePopup->show();
-            showOutputError(QStringLiteral("刷新失败，请重试"));
+            showOutputError(tr("刷新失败，请重试"));
             update();
             return;
         }
@@ -2251,9 +2255,9 @@ void CaptureOverlay::openTextCard(bool translate, bool barcode)
     commitTextEdit();
     const QImage image = cropped().toImage();
     if (image.isNull()) {
-        showOutputError(barcode ? QStringLiteral("识别失败，请先选择有效截图区域")
-                                : translate ? QStringLiteral("翻译失败，请先选择有效截图区域")
-                                            : QStringLiteral("识别失败，请先选择有效截图区域"));
+        showOutputError(barcode ? tr("识别失败，请先选择有效截图区域")
+                                : translate ? tr("翻译失败，请先选择有效截图区域")
+                                            : tr("识别失败，请先选择有效截图区域"));
         return;
     }
     const QRect captureRect=globalScreenRect(m_sel.normalized());
@@ -2316,8 +2320,8 @@ void CaptureOverlay::saveCapture()
     if (m_sel.isEmpty()) return;
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     const QString path = QFileDialog::getSaveFileName(
-        this, QStringLiteral("保存图片"),
-        dir + QStringLiteral("/pinshot.png"),
+        this, tr("保存图片"),
+        dir + QStringLiteral("/nami.png"),
         QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
     if (path.isEmpty()) {
         activateWindow();                       // Cancelled dialog: reclaim focus and keep the selection.
@@ -2330,7 +2334,7 @@ void CaptureOverlay::saveCapture()
 bool CaptureOverlay::saveCaptureTo(const QString &path)
 {
     if (!saveImageAtomic(cropped().toImage(), path)) {
-        showOutputError(QStringLiteral("保存失败，请检查路径或磁盘空间后重试"));
+        showOutputError(tr("保存失败，请检查路径或磁盘空间后重试"));
         return false;
     }
     close();
@@ -2341,7 +2345,7 @@ void CaptureOverlay::copyCapture()
 {
     commitTextEdit();
     if (!copyImageToClipboard(cropped().toImage())) {
-        showOutputError(QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+        showOutputError(tr("复制失败，剪贴板可能被占用，请重试"));
         return;
     }
     close();
@@ -2361,7 +2365,7 @@ void CaptureOverlay::pinCapture()
     commitTextEdit();
     const QPixmap pix = cropped();
     if (pix.isNull()) {
-        showOutputError(QStringLiteral("贴图失败，请确认选区有效并检查内存后重试"));
+        showOutputError(tr("贴图失败，请确认选区有效并检查内存后重试"));
         return;
     }
     const QRect global = globalScreenRect(m_sel.normalized());

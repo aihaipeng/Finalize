@@ -4,6 +4,7 @@
 #include "barcode_engine.h"
 #include "widgets.h"
 #include "output.h"
+#include <QCoreApplication>
 #include <QObject>
 #include <QImage>
 #include <QPoint>
@@ -33,6 +34,7 @@
 
 class OcrImageView : public QGraphicsView
 {
+    Q_DECLARE_TR_FUNCTIONS(OcrImageView)
 public:
     explicit OcrImageView(const QImage &image, QWidget *parent = nullptr);
     void fit();
@@ -92,6 +94,7 @@ class TranslateGateway;
 // last run actually used ("语言检测 (韩语)") once that is known; the list keeps plain names.
 class PickerCombo : public QComboBox
 {
+    Q_DECLARE_TR_FUNCTIONS(PickerCombo)
 public:
     void setPrefix(const QString &prefix) { m_prefix = prefix; updateGeometry(); update(); }
     void setDetected(const QString &detected) { m_detected = detected; updateGeometry(); update(); }

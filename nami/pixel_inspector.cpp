@@ -27,7 +27,7 @@ PixelInspector::PixelInspector(QWidget *parent) : QWidget(parent)
     tipsFont.setStyleStrategy(QFont::StyleStrategy(QFont::PreferAntialias | QFont::NoSubpixelAntialias));
     m_tips.setDefaultFont(tipsFont);
     m_tips.setDocumentMargin(0);
-    m_tips.setHtml(QStringLiteral("<div align='center' style='color:white'>按 <b>C</b> 复制颜色值<br>按 <b>Shift</b> 切换 RGB/HEX</div>"));
+    m_tips.setHtml(tr("<div align='center' style='color:white'>按 <b>C</b> 复制颜色值<br>按 <b>Shift</b> 切换 RGB/HEX</div>"));
     setFixedSize(qMax(179, qCeil(m_tips.idealWidth()) + 4), 217);
     m_tips.setTextWidth(width());
     hide();

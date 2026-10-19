@@ -194,7 +194,7 @@ int CaptureOverlay::testCustomSize()
     const auto check = [&failures](bool ok, const char *message) {
         if (!ok) { ++failures; std::fprintf(stderr, "FAIL: %s\n", message); }
     };
-    QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
     const bool hadUnit = settings.contains(QStringLiteral("Capture/sizeUnit"));
     const QVariant oldUnit = settings.value(QStringLiteral("Capture/sizeUnit"));
     const bool hadPresets = settings.contains(QStringLiteral("Capture/presets"));

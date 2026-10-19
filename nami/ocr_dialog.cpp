@@ -129,7 +129,7 @@ OcrImageView::OcrImageView(const QImage &image, QWidget *parent) : QGraphicsView
     setDragMode(QGraphicsView::ScrollHandDrag);
     setRenderHint(QPainter::SmoothPixmapTransform);
     setBackgroundBrush(QColor(0x06,0x06,0x07));   // Same near-black as the block it sits on.
-    setAccessibleName(QStringLiteral("截图对照：滚轮缩放，拖动查看"));
+    setAccessibleName(tr("截图对照：滚轮缩放，拖动查看"));
 }
 
 void OcrImageView::resizeEvent(QResizeEvent *event)  {
@@ -358,7 +358,7 @@ void OcrImageView::keyPressEvent(QKeyEvent *event) {
 void OcrImageView::contextMenuEvent(QContextMenuEvent *event) {
     if (selectedText().isEmpty()) { QGraphicsView::contextMenuEvent(event); return; }
     QMenu menu(this);
-    QAction *copy = menu.addAction(QStringLiteral("复制"));
+    QAction *copy = menu.addAction(tr("复制"));
     if (menu.exec(event->globalPos()) == copy) copySelection();
     event->accept();
 }
@@ -509,8 +509,8 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     : QDialog(nullptr, Qt::Window | Qt::FramelessWindowHint | Qt::WindowMinMaxButtonsHint),
       m_image(image), m_translate(translate), m_barcode(barcode) {
     setObjectName(QStringLiteral("ocrComparison"));
-    setWindowTitle(m_barcode ? QStringLiteral("Finalize 二维码/条形码")
-                             : m_translate ? QStringLiteral("Finalize 翻译") : QStringLiteral("Finalize OCR"));
+    setWindowTitle(m_barcode ? tr("Nami 二维码/条形码")
+                             : m_translate ? tr("Nami 翻译") : tr("Nami OCR"));
     setWindowModality(Qt::NonModal);
     setMinimumSize(640,360);
     setMouseTracking(true);
@@ -613,14 +613,14 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     title->setFont(titleFont);
     headerLayout->addWidget(title);
     headerLayout->addStretch();
-    auto *back = iconButton(Icon::Back,QStringLiteral("ocrBack"),QStringLiteral("返回"));
+    auto *back = iconButton(Icon::Back,QStringLiteral("ocrBack"),tr("返回"));
     connect(back,&QToolButton::clicked,this,[this] {
         m_returnedToSource = true;
         reject();
     });
     headerLayout->addWidget(back);
     auto *pin = iconButton(Icon::CardPin,QStringLiteral("ocrPin"),
-                           m_barcode ? QStringLiteral("置顶二维码卡片") : QStringLiteral("置顶 OCR 卡片"));
+                           m_barcode ? tr("置顶二维码卡片") : tr("置顶 OCR 卡片"));
     pin->setCheckable(true);
     connect(pin,&QToolButton::toggled,this,[this,pin](bool checked) {
         // Change only native Z-order so geometry, focus and editing state remain intact.
@@ -628,22 +628,22 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
                           0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)) {
             const QSignalBlocker blocker(pin);
             pin->setChecked(!checked);
-            m_status->setText(QStringLiteral("切换置顶失败，请重试"));
+            m_status->setText(tr("切换置顶失败，请重试"));
             return;
         }
         const QString tip = m_barcode
-            ? (checked ? QStringLiteral("取消置顶二维码卡片") : QStringLiteral("置顶二维码卡片"))
-            : (checked ? QStringLiteral("取消置顶 OCR 卡片") : QStringLiteral("置顶 OCR 卡片"));
+            ? (checked ? tr("取消置顶二维码卡片") : tr("置顶二维码卡片"))
+            : (checked ? tr("取消置顶 OCR 卡片") : tr("置顶 OCR 卡片"));
         pin->setToolTip(tip); pin->setAccessibleName(tip);
     });
     headerLayout->addWidget(pin);
-    auto *minimize = iconButton(Icon::CardMinimize,QStringLiteral("ocrMinimize"),QStringLiteral("最小化"));
+    auto *minimize = iconButton(Icon::CardMinimize,QStringLiteral("ocrMinimize"),tr("最小化"));
     connect(minimize,&QToolButton::clicked,this,&QWidget::showMinimized);
     headerLayout->addWidget(minimize);
-    m_maximize = iconButton(Icon::CardMaximize,QStringLiteral("ocrMaximize"),QStringLiteral("最大化"));
+    m_maximize = iconButton(Icon::CardMaximize,QStringLiteral("ocrMaximize"),tr("最大化"));
     connect(m_maximize,&QToolButton::clicked,this,&OcrDialog::toggleMaximize);
     headerLayout->addWidget(m_maximize);
-    auto *close = iconButton(Icon::CardClose,QStringLiteral("ocrClose"),QStringLiteral("关闭 (Esc)"));
+    auto *close = iconButton(Icon::CardClose,QStringLiteral("ocrClose"),tr("关闭 (Esc)"));
     connect(close,&QToolButton::clicked,this,&QDialog::reject);
     headerLayout->addWidget(close);
     header->setFixedHeight(28);
@@ -693,20 +693,20 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     std::tie(m_imagePanel,imageColumn) = block(QStringLiteral("ocrImagePanel"),8);
     auto *imageView = new OcrImageView(image);
     imageView->setFocusPolicy(Qt::StrongFocus);
-    imageView->setToolTip(QStringLiteral("滚轮缩放 · 拖动查看 · 双击适应"));
+    imageView->setToolTip(tr("滚轮缩放 · 拖动查看 · 双击适应"));
     imageColumn->addWidget(imageView,1);
     QWidget *imageBar;
     QHBoxLayout *imageActions;
     std::tie(imageBar,imageActions) = actionRow(QStringLiteral("ocrImageBar"));
-    auto *copyImage = iconButton(Icon::CardCopy,QStringLiteral("ocrCopyImage"),QStringLiteral("复制图片"));
+    auto *copyImage = iconButton(Icon::CardCopy,QStringLiteral("ocrCopyImage"),tr("复制图片"));
     connect(copyImage,&QToolButton::clicked,this,[this] {
-        m_status->setText(copyImageToClipboard(m_image) ? QStringLiteral("已复制图片")
-                                                        : QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+        m_status->setText(copyImageToClipboard(m_image) ? tr("已复制图片")
+                                                        : tr("复制失败，剪贴板可能被占用，请重试"));
     });
     // Ten percentage points a click.
-    auto *zoomIn = iconButton(Icon::CardZoomIn,QStringLiteral("ocrZoomIn"),QStringLiteral("放大"));
+    auto *zoomIn = iconButton(Icon::CardZoomIn,QStringLiteral("ocrZoomIn"),tr("放大"));
     connect(zoomIn,&QToolButton::clicked,imageView,[imageView] { imageView->zoomTo(imageView->percent()+10); });
-    auto *zoomOut = iconButton(Icon::CardZoomOut,QStringLiteral("ocrZoomOut"),QStringLiteral("缩小"));
+    auto *zoomOut = iconButton(Icon::CardZoomOut,QStringLiteral("ocrZoomOut"),tr("缩小"));
     connect(zoomOut,&QToolButton::clicked,imageView,[imageView] { imageView->zoomTo(imageView->percent()-10); });
     auto *zoomLevel = new QLabel;
     zoomLevel->setObjectName(QStringLiteral("ocrZoomLevel"));
@@ -719,13 +719,13 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         zoomLevel->setText(QStringLiteral("%1%").arg(imageView->percent()));
         const bool fitted = imageView->fitted();
         fit->setIcon(cardIcon(fitted ? Icon::CardActual : Icon::CardFit));
-        const QString tip = fitted ? QStringLiteral("原始大小 (1:1)") : QStringLiteral("适应窗口");
+        const QString tip = fitted ? tr("原始大小 (1:1)") : tr("适应窗口");
         fit->setToolTip(tip); fit->setAccessibleName(tip);
     };
     imageView->zoomed();
     m_imageView = imageView;
     imageView->copied = [this](bool ok) {
-        m_status->setText(ok ? QStringLiteral("已复制选中文字") : QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+        m_status->setText(ok ? tr("已复制选中文字") : tr("复制失败，剪贴板可能被占用，请重试"));
     };
     imageView->selectionChanged = [this] {
         if (!m_barcode) linkFromOcrImageSelection();
@@ -740,14 +740,14 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     QWidget *textBar;
     QHBoxLayout *textActions;
     std::tie(textBar,textActions) = actionRow(m_translate ? QStringLiteral("translateResultBar") : QStringLiteral("ocrTextBar"));
-    m_format = iconButton(Icon::CardFormat,QStringLiteral("ocrFormat"),QStringLiteral("排版"));
+    m_format = iconButton(Icon::CardFormat,QStringLiteral("ocrFormat"),tr("排版"));
     auto *formatMenu = new QMenu(m_format);
     auto *formatGroup = new QActionGroup(formatMenu);
-    const std::pair<const char16_t *,TextFormat> formats[] = {
-        {u"自动",TextFormat::Auto},{u"移除换行符",TextFormat::JoinLines},{u"移除空格",TextFormat::RemoveSpaces},
-        {u"全角符号",TextFormat::FullWidth},{u"半角符号",TextFormat::HalfWidth}};
+    const std::pair<QString,TextFormat> formats[] = {
+        {tr("自动"),TextFormat::Auto},{tr("移除换行符"),TextFormat::JoinLines},{tr("移除空格"),TextFormat::RemoveSpaces},
+        {tr("全角符号"),TextFormat::FullWidth},{tr("半角符号"),TextFormat::HalfWidth}};
     for (const auto &[label,kind] : formats) {
-        QAction *action = formatMenu->addAction(QString::fromUtf16(label));
+        QAction *action = formatMenu->addAction(label);
         action->setCheckable(true);
         formatGroup->addAction(action);
         if (kind==TextFormat::Auto) { m_autoFormat = action; action->setChecked(true); }
@@ -780,24 +780,24 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
             box->setMaxVisibleItems(18);
             return box;
         };
-        m_source = combo(QStringLiteral("translateSource"),QStringLiteral("原文语言"));
-        m_target = combo(QStringLiteral("translateTarget"),QStringLiteral("译文语言"));
-        m_provider = combo(QStringLiteral("translateProvider"),QStringLiteral("翻译引擎：自动会在失败时换下一家"));
-        const std::pair<const char16_t *,TranslateGateway::Provider> providers[] = {
-            {u"自动选择",TranslateGateway::Provider::Auto},{u"Edge",TranslateGateway::Provider::Edge},
-            {u"Google",TranslateGateway::Provider::Google},{u"有道",TranslateGateway::Provider::Youdao},
-            {u"搜狗",TranslateGateway::Provider::Sogou},{u"腾讯交互翻译",TranslateGateway::Provider::Transmart},
-            {u"火山",TranslateGateway::Provider::Volcengine},{u"DeepL",TranslateGateway::Provider::Deepl}};
+        m_source = combo(QStringLiteral("translateSource"),tr("原文语言"));
+        m_target = combo(QStringLiteral("translateTarget"),tr("译文语言"));
+        m_provider = combo(QStringLiteral("translateProvider"),tr("翻译引擎：自动会在失败时换下一家"));
+        const std::pair<QString,TranslateGateway::Provider> providers[] = {
+            {tr("自动选择"),TranslateGateway::Provider::Auto},{tr("Edge"),TranslateGateway::Provider::Edge},
+            {tr("Google"),TranslateGateway::Provider::Google},{tr("有道"),TranslateGateway::Provider::Youdao},
+            {tr("搜狗"),TranslateGateway::Provider::Sogou},{tr("腾讯交互翻译"),TranslateGateway::Provider::Transmart},
+            {tr("火山"),TranslateGateway::Provider::Volcengine},{tr("DeepL"),TranslateGateway::Provider::Deepl}};
         for (const auto &[label,provider] : providers)
-            m_provider->addItem(QString::fromUtf16(label),int(provider));
+            m_provider->addItem(label,int(provider));
         // Every card starts on Auto (fallback across engines); a chosen engine lasts for this card only.
-        const QSettings settings(QStringLiteral("pinshot"),QStringLiteral("pinshot"));
+        const QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
         populateLanguages(settings.value(QStringLiteral("Translate/source")).toString(),
                           settings.value(QStringLiteral("Translate/target"),QStringLiteral("zh")).toString());
         syncPickers();
         auto *arrow = new QLabel;
         arrow->setPixmap(cardIcon(Icon::CardRight).pixmap(QSize(16,16),devicePixelRatioF()));
-        arrow->setAccessibleName(QStringLiteral("翻译为"));
+        arrow->setAccessibleName(tr("翻译为"));
         connect(m_provider,&QComboBox::currentIndexChanged,this,[this] {
             populateLanguages(m_source->currentData().toString(),m_target->currentData().toString());
             syncPickers();
@@ -811,34 +811,34 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         tools->addWidget(m_target);
         tools->addWidget(m_provider);
         tools->addStretch();
-        m_view = iconButton(Icon::View,QStringLiteral("translateView"),QStringLiteral("显示内容"));
+        m_view = iconButton(Icon::View,QStringLiteral("translateView"),tr("显示内容"));
         auto *viewMenu = new QMenu(m_view);
         auto *viewGroup = new QActionGroup(viewMenu);
-        const char16_t *const views[] = {u"图片、原文和译文",u"原文和译文",u"仅译文"};
+        const QString views[] = {tr("图片、原文和译文"),tr("原文和译文"),tr("仅译文")};
         for (int mode = 0; mode < 3; ++mode) {
-            QAction *action = viewMenu->addAction(QString::fromUtf16(views[mode]));
+            QAction *action = viewMenu->addAction(views[mode]);
             action->setCheckable(true);
             action->setData(mode);
             viewGroup->addAction(action);
             connect(action,&QAction::triggered,this,[this,mode] {
                 setDisplay(mode);
-                QSettings(QStringLiteral("pinshot"),QStringLiteral("pinshot")).setValue(QStringLiteral("Translate/view"),mode);
+                QSettings(QStringLiteral("Nami"), QStringLiteral("Nami")).setValue(QStringLiteral("Translate/view"),mode);
             });
         }
         m_view->setMenu(viewMenu);
         m_view->setPopupMode(QToolButton::InstantPopup);
-        m_again = iconButton(Icon::CardTranslate,QStringLiteral("translateAgain"),QStringLiteral("重新翻译 (Ctrl+Enter)"));
-        m_again->setAccessibleName(QStringLiteral("重新翻译"));
+        m_again = iconButton(Icon::CardTranslate,QStringLiteral("translateAgain"),tr("重新翻译 (Ctrl+Enter)"));
+        m_again->setAccessibleName(tr("重新翻译"));
         connect(m_again,&QToolButton::clicked,this,[this] { translateLines(); });
     }
     // Translate card: recognize the capture again, then translate it with the chosen engine.
     m_retry = iconButton(Icon::CardReload,QStringLiteral("ocrRetry"),
-                         m_barcode ? QStringLiteral("重新识别")
-                                   : m_translate ? QStringLiteral("重新识别并翻译") : QStringLiteral("重新识别"));
+                         m_barcode ? tr("重新识别")
+                                   : m_translate ? tr("重新识别并翻译") : tr("重新识别"));
     connect(m_retry,&QToolButton::clicked,this,&OcrDialog::start);
     m_copy = iconButton(Icon::CardCopy,QStringLiteral("ocrCopy"),
-                        m_barcode ? QStringLiteral("复制内容")
-                                  : m_translate ? QStringLiteral("复制译文") : QStringLiteral("复制全部"));
+                        m_barcode ? tr("复制内容")
+                                  : m_translate ? tr("复制译文") : tr("复制全部"));
     m_copy->setEnabled(false);
     const auto characters = [] {
         auto *label = new QLabel;
@@ -852,7 +852,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     QLabel *textCount = characters();
     textActions->addWidget(textCount);
     if (!m_translate && !m_barcode) {
-        search = iconButton(Icon::CardSearch,QStringLiteral("ocrSearch"),QStringLiteral("查找 (Ctrl+F)"));
+        search = iconButton(Icon::CardSearch,QStringLiteral("ocrSearch"),tr("查找 (Ctrl+F)"));
         connect(search,&QToolButton::clicked,this,[this] { m_find->isVisible() ? hideFind() : showFind(false); });
     }
     // Find / replace strip under the bar, shown by the search button, Ctrl+F or Ctrl+H.
@@ -865,13 +865,13 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     const auto smallButton = [&](Icon icon,const QString &name,const QString &tip) {
         return iconButton(icon,name,tip);
     };
-    m_replaceToggle = smallButton(Icon::CardRight,QStringLiteral("ocrReplaceToggle"),QStringLiteral("切换替换"));
+    m_replaceToggle = smallButton(Icon::CardRight,QStringLiteral("ocrReplaceToggle"),tr("切换替换"));
     connect(m_replaceToggle,&QToolButton::clicked,this,[this] { showFind(!m_replaceRow->isVisible(),m_findTarget); });
     findLayout->addWidget(m_replaceToggle,0,0);
     m_findEdit = new QLineEdit;
     m_findEdit->setObjectName(QStringLiteral("ocrFindEdit"));
-    m_findEdit->setPlaceholderText(QStringLiteral("查找"));
-    m_findEdit->setAccessibleName(QStringLiteral("查找"));
+    m_findEdit->setPlaceholderText(tr("查找"));
+    m_findEdit->setAccessibleName(tr("查找"));
     m_findEdit->installEventFilter(this);
     connect(m_findEdit,&QLineEdit::textChanged,this,[this] { m_match = 0; highlightMatches(true); });
     findLayout->addWidget(m_findEdit,0,1);
@@ -880,13 +880,13 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     m_findCount->setMinimumWidth(56);
     m_findCount->setAlignment(Qt::AlignCenter);
     findLayout->addWidget(m_findCount,0,2);
-    auto *previous = smallButton(Icon::CardUp,QStringLiteral("ocrFindPrevious"),QStringLiteral("上一个 (Shift+Enter)"));
+    auto *previous = smallButton(Icon::CardUp,QStringLiteral("ocrFindPrevious"),tr("上一个 (Shift+Enter)"));
     connect(previous,&QToolButton::clicked,this,[this] { findStep(-1); });
     findLayout->addWidget(previous,0,3);
-    auto *next = smallButton(Icon::CardDown,QStringLiteral("ocrFindNext"),QStringLiteral("下一个 (Enter)"));
+    auto *next = smallButton(Icon::CardDown,QStringLiteral("ocrFindNext"),tr("下一个 (Enter)"));
     connect(next,&QToolButton::clicked,this,[this] { findStep(1); });
     findLayout->addWidget(next,0,4);
-    auto *closeFind = smallButton(Icon::CardClose,QStringLiteral("ocrFindClose"),QStringLiteral("关闭查找 (Esc)"));
+    auto *closeFind = smallButton(Icon::CardClose,QStringLiteral("ocrFindClose"),tr("关闭查找 (Esc)"));
     connect(closeFind,&QToolButton::clicked,this,&OcrDialog::hideFind);
     findLayout->addWidget(closeFind,0,5);
     m_replaceRow = new QWidget;
@@ -894,15 +894,17 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     replaceLayout->setContentsMargins(0,0,0,0); replaceLayout->setSpacing(4);
     m_replaceEdit = new QLineEdit;
     m_replaceEdit->setObjectName(QStringLiteral("ocrReplaceEdit"));
-    m_replaceEdit->setPlaceholderText(QStringLiteral("替换"));
-    m_replaceEdit->setAccessibleName(QStringLiteral("替换为"));
+    m_replaceEdit->setPlaceholderText(tr("替换"));
+    m_replaceEdit->setAccessibleName(tr("替换为"));
     m_replaceEdit->installEventFilter(this);
     replaceLayout->addWidget(m_replaceEdit,1);
-    for (const auto &[label,name,slot] : {std::tuple(u"替换",u"ocrReplace",&OcrDialog::replaceOne),
-                                          std::tuple(u"全部替换",u"ocrReplaceAll",&OcrDialog::replaceAll)}) {
+    const std::tuple<QString,QString,void (OcrDialog::*)()> replaceActions[] = {
+        {tr("替换"),QStringLiteral("ocrReplace"),&OcrDialog::replaceOne},
+        {tr("全部替换"),QStringLiteral("ocrReplaceAll"),&OcrDialog::replaceAll}};
+    for (const auto &[label,name,slot] : replaceActions) {
         auto *button = new QToolButton;
-        button->setObjectName(QString::fromUtf16(name));
-        button->setText(QString::fromUtf16(label));
+        button->setObjectName(name);
+        button->setText(label);
         button->setFixedHeight(28);
         button->setFocusPolicy(Qt::TabFocus);
         connect(button,&QToolButton::clicked,this,slot);
@@ -918,8 +920,8 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         // fixing an OCR slip re-translates after a short pause, Ctrl+Enter at once.
         m_sourcePane = new QPlainTextEdit;
         m_sourcePane->setObjectName(QStringLiteral("translateSourceText"));
-        m_sourcePane->setAccessibleName(QStringLiteral("识别原文，可修改后重新翻译"));
-        m_sourcePane->setPlaceholderText(QStringLiteral("正在识别…"));
+        m_sourcePane->setAccessibleName(tr("识别原文，可修改后重新翻译"));
+        m_sourcePane->setPlaceholderText(tr("正在识别…"));
         m_sourcePane->setReadOnly(true);
         QFont sourceFont = font;
         sourceFont.setPointSizeF(qMax(10.5,font.pointSizeF()-1.5));
@@ -938,8 +940,8 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     }
     m_text = new QPlainTextEdit;
     m_text->setObjectName(QStringLiteral("ocrText"));
-    m_text->setAccessibleName(m_barcode ? QStringLiteral("二维码/条形码内容")
-                                        : m_translate ? QStringLiteral("译文") : QStringLiteral("OCR 识别文本"));
+    m_text->setAccessibleName(m_barcode ? tr("二维码/条形码内容")
+                                        : m_translate ? tr("译文") : tr("OCR 识别文本"));
     m_text->setReadOnly(true);
     m_findTarget = m_text;
     // Selecting recognized text marks the same characters on the capture.
@@ -949,7 +951,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     }
     if (m_translate) font.setPointSizeF(font.pointSizeF()+1);   // The translation is what the card is for.
     m_text->setFont(font);
-    m_busy = new QLabel(QStringLiteral("正在识别…"));
+    m_busy = new QLabel(tr("正在识别…"));
     m_busy->setObjectName(QStringLiteral("ocrBusy"));
     QFont busyFont = font; busyFont.setPointSizeF(font.pointSizeF()*1.5);
     m_busy->setFont(m_translate ? font : busyFont);   // The translate card says what it is doing in words.
@@ -957,7 +959,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     m_busy->setAttribute(Qt::WA_TransparentForMouseEvents);
     m_busy->hide();
     (new QVBoxLayout(m_text->viewport()))->addWidget(m_busy);
-    m_status = new QLabel(QStringLiteral("正在识别…"));
+    m_status = new QLabel(tr("正在识别…"));
     m_status->setObjectName(QStringLiteral("ocrStatus"));
     m_status->setTextFormat(Qt::PlainText);
     m_status->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -971,7 +973,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     // The three card actions sit at the right end of the bottom row, where the old
     // timing/confidence or service label used to be. Copy and the count stay left.
     if (m_barcode) {
-        m_open = iconButton(Icon::CardLink,QStringLiteral("barcodeOpen"),QStringLiteral("打开链接"));
+        m_open = iconButton(Icon::CardLink,QStringLiteral("barcodeOpen"),tr("打开链接"));
         m_open->hide();
         connect(m_open,&QToolButton::clicked,this,[this] {
             const QUrl url = barcodeUrl(m_text->toPlainText());
@@ -1002,7 +1004,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         m_barcodeLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
         m_barcodePicker = new QComboBox;
         m_barcodePicker->setObjectName(QStringLiteral("barcodePicker"));
-        m_barcodePicker->setAccessibleName(QStringLiteral("选择二维码/条形码"));
+        m_barcodePicker->setAccessibleName(tr("选择二维码/条形码"));
         m_barcodePicker->setFocusPolicy(Qt::TabFocus);
         m_barcodePicker->setCursor(Qt::PointingHandCursor);
         m_barcodePicker->setMaxVisibleItems(18);
@@ -1035,11 +1037,11 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         QWidget *sourceBar;
         QHBoxLayout *sourceActions;
         std::tie(sourceBar,sourceActions) = actionRow(QStringLiteral("translateSourceBar"));
-        sourceCopy = iconButton(Icon::CardCopy,QStringLiteral("translateSourceCopy"),QStringLiteral("复制原文"));
+        sourceCopy = iconButton(Icon::CardCopy,QStringLiteral("translateSourceCopy"),tr("复制原文"));
         sourceCopy->setEnabled(false);
         connect(sourceCopy,&QToolButton::clicked,this,[this] {
-            m_status->setText(copyTextToClipboard(m_sourcePane->toPlainText()) ? QStringLiteral("已复制原文")
-                                                                               : QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+            m_status->setText(copyTextToClipboard(m_sourcePane->toPlainText()) ? tr("已复制原文")
+                                                                               : tr("复制失败，剪贴板可能被占用，请重试"));
         });
         connect(m_sourcePane->document(),&QTextDocument::contentsChanged,sourceCopy,[this,sourceCopy] {
             sourceCopy->setEnabled(!m_sourcePane->toPlainText().isEmpty());
@@ -1056,11 +1058,11 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         m_mask->setObjectName(QStringLiteral("retranslateMask"));
         m_mask->setAttribute(Qt::WA_StyledBackground);
         auto *maskLayout = new QVBoxLayout(m_mask);
-        auto *maskButton = new QPushButton(QStringLiteral("重新翻译"));
+        auto *maskButton = new QPushButton(tr("重新翻译"));
         maskButton->setObjectName(QStringLiteral("retranslateButton"));
         maskButton->setFocusPolicy(Qt::NoFocus);
         maskButton->setCursor(Qt::PointingHandCursor);
-        maskButton->setToolTip(QStringLiteral("原文已修改，点击重新翻译 (Ctrl+Enter)"));
+        maskButton->setToolTip(tr("原文已修改，点击重新翻译 (Ctrl+Enter)"));
         connect(maskButton,&QPushButton::clicked,this,[this] { translateLines(); });
         maskLayout->addWidget(maskButton,0,Qt::AlignCenter);
         m_mask->hide();
@@ -1072,9 +1074,9 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
                 QMenu *menu = pane->createStandardContextMenu(at);
                 menu->setAttribute(Qt::WA_DeleteOnClose);
                 menu->addSeparator();
-                QAction *find = menu->addAction(QStringLiteral("查找"),this,[this,pane] { showFind(false,pane); });
+                QAction *find = menu->addAction(tr("查找"),this,[this,pane] { showFind(false,pane); });
                 find->setShortcut(QKeySequence::Find);
-                QAction *replace = menu->addAction(QStringLiteral("替换"),this,[this,pane] { showFind(true,pane); });
+                QAction *replace = menu->addAction(tr("替换"),this,[this,pane] { showFind(true,pane); });
                 replace->setShortcut(QKeySequence(Qt::CTRL|Qt::Key_H));
                 replace->setEnabled(!pane->isReadOnly());
                 menu->popup(pane->viewport()->mapToGlobal(at));
@@ -1122,8 +1124,8 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         });
     connect(m_copy, &QToolButton::clicked, this, [this] {
         if (!copyTextToClipboard(m_text->toPlainText()))
-            m_status->setText(QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
-        else m_status->setText(m_barcode ? QStringLiteral("已复制内容") : QStringLiteral("已复制全部文本"));
+            m_status->setText(tr("复制失败，剪贴板可能被占用，请重试"));
+        else m_status->setText(m_barcode ? tr("已复制内容") : tr("已复制全部文本"));
     });
     connect(m_text, &QPlainTextEdit::textChanged, this, [this] { m_copy->setEnabled(!m_text->toPlainText().isEmpty()); });
     const QRect anchor = captureRect.isEmpty() ? QRect(QCursor::pos(),QSize(1,1)) : captureRect;
@@ -1134,8 +1136,8 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     setMinimumSize(loadingSize());
     setGeometry(screenCentered(m_screenRect,loadingSize()));
     if (m_translate)
-        setDisplay(QSettings(QStringLiteral("pinshot"),QStringLiteral("pinshot")).value(QStringLiteral("Translate/view"),0).toInt());
-    showLoading(true, m_barcode ? QStringLiteral("正在识别二维码…") : QStringLiteral("正在识别…"));
+        setDisplay(QSettings(QStringLiteral("Nami"), QStringLiteral("Nami")).value(QStringLiteral("Translate/view"),0).toInt());
+    showLoading(true, m_barcode ? tr("正在识别二维码…") : tr("正在识别…"));
     connect(&m_barcodeWatcher, &QFutureWatcher<BarcodeResult>::finished, this, [this] {
         if (!m_barcode || m_closed) return;
         finishBarcode(m_barcodeWatcher.result());
@@ -1152,10 +1154,10 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
             // Recognition stopped: the user can still type the original and translate it.
             showLoading(false);
             m_sourcePane->setReadOnly(false);
-            m_sourcePane->setPlaceholderText(QStringLiteral("未识别到文字，可在此输入原文"));
+            m_sourcePane->setPlaceholderText(tr("未识别到文字，可在此输入原文"));
             m_text->setReadOnly(false);
-            m_text->setPlaceholderText(QStringLiteral("在上方输入原文后点击重新翻译"));
-            m_status->setText(result.error.isEmpty() ? QStringLiteral("未识别到文字") : result.error);
+            m_text->setPlaceholderText(tr("在上方输入原文后点击重新翻译"));
+            m_status->setText(result.error.isEmpty() ? tr("未识别到文字") : result.error);
             applyLayout(true);
             return;
         }
@@ -1166,7 +1168,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
             m_text->document()->setModified(m_previousModified);
             m_status->setText(result.error);
             m_text->setReadOnly(m_text->toPlainText().isEmpty());
-            m_text->setPlaceholderText(QStringLiteral("识别未完成，可点击重新识别"));
+            m_text->setPlaceholderText(tr("识别未完成，可点击重新识别"));
             applyLayout(true);
             return;
         }
@@ -1182,7 +1184,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         m_raw = result.text();
         m_text->setPlainText(m_raw);
         m_autoFormat->setChecked(true);
-        m_text->setPlaceholderText(QStringLiteral("未识别到文字，可在此输入文本。"));
+        m_text->setPlaceholderText(tr("未识别到文字，可在此输入文本。"));
         m_status->clear();
         applyLayout(true);
         m_text->setFocus();
@@ -1318,8 +1320,8 @@ void OcrDialog::start() {
     if (m_closed || m_watcher.isRunning()) return;
     const bool initialLoad = m_loadingPage && !m_loadingPage->isHidden();
     const bool userEdit = m_text->document()->isModified() || (m_sourcePane && m_sourcePane->document()->isModified());
-    if (userEdit && QMessageBox::question(this,QStringLiteral("重新识别"),
-            QStringLiteral("重新识别会替换已修改的文本，是否继续？"),
+    if (userEdit && QMessageBox::question(this,tr("重新识别"),
+            tr("重新识别会替换已修改的文本，是否继续？"),
             QMessageBox::Yes|QMessageBox::No,QMessageBox::No) != QMessageBox::Yes) return;
     // The confirmation pumps events and may close the card before it returns.
     if (m_closed || m_watcher.isRunning()) return;
@@ -1327,7 +1329,7 @@ void OcrDialog::start() {
     bool expected = false;
     if (!engine.busy.compare_exchange_strong(expected,true)) {
         showLoading(false);
-        m_status->setText(QStringLiteral("上一项识别正在结束，请稍候再点击重新识别"));
+        m_status->setText(tr("上一项识别正在结束，请稍候再点击重新识别"));
         return;
     }
     m_cancel = std::make_shared<std::atomic_bool>(false);
@@ -1351,13 +1353,13 @@ void OcrDialog::start() {
         m_retry->setEnabled(false);
     }
     if (m_translate) {
-        m_sourcePane->setPlaceholderText(QStringLiteral("正在识别…"));
+        m_sourcePane->setPlaceholderText(tr("正在识别…"));
         m_text->setPlaceholderText(QString());
     }
-    m_busy->setText(QStringLiteral("正在识别…"));
-    if (initialLoad) showLoading(true,QStringLiteral("正在识别…"));
+    m_busy->setText(tr("正在识别…"));
+    if (initialLoad) showLoading(true,tr("正在识别…"));
     else m_busy->show();
-    m_status->setText(m_translate ? QString() : QStringLiteral("正在识别…"));
+    m_status->setText(m_translate ? QString() : tr("正在识别…"));
     m_watcher.setFuture(QtConcurrent::run([&engine,image,cancel] {
         const OcrResult result = recognizeChunked(image,cancel);
         engine.busy.store(false);
@@ -1374,7 +1376,7 @@ void OcrDialog::startBarcode()
     m_barcodeItems.clear();
     m_barcodePicker->clear();
     m_barcodePicker->hide();
-    m_barcodeLabel->setText(QStringLiteral("正在识别…"));
+    m_barcodeLabel->setText(tr("正在识别…"));
     m_imageView->setBarcodeRegions({},-1);
     m_text->clear();
     m_text->setReadOnly(true);
@@ -1383,9 +1385,9 @@ void OcrDialog::startBarcode()
     m_retry->setEnabled(false);
     m_status->clear();
     if (initialLoad) {
-        showLoading(true,QStringLiteral("正在识别二维码…"));
+        showLoading(true,tr("正在识别二维码…"));
     } else {
-        m_busy->setText(QStringLiteral("正在识别…"));
+        m_busy->setText(tr("正在识别…"));
         m_busy->show();
     }
     const QImage image = m_image;
@@ -1406,12 +1408,12 @@ void OcrDialog::finishBarcode(const BarcodeResult &result)
     m_barcodeItems = result.items;
     m_barcodePicker->clear();
     if (!result.error.isEmpty()) {
-        m_barcodeLabel->setText(QStringLiteral("识别失败"));
+        m_barcodeLabel->setText(tr("识别失败"));
         m_text->setPlainText(result.error);
         m_imageView->setBarcodeRegions({},-1);
     } else if (m_barcodeItems.isEmpty()) {
-        m_barcodeLabel->setText(QStringLiteral("未识别到码"));
-        m_text->setPlainText(QStringLiteral("未识别到二维码或条形码"));
+        m_barcodeLabel->setText(tr("未识别到码"));
+        m_text->setPlainText(tr("未识别到二维码或条形码"));
         m_imageView->setBarcodeRegions({},-1);
     } else {
         for (const BarcodeItem &item : m_barcodeItems) {
@@ -1472,7 +1474,7 @@ void OcrDialog::translateLines()
         showLoading(false);
         m_text->clear();
         m_text->setReadOnly(false);
-        m_text->setPlaceholderText(QStringLiteral("在上方输入原文后点击重新翻译"));
+        m_text->setPlaceholderText(tr("在上方输入原文后点击重新翻译"));
         m_status->clear();
         m_busy->hide();
         m_translatedSource = m_sourcePane->toPlainText();
@@ -1489,8 +1491,8 @@ void OcrDialog::translateLines()
     m_text->clear();
     m_text->setReadOnly(true);
     m_text->setPlaceholderText(QString());
-    m_busy->setText(QStringLiteral("正在翻译…"));
-    if (initialLoad) showLoading(true,QStringLiteral("正在翻译…"));
+    m_busy->setText(tr("正在翻译…"));
+    if (initialLoad) showLoading(true,tr("正在翻译…"));
     else m_busy->show();
     m_status->clear();
     const auto provider = TranslateGateway::Provider(m_provider->currentData().toInt());
@@ -1509,11 +1511,11 @@ void OcrDialog::translateLines()
             m_text->setReadOnly(m_text->toPlainText().isEmpty());
             QString message;
             if (t.code == TranslateResult::Error::Unsupported)
-                message = QStringLiteral("暂不支持这组语言，请更换原文或译文语言");
+                message = tr("暂不支持这组语言，请更换原文或译文语言");
             else if (provider == TranslateGateway::Provider::Auto)
-                message = QStringLiteral("翻译服务暂时不可用，请检查网络后重试");
+                message = tr("翻译服务暂时不可用，请检查网络后重试");
             else
-                message = QStringLiteral("%1暂时无法翻译，请稍后重试或切换为其他翻译引擎").arg(m_provider->currentText());
+                message = tr("%1暂时无法翻译，请稍后重试或切换为其他翻译引擎").arg(m_provider->currentText());
             m_text->setPlaceholderText(message);
             m_status->setText(message);
             applyLayout(true);
@@ -1699,7 +1701,7 @@ void OcrDialog::populateLanguages(const QString &source, const QString &target)
     const auto provider = TranslateGateway::Provider(m_provider->currentData().toInt());
     const QSignalBlocker blockSource(m_source), blockTarget(m_target);
     m_source->clear();
-    m_source->addItem(QStringLiteral("自动检测"),QString());
+    m_source->addItem(tr("自动检测"),QString());
     for (const TranslateLanguage &language : TranslateGateway::supportedSourceLanguages(provider))
         m_source->addItem(language.name,language.code);
     const int s = m_source->findData(source);
@@ -1714,7 +1716,7 @@ void OcrDialog::populateLanguages(const QString &source, const QString &target)
 
 void OcrDialog::saveTranslateChoice() const
 {
-    QSettings settings(QStringLiteral("pinshot"),QStringLiteral("pinshot"));
+    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
     settings.remove(QStringLiteral("Translate/provider"));   // Engine is per card; drop the old stored choice.
     settings.setValue(QStringLiteral("Translate/source"),m_source->currentData().toString());
     settings.setValue(QStringLiteral("Translate/target"),m_target->currentData().toString());
@@ -1736,8 +1738,8 @@ void OcrDialog::syncPickers()
 {
     // A hand-picked item drops what an earlier automatic run detected. The stacked card is
     // only 500px wide, so its pickers use shorter prefixes than the three-column layout.
-    m_source->setPrefix(m_rows ? QStringLiteral("语言") : QStringLiteral("语言检测"));
-    m_provider->setPrefix(m_rows ? QStringLiteral("引擎") : QStringLiteral("翻译引擎"));
+    m_source->setPrefix(m_rows ? tr("语言") : tr("语言检测"));
+    m_provider->setPrefix(m_rows ? tr("引擎") : tr("翻译引擎"));
     for (PickerCombo *box : {m_source,m_provider})
         if (box->currentIndex() != 0) box->setDetected(QString());
 }
@@ -1835,7 +1837,7 @@ void OcrDialog::highlightMatches(bool reveal) {
         m_findMarks.append(mark);
     }
     applyHighlights(m_findTarget);
-    m_findCount->setText(found.isEmpty() ? (m_findEdit->text().isEmpty() ? QString() : QStringLiteral("无结果"))
+    m_findCount->setText(found.isEmpty() ? (m_findEdit->text().isEmpty() ? QString() : tr("无结果"))
                                          : QStringLiteral("%1/%2").arg(m_match+1).arg(found.size()));
     if (reveal && m_match>=0) {
         QTextCursor caret = found[m_match];
@@ -2075,6 +2077,6 @@ void OcrDialog::toggleMaximize() {
 
 void OcrDialog::updateMaximizeButton() {
     m_maximize->setIcon(cardIcon(m_maximized ? Icon::CardRestore : Icon::CardMaximize));
-    const QString tip = m_maximized ? QStringLiteral("还原") : QStringLiteral("最大化");
+    const QString tip = m_maximized ? tr("还原") : tr("最大化");
     m_maximize->setToolTip(tip); m_maximize->setAccessibleName(tip);
 }

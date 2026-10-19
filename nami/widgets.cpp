@@ -174,7 +174,7 @@ ColorBoard::ColorBoard(const QColor &current, QWidget *parent) : QWidget(parent)
     setMouseTracking(true);
     setCursor(Qt::PointingHandCursor);
     setFocusPolicy(Qt::NoFocus);
-    setAccessibleName(QStringLiteral("颜色"));
+    setAccessibleName(tr("颜色"));
 }
 
 QRect ColorBoard::swatchRect(int index)

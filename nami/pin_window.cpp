@@ -58,7 +58,7 @@ PinWindow::PinWindow(const QPixmap &pix, const QRect &displayRect)
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
     setAttribute(Qt::WA_DeleteOnClose);
     setCursor(Qt::SizeAllCursor);
-    setAccessibleName(QStringLiteral("贴图"));
+    setAccessibleName(tr("贴图"));
     setMouseTracking(true);
     setAttribute(Qt::WA_TranslucentBackground);   // The shadow band is painted, per-pixel alpha.
     setImageGeometry(displayRect);
@@ -707,7 +707,7 @@ void PinWindow::ensureSelToolbar()
     if (m_selToolbar) return;
     // Owned by the pin so it stays above the capture; an unparented Tool loses to it.
     m_selToolbar = new QWidget(this, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
-    m_selToolbar->setAccessibleName(QStringLiteral("选字工具栏"));
+    m_selToolbar->setAccessibleName(tr("选字工具栏"));
     m_selToolbar->setObjectName(QStringLiteral("selToolbar"));
     // Scoped to the window: a bare QWidget selector would frame every child,
     // which is where the stray rounded border around the palette came from.
@@ -724,10 +724,10 @@ void PinWindow::ensureSelToolbar()
     row->setSpacing(0);
     root->addLayout(row);
 
-    auto *copyBtn = pinButton(Icon::Copy, QStringLiteral("复制"));
+    auto *copyBtn = pinButton(Icon::Copy, tr("复制"));
     connect(copyBtn, &QToolButton::clicked, this, [this] {
         if (!copyTextToClipboard(selectedText()))
-            QMessageBox::warning(this, QStringLiteral("Finalize"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+            QMessageBox::warning(this, QStringLiteral("Nami"), tr("复制失败，剪贴板可能被占用，请重试"));
         // Reference behavior: copying also dismisses the bar and the selection.
         m_selBarOpen = false;
         m_selAnchor = -1;
@@ -752,10 +752,10 @@ void PinWindow::ensureSelToolbar()
     root->addWidget(strip);
 
     const struct { int type; Icon icon; QString tip; } markups[] = {
-        { DecoHighlight, Icon::Marker, QStringLiteral("荧光笔") },
-        { DecoWavy, Icon::WavyLine, QStringLiteral("波浪线") },
-        { DecoLine, Icon::Underline, QStringLiteral("直线") },
-        { DecoStrike, Icon::Strikethrough, QStringLiteral("删除线") },
+        { DecoHighlight, Icon::Marker, tr("荧光笔") },
+        { DecoWavy, Icon::WavyLine, tr("波浪线") },
+        { DecoLine, Icon::Underline, tr("直线") },
+        { DecoStrike, Icon::Strikethrough, tr("删除线") },
     };
     for (int t = 0; t < 4; ++t) {
         const auto &m = markups[t];
@@ -772,7 +772,7 @@ void PinWindow::ensureSelToolbar()
             else drawTextDeco(t, m_decoToolColor[t]);
         });
     }
-    auto *closeBtn = pinButton(Icon::Cancel, QStringLiteral("关闭工具栏"));
+    auto *closeBtn = pinButton(Icon::Cancel, tr("关闭工具栏"));
     connect(closeBtn, &QToolButton::clicked, this, [this] {
         m_selBarOpen = false;   // This selection only; the next finished drag shows it again.
         updateSelToolbar();
@@ -791,7 +791,7 @@ void PinWindow::ensureSelToolbar()
             drawTextDeco(m_decoTool, kDecoColors[i]);
         });
     }
-    auto *clearBtn = pinButton(Icon::Eraser, QStringLiteral("清除标注"));
+    auto *clearBtn = pinButton(Icon::Eraser, tr("清除标注"));
     stripLay->addWidget(clearBtn);
     connect(clearBtn, &QToolButton::clicked, this, [this] {
         // User-simplified: one tap erases every mark on the selected
@@ -864,14 +864,14 @@ void PinWindow::toggleToolbar(bool enabled)
             // inside the pin; reclicking disarms it. Options live on the strip
             // that opens under this toolbar; undo/redo follow the canvas stacks.
             const struct { CaptureOverlay::ATool tool; Icon icon; QString tip; } annTools[] = {
-                { CaptureOverlay::ATool::Rect, Icon::Rect, QStringLiteral("形状：矩形/椭圆") },
-                { CaptureOverlay::ATool::Arrow, Icon::Arrow, QStringLiteral("箭头") },
-                { CaptureOverlay::ATool::Pen, Icon::Pen, QStringLiteral("画笔") },
-                { CaptureOverlay::ATool::Marker, Icon::Marker, QStringLiteral("荧光笔") },
-                { CaptureOverlay::ATool::Mosaic, Icon::Mosaic, QStringLiteral("马赛克") },
-                { CaptureOverlay::ATool::Text, Icon::Text, QStringLiteral("文字") },
-                { CaptureOverlay::ATool::Number, Icon::Number, QStringLiteral("序号") },
-                { CaptureOverlay::ATool::Eraser, Icon::Eraser, QStringLiteral("橡皮") },
+                { CaptureOverlay::ATool::Rect, Icon::Rect, tr("形状：矩形/椭圆") },
+                { CaptureOverlay::ATool::Arrow, Icon::Arrow, tr("箭头") },
+                { CaptureOverlay::ATool::Pen, Icon::Pen, tr("画笔") },
+                { CaptureOverlay::ATool::Marker, Icon::Marker, tr("荧光笔") },
+                { CaptureOverlay::ATool::Mosaic, Icon::Mosaic, tr("马赛克") },
+                { CaptureOverlay::ATool::Text, Icon::Text, tr("文字") },
+                { CaptureOverlay::ATool::Number, Icon::Number, tr("序号") },
+                { CaptureOverlay::ATool::Eraser, Icon::Eraser, tr("橡皮") },
             };
             for (const auto &t : annTools) {
                 auto *btn = pinButton(t.icon, t.tip);
@@ -889,14 +889,14 @@ void PinWindow::toggleToolbar(bool enabled)
             sep->setFixedSize(1, 22);
             lay->addWidget(sep);
 
-            m_undoBtn = pinButton(Icon::Undo, QStringLiteral("撤销 (Ctrl+Z)"));
+            m_undoBtn = pinButton(Icon::Undo, tr("撤销 (Ctrl+Z)"));
             m_undoBtn->setEnabled(false);
             m_undoBtn->setFocusPolicy(Qt::NoFocus);
             connect(m_undoBtn, &QToolButton::clicked, this, [this] {
                 if (m_canvas) m_canvas->undoAnnotation();
             });
             lay->addWidget(m_undoBtn);
-            m_redoBtn = pinButton(Icon::Redo, QStringLiteral("重做 (Ctrl+Y)"));
+            m_redoBtn = pinButton(Icon::Redo, tr("重做 (Ctrl+Y)"));
             m_redoBtn->setEnabled(false);
             m_redoBtn->setFocusPolicy(Qt::NoFocus);
             connect(m_redoBtn, &QToolButton::clicked, this, [this] {
@@ -909,39 +909,39 @@ void PinWindow::toggleToolbar(bool enabled)
             sep2->setFixedSize(1, 22);
             lay->addWidget(sep2);
 
-            auto *copyBtn = pinButton(Icon::Copy, QStringLiteral("复制图片"));
+            auto *copyBtn = pinButton(Icon::Copy, tr("复制图片"));
             connect(copyBtn, &QToolButton::clicked, this, [this] {
                 if (!copyImageToClipboard(annotatedPix().toImage()))
-                    QMessageBox::warning(this, QStringLiteral("Finalize"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+                    QMessageBox::warning(this, QStringLiteral("Nami"), tr("复制失败，剪贴板可能被占用，请重试"));
             });
             lay->addWidget(copyBtn);
 
-            auto *saveBtn = pinButton(Icon::Save, QStringLiteral("保存图片"));
+            auto *saveBtn = pinButton(Icon::Save, tr("保存图片"));
             connect(saveBtn, &QToolButton::clicked, this, [this] {
                 const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
                 const QString path = QFileDialog::getSaveFileName(
-                    this, QStringLiteral("保存图片"), dir + QStringLiteral("/pin.png"),
+                    this, tr("保存图片"), dir + QStringLiteral("/pin.png"),
                     QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
                 if (!path.isEmpty() && !saveImageAtomic(annotatedPix().toImage(), path))
-                    QMessageBox::warning(this, QStringLiteral("Finalize"), QStringLiteral("保存失败，请检查路径或磁盘空间后重试"));
+                    QMessageBox::warning(this, QStringLiteral("Nami"), tr("保存失败，请检查路径或磁盘空间后重试"));
             });
             lay->addWidget(saveBtn);
 
-            auto *ocrBtn = pinButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)"));
+            auto *ocrBtn = pinButton(Icon::Ocr, tr("文字识别 (OCR)"));
             connect(ocrBtn, &QToolButton::clicked, this, [this] {
                 showOcr(annotatedPix().toImage(), this, imageGeometry());
             });
             lay->addWidget(ocrBtn);
 
-            auto *translateBtn = pinButton(Icon::Translate, QStringLiteral("识别并翻译文字"));
+            auto *translateBtn = pinButton(Icon::Translate, tr("识别并翻译文字"));
             connect(translateBtn, &QToolButton::clicked, this, &PinWindow::openTranslate);
             lay->addWidget(translateBtn);
 
-            auto *barcodeBtn = pinButton(Icon::Barcode, QStringLiteral("识别二维码/条形码"));
+            auto *barcodeBtn = pinButton(Icon::Barcode, tr("识别二维码/条形码"));
             connect(barcodeBtn, &QToolButton::clicked, this, &PinWindow::openBarcode);
             lay->addWidget(barcodeBtn);
 
-            m_backBtn = pinButton(Icon::Back, QStringLiteral("返回长截图"));
+            m_backBtn = pinButton(Icon::Back, tr("返回长截图"));
             m_backBtn->setFocusPolicy(Qt::NoFocus);
             connect(m_backBtn, &QToolButton::clicked, this, [this] {
                 m_canGoBack = false;
@@ -951,7 +951,7 @@ void PinWindow::toggleToolbar(bool enabled)
             lay->addWidget(m_backBtn);
 
             // Done: hides the bar like the first Esc; the pin and its marks stay.
-            auto *doneBtn = pinButton(Icon::Check, QStringLiteral("完成"));
+            auto *doneBtn = pinButton(Icon::Check, tr("完成"));
             doneBtn->setFocusPolicy(Qt::NoFocus);
             connect(doneBtn, &QToolButton::clicked, this, [this] { toggleToolbar(false); });
             lay->addWidget(doneBtn);
@@ -1101,78 +1101,78 @@ QMenu *PinWindow::createContextMenu()
     m->setStyleSheet(darkMenuQss);
 
     // Section 1
-    QAction *textSelect = m->addAction(QStringLiteral("文本可选择"));
+    QAction *textSelect = m->addAction(tr("文本可选择"));
     textSelect->setCheckable(true);
     textSelect->setChecked(m_textSelectable);
     connect(textSelect, &QAction::toggled, this, [this](bool checked) { toggleTextSelectable(checked); });
 
-    QAction *translate = m->addAction(QStringLiteral("翻译"));
+    QAction *translate = m->addAction(tr("翻译"));
     connect(translate, &QAction::triggered, this, &PinWindow::openTranslate);
 
-    QAction *barcode = m->addAction(QStringLiteral("识别二维码/条形码"));
+    QAction *barcode = m->addAction(tr("识别二维码/条形码"));
     connect(barcode, &QAction::triggered, this, &PinWindow::openBarcode);
 
     m->addSeparator();
 
     // Section 2: Image processing submenu
-    QMenu *imgProc = m->addMenu(QStringLiteral("图像处理"));
+    QMenu *imgProc = m->addMenu(tr("图像处理"));
     imgProc->setStyleSheet(m->styleSheet());
     new MenuEdgeFix(imgProc);
 
-    QAction *rotLeft = imgProc->addAction(QStringLiteral("向左旋转"));
+    QAction *rotLeft = imgProc->addAction(tr("向左旋转"));
     connect(rotLeft, &QAction::triggered, this, [this] { rotateBy(-90); });
 
-    QAction *rotRight = imgProc->addAction(QStringLiteral("向右旋转"));
+    QAction *rotRight = imgProc->addAction(tr("向右旋转"));
     connect(rotRight, &QAction::triggered, this, [this] { rotateBy(90); });
 
-    QAction *flipH = imgProc->addAction(QStringLiteral("水平翻转"));
+    QAction *flipH = imgProc->addAction(tr("水平翻转"));
     connect(flipH, &QAction::triggered, this, [this] { flipHorizontal(); });
 
-    QAction *flipV = imgProc->addAction(QStringLiteral("垂直翻转"));
+    QAction *flipV = imgProc->addAction(tr("垂直翻转"));
     connect(flipV, &QAction::triggered, this, [this] { flipVertical(); });
 
-    QAction *invert = imgProc->addAction(QStringLiteral("反色"));
+    QAction *invert = imgProc->addAction(tr("反色"));
     connect(invert, &QAction::triggered, this, [this] { invertColors(); });
 
     imgProc->addSeparator();
 
     // Slider flyouts: hovering 不透明度/亮度 opens an aligned sub-column with a
     // progress-bar slider (wheel and drag adjust, value shown in percent).
-    createSliderSubMenu(imgProc, QStringLiteral("不透明度"), 10, 100, m_opacityPercent,
+    createSliderSubMenu(imgProc, tr("不透明度"), 10, 100, m_opacityPercent,
                         [this](int val) { setOpacityPercent(val); });
-    createSliderSubMenu(imgProc, QStringLiteral("亮度"), 0, 200, m_brightnessPercent,
+    createSliderSubMenu(imgProc, tr("亮度"), 0, 200, m_brightnessPercent,
                         [this](int val) { setBrightnessPercent(val); });
 
     imgProc->addSeparator();
 
-    QAction *resetProc = imgProc->addAction(QStringLiteral("重置所有处理"));
+    QAction *resetProc = imgProc->addAction(tr("重置所有处理"));
     connect(resetProc, &QAction::triggered, this, [this] { resetProcessing(); });
 
-    QAction *copy = m->addAction(QStringLiteral("复制图片"));
+    QAction *copy = m->addAction(tr("复制图片"));
     connect(copy, &QAction::triggered, this, [this] {
         if (!copyImageToClipboard(m_pix.toImage()))
-            QMessageBox::warning(this, QStringLiteral("Finalize"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+            QMessageBox::warning(this, QStringLiteral("Nami"), tr("复制失败，剪贴板可能被占用，请重试"));
     });
 
-    QAction *save = m->addAction(QStringLiteral("保存图片"));
+    QAction *save = m->addAction(tr("保存图片"));
     connect(save, &QAction::triggered, this, [this] {
         const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
         const QString path = QFileDialog::getSaveFileName(
-            this, QStringLiteral("保存图片"), dir + QStringLiteral("/pin.png"),
+            this, tr("保存图片"), dir + QStringLiteral("/pin.png"),
             QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
         if (!path.isEmpty() && !saveImageAtomic(m_pix.toImage(), path))
-            QMessageBox::warning(this, QStringLiteral("Finalize"), QStringLiteral("保存失败，请检查路径或磁盘空间后重试"));
+            QMessageBox::warning(this, QStringLiteral("Nami"), tr("保存失败，请检查路径或磁盘空间后重试"));
     });
 
     m->addSeparator();
 
     // Section 3
-    QAction *showTools = m->addAction(QStringLiteral("显示工具栏"));
+    QAction *showTools = m->addAction(tr("显示工具栏"));
     showTools->setCheckable(true);
     showTools->setChecked(m_toolbarOn);
     connect(showTools, &QAction::toggled, this, [this](bool checked) { toggleToolbar(checked); });
 
-    QAction *shadow = m->addAction(QStringLiteral("窗口阴影"));
+    QAction *shadow = m->addAction(tr("窗口阴影"));
     shadow->setCheckable(true);
     shadow->setChecked(m_shadowOn);
     connect(shadow, &QAction::toggled, this, [this](bool checked) { setShadowEnabled(checked); });
@@ -1187,9 +1187,9 @@ void PinWindow::contextMenuEvent(QContextMenuEvent *e)
         QMenu m;
         m.setObjectName(QStringLiteral("selCopyMenu"));
         m.setStyleSheet(darkMenuQss);
-        if (m.exec(e->globalPos()) == m.addAction(QStringLiteral("复制"))) {
+        if (m.exec(e->globalPos()) == m.addAction(tr("复制"))) {
             if (!copyTextToClipboard(selectedText()))
-                QMessageBox::warning(this, QStringLiteral("Finalize"), QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
+                QMessageBox::warning(this, QStringLiteral("Nami"), tr("复制失败，剪贴板可能被占用，请重试"));
             m_selBarOpen = false;
             m_selAnchor = -1;
             m_selLead = -1;

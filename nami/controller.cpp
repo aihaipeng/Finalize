@@ -1,4 +1,5 @@
 #include "controller.h"
+#include "i18n.h"
 #include "widgets.h"
 #include <QGuiApplication>
 #include <QPixmap>
@@ -8,6 +9,7 @@
 #include <QStringList>
 #include <QByteArray>
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QScreen>
 #include <QMenu>
@@ -29,27 +31,27 @@ bool HotkeyFilter::nativeEventFilter(const QByteArray &, void *message, qintptr 
 Controller::Controller()
 {
     m_tray.setIcon(QApplication::windowIcon());
-    m_tray.setToolTip(QStringLiteral("Finalize · F1 截图"));
+    m_tray.setToolTip(tr("Nami · F1 截图"));
     QMenu *m = &m_menu;
     m->setStyleSheet(darkMenuQss);
-    m->addAction(QStringLiteral("截图 (F1)"), this, &Controller::startCapture);
-    QMenu *detection = m->addMenu(QStringLiteral("窗口/UI 检测"));
-    QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
-    for (const auto &entry : {qMakePair(QStringLiteral("自动检测窗口"), QStringLiteral("detect_windows")),
-                              qMakePair(QStringLiteral("自动检测 UI 元素"), QStringLiteral("detect_ui_elements"))}) {
+    m->addAction(tr("截图 (F1)"), this, &Controller::startCapture);
+    QMenu *detection = m->addMenu(tr("窗口/UI 检测"));
+    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
+    for (const auto &entry : {qMakePair(tr("自动检测窗口"), QStringLiteral("detect_windows")),
+                              qMakePair(tr("自动检测 UI 元素"), QStringLiteral("detect_ui_elements"))}) {
         QAction *action = detection->addAction(entry.first);
         action->setCheckable(true);
         action->setChecked(settings.value(QStringLiteral("Snip/") + entry.second, entry.second == QStringLiteral("detect_windows")).toBool());
         const QString key = entry.second;
         connect(action, &QAction::toggled, this, [key](bool enabled) {
-            QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot")).setValue(QStringLiteral("Snip/") + key, enabled);
+            QSettings(QStringLiteral("Nami"), QStringLiteral("Nami")).setValue(QStringLiteral("Snip/") + key, enabled);
         });
     }
-    detection->addAction(QStringLiteral("排除程序…"), this, [] {
-        QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+    detection->addAction(tr("排除程序…"), this, [] {
+        QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
         bool ok = false;
-        const QString text = QInputDialog::getMultiLineText(nullptr, QStringLiteral("排除窗口检测"),
-            QStringLiteral("每行一个程序文件名，例如 example.exe（不区分大小写，下次截图生效）："),
+        const QString text = QInputDialog::getMultiLineText(nullptr, Controller::tr("排除窗口检测"),
+            Controller::tr("每行一个程序文件名，例如 example.exe（不区分大小写，下次截图生效）："),
             settings.value(QStringLiteral("Snip/exclude_from_detection")).toStringList().join(QLatin1Char('\n')), &ok);
         if (!ok) return;
         QStringList names;
@@ -59,8 +61,27 @@ Controller::Controller()
         }
         settings.setValue(QStringLiteral("Snip/exclude_from_detection"), names);
     });
+    QMenu *language = m->addMenu(tr("语言"));
+    QActionGroup *languageGroup = new QActionGroup(language);
+    languageGroup->setExclusive(true);
+    const QString configured = I18n::configuredLocale();
+    const auto addLanguage = [&](const QString &locale) {
+        QAction *action = language->addAction(I18n::displayName(locale));
+        action->setCheckable(true);
+        action->setChecked(configured == locale);
+        languageGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [locale] {
+            I18n::saveLocale(locale);
+            QMessageBox::information(nullptr, QCoreApplication::translate("Controller", "语言"),
+                                     QCoreApplication::translate("Controller",
+                                         "语言将在下次启动 Nami 时生效。"));
+        });
+    };
+    addLanguage(QStringLiteral("system"));
+    for (const QString &locale : I18n::availableLocales())
+        if (locale != QLatin1String("system")) addLanguage(locale);
     m->addSeparator();
-    m->addAction(QStringLiteral("退出"), qApp, &QApplication::quit);
+    m->addAction(tr("退出"), qApp, &QApplication::quit);
     m_tray.setContextMenu(m);
     m_tray.show();
 }
@@ -70,10 +91,10 @@ void Controller::startCapture()
     if (m_capture && m_capture->isVisible()) { m_capture->raise(); m_capture->activateWindow(); return; }
     const QVector<ScreenFrame> frames = freezeScreens();   // Freeze before showing the selection overlay.
     if (frames.isEmpty()) {
-        QMessageBox::warning(nullptr, QStringLiteral("Finalize"), QStringLiteral("无法读取屏幕像素"));
+        QMessageBox::warning(nullptr, QStringLiteral("Nami"), tr("无法读取屏幕像素"));
         return;
     }
-    QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
     DetectionOptions options;
     options.windows = settings.value(QStringLiteral("Snip/detect_windows"), true).toBool();
     options.elements = settings.value(QStringLiteral("Snip/detect_ui_elements"), false).toBool();

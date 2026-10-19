@@ -1,6 +1,7 @@
 #pragma once
 
 #include "window_detection.h"
+#include <QCoreApplication>
 #include <QImage>
 #include <QPoint>
 #include <QRectF>
@@ -14,6 +15,7 @@
 
 class PixelInspector : public QWidget
 {
+    Q_DECLARE_TR_FUNCTIONS(PixelInspector)
 public:
     explicit PixelInspector(QWidget *parent);
     bool setSample(const ScreenFrame &frame, const QPoint &globalPixel,

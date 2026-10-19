@@ -197,8 +197,8 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     check(captureScreen && dialog->screen()==captureScreen
               && dialog->size()==OcrDialog::loadingSize()
               && dialog->geometry()==OcrDialog::screenCentered(captureScreen->geometry(),dialog->size())
-              && dialog->windowTitle()==QStringLiteral("Finalize OCR"),
-          "Finalize OCR opens its compact loading card at the selected screen centre");
+              && dialog->windowTitle()==QStringLiteral("Nami OCR"),
+          "Nami OCR opens its compact loading card at the selected screen centre");
     const HWND cardHwnd=reinterpret_cast<HWND>(dialog->winId());
     check(GetWindow(cardHwnd,GW_OWNER)==nullptr && !(GetWindowLongPtrW(cardHwnd,GWL_EXSTYLE)&WS_EX_TOOLWINDOW),
           "OCR is an independent taskbar window rather than a tool owned by a hidden capture overlay");

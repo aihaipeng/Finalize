@@ -252,7 +252,7 @@ int OcrDialog::testTranslate()
         painter.drawText(image.rect(), Qt::AlignCenter, QStringLiteral("The quick brown fox jumps over the lazy dog"));
     }
     // The card reads the last choice from settings: start from defaults, restore after.
-    QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
     const QVariant savedProvider = settings.value(QStringLiteral("Translate/provider")),
                    savedSource = settings.value(QStringLiteral("Translate/source")),
                    savedTarget = settings.value(QStringLiteral("Translate/target"));
@@ -325,7 +325,7 @@ int OcrDialog::testTranslate()
         settle();
         const QString enginePrefix = dialog.m_rows ? QStringLiteral("引擎 (") : QStringLiteral("翻译引擎 (");
         reran = !pane->toPlainText().isEmpty()
-            && !QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot")).contains(QStringLiteral("Translate/provider"))
+            && !QSettings(QStringLiteral("Nami"), QStringLiteral("Nami")).contains(QStringLiteral("Translate/provider"))
             && dialog.m_provider->displayText() == enginePrefix + QStringLiteral("腾讯交互翻译)");
         provider->setCurrentIndex(0);   // Back to Auto: the picker names the engine that answered.
         settle();
@@ -342,7 +342,7 @@ int OcrDialog::testTranslate()
 
     // Part 4: the recognized text sits in an editable source pane; auto-detect names the
     // language it found; typing a correction re-translates after the pause.
-    const QString preview = qEnvironmentVariable("PINSHOT_TRANSLATE_PREVIEW");
+    const QString preview = qEnvironmentVariable("NAMI_TRANSLATE_PREVIEW");
     if (!preview.isEmpty()) dialog.grab().save(preview + QStringLiteral("-result.png"));
     auto *sourceText = dialog.findChild<QPlainTextEdit *>(QStringLiteral("translateSourceText"));
     const bool recognized = sourceText && sourceText->toPlainText().contains(QStringLiteral("fox"), Qt::CaseInsensitive)
@@ -514,7 +514,7 @@ int OcrDialog::testTranslate()
                      : sourceText->mapTo(&dialog,QPoint()).y() < pane->mapTo(&dialog,QPoint()).y());
         picks[2]->trigger();
         modes = modes && !imagePanel->isVisible() && !sourceText->isVisible() && pane->isVisible()
-            && QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot")).value(QStringLiteral("Translate/view")).toInt() == 2;
+            && QSettings(QStringLiteral("Nami"), QStringLiteral("Nami")).value(QStringLiteral("Translate/view")).toInt() == 2;
         picks[0]->trigger();
         modes = modes && imagePanel->isVisible() == imageAllowed && sourceText->isVisible()
             && dialog.m_textSplit->orientation() == (wide ? Qt::Horizontal : Qt::Vertical);
@@ -645,7 +645,7 @@ int OcrDialog::testTranslate()
         loadingCard.reject();
     }
     restore();
-    QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot")).remove(QStringLiteral("Translate/view"));
+    QSettings(QStringLiteral("Nami"), QStringLiteral("Nami")).remove(QStringLiteral("Translate/view"));
     if (!(trimmed && retranslate && modes && tallReadingPanes && columns && scoped && stays && moved && friendly
           && fixedText && responsiveTranslation)) {
         std::fprintf(stderr, "FAIL: trimmed %d retranslate %d modes %d tall panes %d (card=%dx%d split=%dx%d sizes=%d,%d) columns %d fixed %d responsive %d (tall=%dx%d outer=%d,%d inner=%d,%d) find scoped %d replace stays %d moved %d friendly %d (%s | %s)\n",

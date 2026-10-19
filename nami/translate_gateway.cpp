@@ -1,5 +1,6 @@
 #include "translate_gateway.h"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -222,23 +223,23 @@ QVector<TranslateGateway::Provider> TranslateGateway::filterCooledDown(
 static const QVector<TranslateLanguage> &allLanguages()
 {
     static const QVector<TranslateLanguage> languages = {
-        {QStringLiteral("zh"), QStringLiteral("简体中文")},
-        {QStringLiteral("zh-Hant"), QStringLiteral("繁体中文")},
-        {QStringLiteral("en"), QStringLiteral("英语")},
-        {QStringLiteral("ja"), QStringLiteral("日语")},
-        {QStringLiteral("ko"), QStringLiteral("韩语")},
-        {QStringLiteral("fr"), QStringLiteral("法语")},
-        {QStringLiteral("de"), QStringLiteral("德语")},
-        {QStringLiteral("es"), QStringLiteral("西班牙语")},
-        {QStringLiteral("pt"), QStringLiteral("葡萄牙语")},
-        {QStringLiteral("it"), QStringLiteral("意大利语")},
-        {QStringLiteral("ru"), QStringLiteral("俄语")},
-        {QStringLiteral("nl"), QStringLiteral("荷兰语")},
-        {QStringLiteral("id"), QStringLiteral("印尼语")},
-        {QStringLiteral("ms"), QStringLiteral("马来语")},
-        {QStringLiteral("tr"), QStringLiteral("土耳其语")},
-        {QStringLiteral("th"), QStringLiteral("泰语")},
-        {QStringLiteral("vi"), QStringLiteral("越南语")},
+        {QStringLiteral("zh"), QCoreApplication::translate("TranslateGateway", "简体中文")},
+        {QStringLiteral("zh-Hant"), QCoreApplication::translate("TranslateGateway", "繁体中文")},
+        {QStringLiteral("en"), QCoreApplication::translate("TranslateGateway", "英语")},
+        {QStringLiteral("ja"), QCoreApplication::translate("TranslateGateway", "日语")},
+        {QStringLiteral("ko"), QCoreApplication::translate("TranslateGateway", "韩语")},
+        {QStringLiteral("fr"), QCoreApplication::translate("TranslateGateway", "法语")},
+        {QStringLiteral("de"), QCoreApplication::translate("TranslateGateway", "德语")},
+        {QStringLiteral("es"), QCoreApplication::translate("TranslateGateway", "西班牙语")},
+        {QStringLiteral("pt"), QCoreApplication::translate("TranslateGateway", "葡萄牙语")},
+        {QStringLiteral("it"), QCoreApplication::translate("TranslateGateway", "意大利语")},
+        {QStringLiteral("ru"), QCoreApplication::translate("TranslateGateway", "俄语")},
+        {QStringLiteral("nl"), QCoreApplication::translate("TranslateGateway", "荷兰语")},
+        {QStringLiteral("id"), QCoreApplication::translate("TranslateGateway", "印尼语")},
+        {QStringLiteral("ms"), QCoreApplication::translate("TranslateGateway", "马来语")},
+        {QStringLiteral("tr"), QCoreApplication::translate("TranslateGateway", "土耳其语")},
+        {QStringLiteral("th"), QCoreApplication::translate("TranslateGateway", "泰语")},
+        {QStringLiteral("vi"), QCoreApplication::translate("TranslateGateway", "越南语")},
     };
     return languages;
 }

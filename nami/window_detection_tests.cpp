@@ -78,14 +78,14 @@ int CaptureOverlay::testWindowDetection()
     WNDCLASSW windowClass{};
     windowClass.lpfnWndProc = DefWindowProcW;
     windowClass.hInstance = GetModuleHandleW(nullptr);
-    windowClass.lpszClassName = L"PinshotDetectionFixture";
+    windowClass.lpszClassName = L"NamiDetectionFixture";
     check(RegisterClassW(&windowClass) != 0, "register the native fixture class");
     struct Fixture {
         HWND window = nullptr;
         QPoint cursor = QCursor::pos();
         ~Fixture() {
             if (window) DestroyWindow(window);
-            UnregisterClassW(L"PinshotDetectionFixture", GetModuleHandleW(nullptr));
+            UnregisterClassW(L"NamiDetectionFixture", GetModuleHandleW(nullptr));
             QCursor::setPos(cursor);
         }
     } fixture;
