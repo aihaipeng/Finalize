@@ -3,6 +3,7 @@
 #include <QWindow>
 #include "output.h"
 #include "screen_capture.h"
+#include <QAbstractItemView>
 #include "test_support.h"
 #include "widgets.h"
 #include "pin_window.h"
@@ -275,6 +276,8 @@ int CaptureOverlay::testCustomSize()
           "editing position leaves the selection size unchanged");
 
     lock->setChecked(true);
+    if (QDir(QStringLiteral("debug/publish-checks")).exists())
+        popup->grab().save(QStringLiteral("debug/publish-checks/custom-size-panel-locked.png"));
     width->setValue(400);
     QApplication::processEvents();
     check(overlay.m_lockAspect && height->value() == 160
@@ -296,17 +299,34 @@ int CaptureOverlay::testCustomSize()
     check(overlay.m_sizePresets.size() == 1 && preset->currentText() == QStringLiteral("测试预设")
               && settings.value(QStringLiteral("Capture/presets")).toStringList().size() == 1,
           "saving a preset stores the current region and selects it");
+    const int commonIndex = preset->findText(QStringLiteral("640 × 480 px"));
+    check(commonIndex > 0, "the preset list includes common px sizes");
+    if (QDir(QStringLiteral("debug/publish-checks")).exists()) {
+        preset->showPopup();
+        QApplication::processEvents();
+        preset->view()->window()->grab().save(
+            QStringLiteral("debug/publish-checks/custom-size-presets.png"));
+        preset->hidePopup();
+    }
+    preset->setCurrentIndex(commonIndex);
+    QApplication::processEvents();
+    check(overlay.m_sel.topLeft() == origin + QPoint(150, 100)
+              && overlay.m_sel.size() == QSize(320, 240)
+              && width->value() == 320 && height->value() == 240 && popup->pos() == panelPos,
+          "selecting a common size keeps the top-left and applies the px size");
     x->setValue(200);
     width->setValue(200);
     QApplication::processEvents();
-    check(preset->currentIndex() == 0 && overlay.m_sel.size() == QSize(200, 80),
+    check(preset->currentIndex() == 0 && overlay.m_sel.size() == QSize(200, 150),
           "editing after a preset returns the preset selector to the custom entry");
-    preset->setCurrentIndex(1);
+    const int savedIndex = preset->findText(QStringLiteral("测试预设"));
+    check(savedIndex > 0, "saved presets remain in the preset list");
+    preset->setCurrentIndex(savedIndex);
     QApplication::processEvents();
     check(overlay.m_sel.topLeft() == origin + QPoint(150, 100)
               && overlay.m_sel.size() == QSize(300, 120)
               && x->value() == 150 && width->value() == 300 && popup->pos() == panelPos,
-          "selecting a preset updates the selection and fields without moving the panel");
+          "selecting a saved preset updates the selection and fields without moving the panel");
 
     popup->close();
     clickSizeLabel();

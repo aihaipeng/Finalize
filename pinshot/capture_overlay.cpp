@@ -51,7 +51,11 @@
 #include <QSettings>
 #include <QPointer>
 #include <QCloseEvent>
+#include <QFrame>
+#include <QPalette>
+#include <QStandardItemModel>
 #include <qt_windows.h>
+#include <dwmapi.h>
 #include <imm.h>
 
 CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
@@ -1621,6 +1625,33 @@ void CaptureOverlay::updateCustomSizeInputs()
     m_updatingCustom = false;
 }
 
+static const QSize kCommonSizePresets[] = {
+    {1920, 1080}, {2560, 1440}, {3840, 2160}, {1280, 720}, {1024, 768},
+    {1920, 1200}, {1080, 1080}, {800, 600}, {640, 480}
+};
+
+static void applyDarkWindowChrome(QWidget *window)
+{
+    if (!window) return;
+    const HWND hwnd = reinterpret_cast<HWND>(window->winId());
+    const BOOL darkTitle = TRUE;
+    DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &darkTitle, sizeof(darkTitle));
+    const COLORREF captionColor = RGB(24, 24, 27), titleText = RGB(252, 252, 252),
+                   borderColor = RGB(39, 39, 42);
+    DwmSetWindowAttribute(hwnd, 35 /* DWMWA_CAPTION_COLOR */, &captionColor, sizeof(captionColor));
+    DwmSetWindowAttribute(hwnd, 36 /* DWMWA_TEXT_COLOR */, &titleText, sizeof(titleText));
+    DwmSetWindowAttribute(hwnd, 34 /* DWMWA_BORDER_COLOR */, &borderColor, sizeof(borderColor));
+    QPalette dark = window->palette();
+    dark.setColor(QPalette::Window, QColor(24, 24, 27));
+    dark.setColor(QPalette::Base, QColor(6, 6, 7));
+    dark.setColor(QPalette::WindowText, QColor(252, 252, 252));
+    dark.setColor(QPalette::Text, QColor(252, 252, 252));
+    dark.setColor(QPalette::ButtonText, QColor(252, 252, 252));
+    dark.setColor(QPalette::Mid, QColor(63, 63, 70));
+    dark.setColor(QPalette::Dark, QColor(39, 39, 42));
+    window->setPalette(dark);
+}
+
 void CaptureOverlay::showCustomSizePopup()
 {
     if (m_embedded || m_pinEdit || m_sel.isNull()) return;
@@ -1642,19 +1673,41 @@ void CaptureOverlay::showCustomSizePopup()
     popup->setAttribute(Qt::WA_DeleteOnClose, false);
     popup->setStyleSheet(QStringLiteral(
         "QDialog{background:#18181b;}"
-        "QLabel{color:#fcfcfc;font-size:12px;}"
-        "QSpinBox{color:#fcfcfc;background:#060607;border:1px solid #3c3c3c;border-radius:6px;"
-        "padding:2px 4px;min-height:22px;font-size:12px;}"
-        "QComboBox{color:#fcfcfc;background:#060607;border:1px solid #3c3c3c;border-radius:6px;"
-        "padding:2px 6px;min-height:22px;font-size:12px;}"
-        "QComboBox::drop-down{border:none;width:16px;background:transparent;}"
-        "QCheckBox{color:#fcfcfc;font-size:12px;spacing:6px;}"
-        "QPushButton{color:#fcfcfc;background:#262626;border:1px solid #3c3c3c;border-radius:6px;"
-        "padding:4px 12px;font-size:12px;}"
-        "QPushButton:hover{background:#303034;}"));
-    auto *grid = new QGridLayout(popup);
-    grid->setContentsMargins(10, 8, 10, 8);
-    grid->setSpacing(6);
+        "QLabel{color:#a1a1aa;background:transparent;font-size:12px;}"
+        "QLabel#customSection{color:#fcfcfc;font-weight:600;}"
+        "QLabel#customHint{color:#71717a;font-size:11px;}"
+        "QFrame#customCard{background:#060607;border:none;border-radius:12px;}"
+        "QSpinBox{color:#fcfcfc;background:#101013;border:1px solid #27272a;border-radius:8px;"
+        "padding:0 8px;min-height:30px;font-size:12px;selection-background-color:#0485f7;}"
+        "QSpinBox:hover{background:#151518;} QSpinBox:focus{border-color:#0485f7;}"
+        "QComboBox{color:#fcfcfc;background:#101013;border:1px solid #27272a;border-radius:8px;"
+        "padding:0 8px;min-height:30px;font-size:12px;}"
+        "QComboBox:hover{background:#151518;} QComboBox:focus{border-color:#0485f7;}"
+        "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
+        "QComboBox::down-arrow{image:url(:/icons/chevron_down_light.png);width:10px;height:10px;}"
+        "QComboBox QAbstractItemView{color:#fcfcfc;background:#262626;border:1px solid #3c3c3c;"
+        "border-radius:8px;padding:4px;outline:0;selection-background-color:#0485f7;"
+        "selection-color:#ffffff;}"
+        "QComboBox QAbstractItemView::item{min-height:26px;padding-left:10px;padding-right:8px;}"
+        "QScrollBar:vertical{background:transparent;width:8px;margin:0;}"
+        "QScrollBar::handle:vertical{background:#3f3f46;border-radius:4px;min-height:20px;}"
+        "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
+        "QCheckBox{color:#a1a1aa;background:transparent;font-size:12px;spacing:7px;}"
+        "QCheckBox::indicator{width:16px;height:16px;border:1px solid #3c3c3c;border-radius:4px;"
+        "background:#101013;}"
+        "QCheckBox::indicator:hover{border-color:#52525b;}"
+        "QCheckBox::indicator:checked{background:#0485f7;border-color:#0485f7;"
+        "image:url(:/icons/check_light.png);}"
+        "QPushButton{color:#fcfcfc;background:#26262a;border:none;border-radius:8px;"
+        "padding:0 12px;min-height:30px;font-size:12px;}"
+        "QPushButton:hover{background:#303034;} QPushButton:pressed{background:#27272a;}"));
+
+    // Keep the native title bar draggable but match the dark card palette.
+    applyDarkWindowChrome(popup);
+
+    auto *layout = new QVBoxLayout(popup);
+    layout->setContentsMargins(14, 14, 14, 14);
+    layout->setSpacing(10);
 
     auto makeSpin = [popup](const QString &name, int minimum, int maximum, int width) {
         auto *spin = new QSpinBox(popup);
@@ -1665,64 +1718,88 @@ void CaptureOverlay::showCustomSizePopup()
         spin->setFixedWidth(width);
         return spin;
     };
-    m_customX = makeSpin(QStringLiteral("customX"), -999999, 999999, 70);
+    m_customX = makeSpin(QStringLiteral("customX"), -999999, 999999, 84);
     m_customX->setAccessibleName(QStringLiteral("区域横向位置"));
-    m_customY = makeSpin(QStringLiteral("customY"), -999999, 999999, 70);
+    m_customX->setPrefix(QStringLiteral("X  "));
+    m_customY = makeSpin(QStringLiteral("customY"), -999999, 999999, 84);
     m_customY->setAccessibleName(QStringLiteral("区域纵向位置"));
-    m_customWidth = makeSpin(QStringLiteral("customWidth"), 4, 99999, 64);
+    m_customY->setPrefix(QStringLiteral("Y  "));
+    m_customWidth = makeSpin(QStringLiteral("customWidth"), 4, 99999, 70);
     m_customWidth->setAccessibleName(QStringLiteral("区域宽度"));
-    m_customHeight = makeSpin(QStringLiteral("customHeight"), 4, 99999, 64);
+    m_customHeight = makeSpin(QStringLiteral("customHeight"), 4, 99999, 70);
     m_customHeight->setAccessibleName(QStringLiteral("区域高度"));
     m_customUnit = new QComboBox(popup);
     m_customUnit->setObjectName(QStringLiteral("customUnit"));
     m_customUnit->setAccessibleName(QStringLiteral("尺寸单位"));
     m_customUnit->addItems({QStringLiteral("px"), QStringLiteral("dp")});
-    m_customUnit->setFixedWidth(56);
+    m_customUnit->setFixedWidth(58);
     m_customLock = new QCheckBox(QStringLiteral("锁定长宽比"), popup);
     m_customLock->setObjectName(QStringLiteral("customLockAspect"));
     m_customLock->setAccessibleName(QStringLiteral("锁定长宽比"));
 
-    auto *positionLabel = new QLabel(QStringLiteral("位置"), popup);
-    auto *xLabel = new QLabel(QStringLiteral("X"), popup);
-    auto *yLabel = new QLabel(QStringLiteral("Y"), popup);
-    grid->addWidget(positionLabel, 0, 0);
-    grid->addWidget(xLabel, 0, 1);
-    grid->addWidget(m_customX, 0, 2);
-    grid->addWidget(yLabel, 0, 3);
-    grid->addWidget(m_customY, 0, 4);
+    auto *card = new QFrame(popup);
+    card->setObjectName(QStringLiteral("customCard"));
+    auto *cardLayout = new QVBoxLayout(card);
+    cardLayout->setContentsMargins(12, 12, 12, 12);
+    cardLayout->setSpacing(10);
 
-    auto *sizeLabel = new QLabel(QStringLiteral("大小"), popup);
-    auto *times = new QLabel(QStringLiteral("×"), popup);
+    auto *positionRow = new QHBoxLayout;
+    positionRow->setSpacing(8);
+    auto *positionLabel = new QLabel(QStringLiteral("位置"), card);
+    positionLabel->setObjectName(QStringLiteral("customSection"));
+    positionLabel->setFixedWidth(30);
+    positionRow->addWidget(positionLabel);
+    positionRow->addWidget(m_customX);
+    positionRow->addWidget(m_customY);
+    positionRow->addStretch();
+    cardLayout->addLayout(positionRow);
+
+    auto *sizeRow = new QHBoxLayout;
+    sizeRow->setSpacing(8);
+    auto *sizeLabel = new QLabel(QStringLiteral("大小"), card);
+    sizeLabel->setObjectName(QStringLiteral("customSection"));
+    sizeLabel->setFixedWidth(30);
+    auto *times = new QLabel(QStringLiteral("×"), card);
     times->setAlignment(Qt::AlignCenter);
-    grid->addWidget(sizeLabel, 1, 0);
-    grid->addWidget(m_customWidth, 1, 1);
-    grid->addWidget(times, 1, 2);
-    grid->addWidget(m_customHeight, 1, 3);
-    grid->addWidget(m_customUnit, 1, 4);
-    auto *hint = new QLabel(QStringLiteral("dp = px ÷ 屏幕缩放比"), popup);
-    hint->setStyleSheet(QStringLiteral("color:#a1a1aa;font-size:11px;"));
-    grid->addWidget(hint, 2, 0, 1, 5);
-    grid->addWidget(m_customLock, 3, 0, 1, 4);
+    sizeRow->addWidget(sizeLabel);
+    sizeRow->addWidget(m_customWidth);
+    sizeRow->addWidget(times);
+    sizeRow->addWidget(m_customHeight);
+    sizeRow->addWidget(m_customUnit);
+    sizeRow->addStretch();
+    cardLayout->addLayout(sizeRow);
 
+    auto *hintRow = new QHBoxLayout;
+    hintRow->setSpacing(8);
+    auto *hint = new QLabel(QStringLiteral("dp = px ÷ 屏幕缩放比"), card);
+    hint->setObjectName(QStringLiteral("customHint"));
+    hintRow->addSpacing(38);
+    hintRow->addWidget(hint);
+    hintRow->addStretch();
+    hintRow->addWidget(m_customLock);
+    cardLayout->addLayout(hintRow);
+
+    auto *presetRow = new QHBoxLayout;
+    presetRow->setSpacing(8);
     auto *presetLabel = new QLabel(QStringLiteral("预设"), popup);
+    presetLabel->setObjectName(QStringLiteral("customSection"));
+    presetLabel->setFixedWidth(30);
     m_presetCombo = new QComboBox(popup);
     m_presetCombo->setObjectName(QStringLiteral("customPreset"));
-    m_presetCombo->setAccessibleName(QStringLiteral("截图区域预设"));
-    m_presetCombo->setMinimumWidth(138);
-    auto *savePreset = new QPushButton(QStringLiteral("保存"), popup);
+    m_presetCombo->setAccessibleName(QStringLiteral("常用尺寸和已保存区域"));
+    m_presetCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_presetCombo->setMinimumWidth(190);
+    m_presetCombo->setMaxVisibleItems(16);
+    auto *savePreset = new QPushButton(QStringLiteral("保存当前"), popup);
     savePreset->setObjectName(QStringLiteral("customPresetSave"));
     savePreset->setToolTip(QStringLiteral("保存当前区域为预设"));
-    grid->addWidget(presetLabel, 4, 0);
-    grid->addWidget(m_presetCombo, 4, 1, 1, 3);
-    grid->addWidget(savePreset, 4, 4);
+    savePreset->setFixedHeight(30);
+    presetRow->addWidget(presetLabel);
+    presetRow->addWidget(m_presetCombo, 1);
+    presetRow->addWidget(savePreset);
 
-    auto *actions = new QHBoxLayout;
-    actions->setSpacing(6);
-    actions->addStretch();
-    auto *close = new QPushButton(QStringLiteral("关闭"), popup);
-    close->setObjectName(QStringLiteral("customSizeClose"));
-    actions->addWidget(close);
-    grid->addLayout(actions, 5, 0, 1, 5);
+    layout->addWidget(card);
+    layout->addLayout(presetRow);
 
     connect(m_customX, QOverload<int>::of(&QSpinBox::valueChanged), this, [this] {
         if (!m_updatingCustom) customFieldsChanged();
@@ -1763,7 +1840,6 @@ void CaptureOverlay::showCustomSizePopup()
         if (!m_updatingCustom && index > 0) applyCustomPreset(index);
     });
     connect(savePreset, &QPushButton::clicked, this, &CaptureOverlay::saveCurrentPreset);
-    connect(close, &QPushButton::clicked, popup, &QDialog::reject);
     connect(popup, &QDialog::finished, this, [this] {
         if (isVisible()) setFocus();
         updateTip();
@@ -1809,8 +1885,22 @@ void CaptureOverlay::customFieldsChanged()
 
 void CaptureOverlay::applyCustomPreset(int index)
 {
-    if (index <= 0 || index > m_sizePresets.size() || m_sel.isNull()) return;
-    QRect local = localScreenRect(m_sizePresets.at(index - 1).global).intersected(rect());
+    if (index <= 0 || index >= (m_presetCombo ? m_presetCombo->count() : 0) || m_sel.isNull())
+        return;
+    const QVariant data = m_presetCombo->itemData(index);
+    QRect global;
+    if (data.canConvert<QRect>()) {
+        global = data.toRect();
+    } else if (data.canConvert<QSize>()) {
+        // Common sizes are native pixels; keep the current top-left and convert
+        // through the same screen scale used by the px unit.
+        const QSize size = data.toSize();
+        const QRect native = nativeFromGlobal(globalScreenRect(m_sel));
+        global = globalFromUnit(native.x(), native.y(), size.width(), size.height(), SizeUnit::Px);
+    } else {
+        return;
+    }
+    QRect local = localScreenRect(global).intersected(rect());
     if (local.width() < 4 || local.height() < 4) return;
     cancelDetection();
     m_sel = local;
@@ -1858,7 +1948,21 @@ void CaptureOverlay::refreshPresetCombo(const QString &selected)
     m_updatingCustom = true;
     m_presetCombo->clear();
     m_presetCombo->addItem(QStringLiteral("选择预设…"));
-    for (const SizePreset &preset : m_sizePresets) m_presetCombo->addItem(preset.name);
+    for (const QSize &size : kCommonSizePresets) {
+        m_presetCombo->addItem(QStringLiteral("%1 × %2 px").arg(size.width()).arg(size.height()),
+                               size);
+    }
+    if (!m_sizePresets.isEmpty()) {
+        m_presetCombo->addItem(QStringLiteral("已保存"));
+        if (auto *model = qobject_cast<QStandardItemModel *>(m_presetCombo->model())) {
+            if (auto *item = model->item(m_presetCombo->count() - 1)) {
+                item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+                item->setForeground(QColor(0x71, 0x71, 0x7a));
+            }
+        }
+        for (const SizePreset &preset : m_sizePresets)
+            m_presetCombo->addItem(preset.name, preset.global);
+    }
     const int at = selected.isEmpty() ? 0 : m_presetCombo->findText(selected);
     m_presetCombo->setCurrentIndex(at > 0 ? at : 0);
     m_updatingCustom = false;
@@ -1867,12 +1971,26 @@ void CaptureOverlay::refreshPresetCombo(const QString &selected)
 void CaptureOverlay::saveCurrentPreset()
 {
     if (m_sel.isNull()) return;
-    bool ok = false;
     const QString defaultName = QStringLiteral("预设 %1").arg(m_sizePresets.size() + 1);
-    const QString name = QInputDialog::getText(m_customSizePopup, QStringLiteral("保存预设"),
-                                               QStringLiteral("预设名称："), QLineEdit::Normal,
-                                               defaultName, &ok);
-    if (ok) saveSizePreset(name);
+    QInputDialog dialog(m_customSizePopup);
+    dialog.setWindowTitle(QStringLiteral("保存预设"));
+    dialog.setLabelText(QStringLiteral("预设名称"));
+    dialog.setTextValue(defaultName);
+    dialog.setOkButtonText(QStringLiteral("保存"));
+    dialog.setCancelButtonText(QStringLiteral("取消"));
+    dialog.setInputMode(QInputDialog::TextInput);
+    dialog.setWindowFlag(Qt::WindowStaysOnTopHint, true);
+    dialog.setStyleSheet(QStringLiteral(
+        "QDialog{background:#18181b;}"
+        "QLabel{color:#fcfcfc;font-size:12px;}"
+        "QLineEdit{color:#fcfcfc;background:#101013;border:1px solid #27272a;border-radius:8px;"
+        "padding:0 8px;min-height:30px;font-size:12px;selection-background-color:#0485f7;}"
+        "QLineEdit:focus{border-color:#0485f7;}"
+        "QPushButton{color:#fcfcfc;background:#26262a;border:none;border-radius:8px;"
+        "padding:0 12px;min-height:30px;font-size:12px;}"
+        "QPushButton:hover{background:#303034;}"));
+    applyDarkWindowChrome(&dialog);
+    if (dialog.exec() == QDialog::Accepted) saveSizePreset(dialog.textValue());
 }
 
 void CaptureOverlay::saveSizePreset(const QString &name)
