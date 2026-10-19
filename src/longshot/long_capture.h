@@ -59,6 +59,7 @@ public:
     void resume();                                   // Back from the editor: the session continues where it was.
     bool suspended() const { return m_suspended && !m_done; }
 signals:
+    void captured(const QImage &image);             // Any successful save/copy/pin output.
     void finished(const QPixmap &pix, bool edit);
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -97,6 +98,7 @@ private:
     void notice(const QString &title, const QString &text, const QString &noAskKey);
     void fail(const QString &message);
     void finish(bool edit = false);
+    void reportCaptured(const QImage &image);        // One history entry per long capture.
     void suspend();                                  // Hidden and still while the editor is open.
     // ---- Crop: keeps the rows from the current frame to one end; auto crop trims when scrolling turns back. ----
     bool cropRows(int from, int to);                 // Keeps stored rows [from,to) of the current coverage.
@@ -159,4 +161,5 @@ private:
     int m_cropBase = 0;                              // Frame offset at the previous tick.
     bool m_suspended = false;
     bool m_done = false;
+    bool m_captured = false;
 };

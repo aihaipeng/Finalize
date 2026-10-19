@@ -1,4 +1,5 @@
 #include "shared/i18n.h"
+#include "shared/settings.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -119,7 +120,7 @@ QString displayName(const QString &locale)
 
 QString configuredLocale()
 {
-    const QString value = QSettings(QStringLiteral("Nami"), QStringLiteral("Nami"))
+    const QString value = NamiSettings()
                               .value(QStringLiteral("UI/language")).toString();
     return value.isEmpty() ? QStringLiteral("system") : value;
 }
@@ -187,7 +188,7 @@ bool install(QTranslator *applicationTranslator, QTranslator *qtTranslator, cons
 
 void saveLocale(const QString &locale)
 {
-    QSettings(QStringLiteral("Nami"), QStringLiteral("Nami"))
+    NamiSettings()
         .setValue(QStringLiteral("UI/language"), locale);
 }
 }

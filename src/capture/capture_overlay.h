@@ -86,6 +86,7 @@ public:
     static int testOutput();
 signals:
     void grabbed(const QPixmap &pix, const QRect &globalRegion);
+    void captured(const QPixmap &pix, const QRect &globalRegion);   // Any successful save/copy/pin output.
     void longRequested(const QRect &globalRegion);
     void undoAvailability(bool canUndo, bool canRedo);   // Embedded pin toolbar buttons.
     void stripRebuilt();                                 // Strip contents changed; reposition it.
@@ -297,6 +298,7 @@ private slots:
     void barcodeCapture();
     void saveCapture();
     bool saveCaptureTo(const QString &path);
+    void reportCaptured(const QPixmap &pix, const QRect &globalRegion);
     void copyCapture();
     void showOutputError(const QString &message);
     void pinCapture();
@@ -344,6 +346,7 @@ private:
     Annotation m_ann;                                // Annotation under construction.
     bool m_live = false;
     bool m_pinEdit = false;                            // Re-annotating a pin: canvas fixed, no capture chrome.
+    bool m_captured = false;                           // One history entry per capture session.
     bool m_embedded = false;                           // Child canvas inside a pin window, no session at all.
     bool m_fwdDrag = false;                            // Embedded: this drag moves the pin window.
     int m_selAnn = -1;                               // Annotation selected for editing.

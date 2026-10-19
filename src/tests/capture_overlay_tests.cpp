@@ -33,6 +33,7 @@
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QPushButton>
+#include "shared/settings.h"
 #include <QSettings>
 #include <qt_windows.h>
 #include <cstdio>
@@ -194,7 +195,7 @@ int CaptureOverlay::testCustomSize()
     const auto check = [&failures](bool ok, const char *message) {
         if (!ok) { ++failures; std::fprintf(stderr, "FAIL: %s\n", message); }
     };
-    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
+    NamiSettings settings;
     const bool hadUnit = settings.contains(QStringLiteral("Capture/sizeUnit"));
     const QVariant oldUnit = settings.value(QStringLiteral("Capture/sizeUnit"));
     const bool hadPresets = settings.contains(QStringLiteral("Capture/presets"));
@@ -465,6 +466,9 @@ int CaptureOverlay::testOutput()
     image.fill(QColor("#243648"));
     CaptureOverlay overlay({ScreenFrame{QRect(screen.topLeft(), image.size()), QRect(0, 0, 320, 240), image}});
     overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    int capturedCount = 0;
+    const auto captureConnection = QObject::connect(&overlay, &CaptureOverlay::captured,
+        [&](const QPixmap &, const QRect &) { ++capturedCount; });
     overlay.m_mode = Adjusting;
     overlay.m_sel = QRect(screen.topLeft() - overlay.pos() + QPoint(40, 40), QSize(200, 120));
     overlay.selectTool(ATool::Text);
@@ -479,6 +483,7 @@ int CaptureOverlay::testOutput()
         check(overlay.isVisible() && overlay.m_anns.size() == 1
                   && overlay.cropped().toImage() == expected && overlay.m_sizeTip->isVisible(),
               "failed ordinary copy keeps the selection, annotation, and failure hint");
+        check(capturedCount == 0, "failed output does not enter history");
     }
     QTemporaryDir directory;
     check(directory.isValid(), "output regression has an isolated temporary directory");
@@ -495,6 +500,7 @@ int CaptureOverlay::testOutput()
         CloseHandle(heldFile);
         check(overlay.saveCaptureTo(protectedPath) && QImage(protectedPath) == expected,
               "retrying the same destination succeeds after the replacement lock is released");
+        check(capturedCount == 1, "successful output reports one history capture");
     }
     overlay.show();
     for (int action : {Qt::Key_Delete, Qt::Key_Z, Qt::Key_Y, Qt::Key_Escape}) {
@@ -569,6 +575,7 @@ int CaptureOverlay::testOutput()
     overlay.pinCapture();
     check(!emittedEmpty && overlay.isVisible(), "empty pin export preserves the capture without creating a pin");
     QObject::disconnect(connection);
+    QObject::disconnect(captureConnection);
     overlay.show();
     overlay.m_sel = validSelection;
     overlay.m_sizeTip->hide();

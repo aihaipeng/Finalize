@@ -1,4 +1,4 @@
-QT       += core gui widgets concurrent svg network
+QT       += core gui widgets concurrent svg network sql
 LIBS     += -limm32 -lgdi32 -ldwmapi -loleacc -lole32 -loleaut32
 TARGET    = nami
 TEMPLATE  = app
@@ -21,6 +21,7 @@ HEADERS  += onnxruntime_c_api.h onnxruntime_ep_c_api.h
 
 include(src/shared/shared.pri)
 include(src/platform/platform.pri)
+include(src/history/history.pri)
 include(src/annotate/annotate.pri)
 include(src/text/engines/engines.pri)
 include(src/text/cards/cards.pri)
@@ -38,5 +39,5 @@ CONFIG += lrelease
 LRELEASE_DIR = .
 # qmake's lrelease feature writes beside the build target; copy only the
 # compiled QM packs into the runtime language folder.
-QMAKE_POST_LINK = cmd /c "if not exist \"$$PWD\\release\\language\" mkdir \"$$PWD\\release\\language\" & copy /Y \"$$PWD\\release\\nami_*.qm\" \"$$PWD\\release\\language\\\""
+QMAKE_POST_LINK = cmd /c "if not exist \"$$PWD\\release\\language\" mkdir \"$$PWD\\release\\language\" & copy /Y \"$$PWD\\release\\nami_*.qm\" \"$$PWD\\release\\language\\\" & if not exist \"$$PWD\\release\\sqldrivers\" mkdir \"$$PWD\\release\\sqldrivers\" & copy /Y \"$$[QT_INSTALL_BINS]\\Qt6Sql.dll\" \"$$PWD\\release\\\" & copy /Y \"$$[QT_INSTALL_PLUGINS]\\sqldrivers\\qsqlite.dll\" \"$$PWD\\release\\sqldrivers\\\""
 DISTFILES += onnxruntime-LICENSE.txt third_party/zxing-cpp/LICENSE third_party/zxing-cpp/README.md

@@ -1,8 +1,13 @@
 #include "app/controller.h"
 #include "shared/i18n.h"
+#include "shared/settings.h"
 #include "shared/widgets.h"
+#include "history/history_store.h"
 #include <QGuiApplication>
+#include <QCursor>
 #include <QPixmap>
+#include <QSizeF>
+#include <QSignalBlocker>
 #include <QVector>
 #include <QRect>
 #include <QString>
@@ -35,8 +40,17 @@ Controller::Controller()
     QMenu *m = &m_menu;
     m->setStyleSheet(darkMenuQss);
     m->addAction(tr("截图 (F1)"), this, &Controller::startCapture);
+    m->addAction(tr("截图历史…"), this, &Controller::openHistory);
+    m_historyEnabled = m->addAction(tr("记录截图历史"));
+    m_historyEnabled->setCheckable(true);
+    m_historyEnabled->setChecked(HistoryStore::enabled());
+    m_historyEnabled->setToolTip(tr("默认关闭。开启后，未保存的截图也会复制到本机历史。"));
+    connect(m_historyEnabled, &QAction::toggled, this, [this](bool enabled) {
+        HistoryStore::setEnabled(enabled);
+        if (m_history) m_history->setRecordingEnabled(enabled);
+    });
     QMenu *detection = m->addMenu(tr("窗口/UI 检测"));
-    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
+    NamiSettings settings;
     for (const auto &entry : {qMakePair(tr("自动检测窗口"), QStringLiteral("detect_windows")),
                               qMakePair(tr("自动检测 UI 元素"), QStringLiteral("detect_ui_elements"))}) {
         QAction *action = detection->addAction(entry.first);
@@ -44,11 +58,11 @@ Controller::Controller()
         action->setChecked(settings.value(QStringLiteral("Snip/") + entry.second, entry.second == QStringLiteral("detect_windows")).toBool());
         const QString key = entry.second;
         connect(action, &QAction::toggled, this, [key](bool enabled) {
-            QSettings(QStringLiteral("Nami"), QStringLiteral("Nami")).setValue(QStringLiteral("Snip/") + key, enabled);
+            NamiSettings().setValue(QStringLiteral("Snip/") + key, enabled);
         });
     }
     detection->addAction(tr("排除程序…"), this, [] {
-        QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
+        NamiSettings settings;
         bool ok = false;
         const QString text = QInputDialog::getMultiLineText(nullptr, Controller::tr("排除窗口检测"),
             Controller::tr("每行一个程序文件名，例如 example.exe（不区分大小写，下次截图生效）："),
@@ -94,7 +108,7 @@ void Controller::startCapture()
         QMessageBox::warning(nullptr, QStringLiteral("Nami"), tr("无法读取屏幕像素"));
         return;
     }
-    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
+    NamiSettings settings;
     DetectionOptions options;
     options.windows = settings.value(QStringLiteral("Snip/detect_windows"), true).toBool();
     options.elements = settings.value(QStringLiteral("Snip/detect_ui_elements"), false).toBool();
@@ -105,8 +119,14 @@ void Controller::startCapture()
     connect(ov, &CaptureOverlay::grabbed, this, [](const QPixmap &pix, const QRect &region) {
         if (!pix.isNull() && !region.isEmpty()) new PinWindow(pix, region);
     });
+    connect(ov, &CaptureOverlay::captured, this, [](const QPixmap &pix, const QRect &) {
+        if (!pix.isNull()) HistoryStore::record(pix.toImage(), QStringLiteral("capture"));
+    });
     connect(ov, &CaptureOverlay::longRequested, this, [](const QRect &region) {
         auto *lc = new LongCapture(region);
+        connect(lc, &LongCapture::captured, lc, [](const QImage &image) {
+            HistoryStore::record(image, QStringLiteral("longshot"));
+        });
         connect(lc, &LongCapture::finished, lc, [lc](const QPixmap &pix, bool edit) {
             const QRect region = lc->region();   // The selection may have moved along the scroll axis.
             const QScreen *scr = QGuiApplication::screenAt(region.center());
@@ -124,4 +144,39 @@ void Controller::startCapture()
         });
         lc->start();
     });
+}
+
+void Controller::openHistory()
+{
+    if (m_history) {
+        m_history->raise();
+        m_history->activateWindow();
+        return;
+    }
+
+    auto *dialog = new HistoryDialog;
+    m_history = dialog;
+    connect(dialog, &HistoryDialog::pinRequested, this, [](const QImage &image) {
+        if (image.isNull()) return;
+        QScreen *screen = QGuiApplication::screenAt(QCursor::pos());
+        if (!screen) screen = QGuiApplication::primaryScreen();
+        if (!screen) return;
+        const QRect available = screen->availableGeometry();
+        const qreal dpr = image.devicePixelRatio() > 0 ? image.devicePixelRatio() : 1.0;
+        QSizeF logical(image.width() / dpr, image.height() / dpr);
+        const QSizeF limit(available.width() * 0.8, available.height() * 0.8);
+        if (logical.width() > limit.width() || logical.height() > limit.height())
+            logical.scale(limit, Qt::KeepAspectRatio);
+        QRect rect(QPoint(0, 0), logical.toSize());
+        rect.moveCenter(available.center());
+        new PinWindow(QPixmap::fromImage(image), rect);
+    });
+    connect(dialog, &HistoryDialog::enabledChanged, this, [this](bool enabled) {
+        if (!m_historyEnabled || m_historyEnabled->isChecked() == enabled) return;
+        const QSignalBlocker blocker(m_historyEnabled);
+        m_historyEnabled->setChecked(enabled);
+    });
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
 }

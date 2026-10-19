@@ -3,10 +3,12 @@
 #include "capture/capture_overlay.h"
 #include "pin/pin_window.h"
 #include "longshot/long_capture.h"
+#include "history/history_dialog.h"
 #include <QObject>
 #include <QByteArray>
 #include <QSystemTrayIcon>
 #include <QMenu>
+#include <QAction>
 #include <QtMath>
 #include <QAbstractNativeEventFilter>
 #include <QPointer>
@@ -28,8 +30,11 @@ public:
     Controller();
 public slots:
     void startCapture();
+    void openHistory();
 private:
     QMenu m_menu;                                    // Declared first so the tray releases it before destruction.
     QSystemTrayIcon m_tray;
     QPointer<CaptureOverlay> m_capture;
+    QPointer<HistoryDialog> m_history;
+    QAction *m_historyEnabled = nullptr;
 };

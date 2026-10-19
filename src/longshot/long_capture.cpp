@@ -2,6 +2,7 @@
 #include "text/engines/ocr_engine.h"
 #include "text/cards/ocr_dialog.h"
 #include "shared/geometry.h"
+#include "shared/settings.h"
 #include <QGuiApplication>
 #include <QCoreApplication>
 #include <QImage>
@@ -452,7 +453,7 @@ void LongCapture::autoCrop(int growth)
 void LongCapture::setAutoCrop(bool on)
 {
     m_autoCrop = on;
-    QSettings(QStringLiteral("Nami"), QStringLiteral("Nami")).setValue(QStringLiteral("LongShot/AutoCrop"), on);
+    NamiSettings().setValue(QStringLiteral("LongShot/AutoCrop"), on);
     if (m_autoCropBox && m_autoCropBox->isChecked() != on) {
         const QSignalBlocker block(m_autoCropBox);
         m_autoCropBox->setChecked(on);
@@ -648,7 +649,7 @@ void LongCapture::buildUi()
         w->setFocusPolicy(Qt::NoFocus);
         cropLay->addWidget(w);
     }
-    m_autoCrop = QSettings(QStringLiteral("Nami"), QStringLiteral("Nami"))
+    m_autoCrop = NamiSettings()
                      .value(QStringLiteral("LongShot/AutoCrop"), false).toBool();
     m_autoCropBox->setChecked(m_autoCrop);
     updateCropDirection();
@@ -1006,7 +1007,7 @@ bool LongCapture::eventFilter(QObject *watched, QEvent *event)
 
 void LongCapture::notice(const QString &title, const QString &text, const QString &noAskKey)
 {
-    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
+    NamiSettings settings;
     if (!noAskKey.isEmpty() && settings.value(noAskKey, false).toBool()) return;
     if (m_notice) return;
     auto *box = new QMessageBox(QMessageBox::Warning, title, text, QMessageBox::Ok);
@@ -1017,7 +1018,7 @@ void LongCapture::notice(const QString &title, const QString &text, const QStrin
     m_paused = true;                             // The dialog may cover the selection.
     connect(box, &QMessageBox::finished, this, [this, box, noAskKey] {
         if (!noAskKey.isEmpty() && box->checkBox() && box->checkBox()->isChecked())
-            QSettings(QStringLiteral("Nami"), QStringLiteral("Nami")).setValue(noAskKey, true);
+            NamiSettings().setValue(noAskKey, true);
         m_paused = false;                        // The dialog closed; capturing may resume.
     });
     box->show();
@@ -1030,6 +1031,18 @@ void LongCapture::fail(const QString &message)
     placeBar();
 }
 
+void LongCapture::reportCaptured(const QImage &image)
+{
+    if (m_captured || image.isNull()) return;
+    m_captured = true;
+    QImage report = image;
+    const int logicalCross = m_vertical ? m_region.width() : m_region.height();
+    const int pixelCross = m_vertical ? image.width() : image.height();
+    if (logicalCross > 0 && pixelCross > 0)
+        report.setDevicePixelRatio(qreal(pixelCross) / logicalCross);
+    emit captured(report);
+}
+
 void LongCapture::finish(bool edit)
 {
     if (m_done)
@@ -1039,6 +1052,7 @@ void LongCapture::finish(bool edit)
         fail(tr("导出失败，请释放内存后重试"));
         return;
     }
+    reportCaptured(pix.toImage());
     if (edit) {                                   // The editor can come back here, so the session only steps aside.
         suspend();
         emit finished(pix, true);
@@ -1094,7 +1108,7 @@ void LongCapture::saveCapture()
         tr("PNG 图片 (*.png);;JPEG 图片 (*.jpg)"));
     if (m_done) return;
     const bool saved = !path.isEmpty() && saveImageAtomic(img, path);
-    if (saved) { cancel(); return; }
+    if (saved) { reportCaptured(img); cancel(); return; }
     for (QWidget *w : {m_mask, m_bar}) if (w) w->show();
     if (m_preview && !m_preview->image.isNull()) m_preview->show();
     m_paused = false;
@@ -1112,6 +1126,7 @@ void LongCapture::copyCapture()
         fail(tr("复制失败，剪贴板可能被占用，请重试"));
         return;
     }
+    reportCaptured(img);
     cancel();
 }
 
@@ -1132,6 +1147,7 @@ void LongCapture::openTextCard(bool translate, bool barcode)
         fail(barcode ? tr("无法打开二维码识别窗口") : tr("无法打开识别窗口"));
         return;
     }
+    reportCaptured(img);
     connect(dialog, &QDialog::finished, this, [this,dialog] {
         m_ocrDialog=nullptr;   // The card deletes itself; cancel must not close it a second time.
         if (dialog->returnedToSource()) {

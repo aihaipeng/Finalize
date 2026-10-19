@@ -10,6 +10,7 @@
 #include "capture/capture_overlay.h"
 #include "text/cards/ocr_dialog.h"
 #include "pin/pin_window.h"
+#include "history/history_store.h"
 #include "shared/widgets.h"
 #include "tests/test_support.h"
 #include <QGuiApplication>
@@ -32,34 +33,13 @@
 #include <qt_windows.h>
 #include <cstdio>
 
-static void migrateLegacySettings()
-{
-    QSettings current(QStringLiteral("Nami"), QStringLiteral("Nami"));
-    const QString marker = QStringLiteral("UI/migratedFromPinshot");
-    if (!current.contains(marker)) {
-        QSettings legacy(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
-        for (const QString &key : legacy.allKeys())
-            if (!current.contains(key)) current.setValue(key, legacy.value(key));
-        current.setValue(marker, true);
-    }
-    // The self-crash list stores executable names; replace the old app name.
-    for (const QString &key : {QStringLiteral("Snip/crashes"), QStringLiteral("Snip/exclude_from_detection")}) {
-        QStringList names = current.value(key).toStringList();
-        QStringList updated;
-        for (const QString &name : names)
-            updated.append(name.compare(QStringLiteral("pinshot.exe"), Qt::CaseInsensitive) == 0
-                               ? QStringLiteral("nami.exe") : name);
-        if (updated != names) current.setValue(key, updated);
-    }
-    current.sync();
-}
-
 int main(int argc, char **argv)
 {
+    QSettings::setDefaultFormat(QSettings::IniFormat);   // User settings live in %APPDATA%/Nami/Nami.ini.
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Nami"));
     app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);   // Standard dialogs match the dark application chrome.
-    migrateLegacySettings();
+    QObject::connect(qApp, &QCoreApplication::aboutToQuit, [] { HistoryStore::waitForPending(); });
     QTranslator applicationTranslator, qtTranslator;
     const bool i18nTest = app.arguments().contains(QStringLiteral("--test-i18n"));
     I18n::install(&applicationTranslator, &qtTranslator, I18n::effectiveLocale(app.arguments()),
@@ -104,6 +84,10 @@ int main(int argc, char **argv)
                     qPrintable(capture), qPrintable(loading), qPrintable(arrow));
         return ok ? 0 : 1;
     }
+    if (app.arguments().contains(QStringLiteral("--test-history")))
+        return HistoryStore::testHistory();
+    if (app.arguments().contains(QStringLiteral("--test-history-ui")))
+        return HistoryDialog::testUi();
     if (app.arguments().contains(QStringLiteral("--test-ocr-lifetime")))
         return OcrDialog::testLifetime();
     if (app.arguments().contains(QStringLiteral("--test-translate")))

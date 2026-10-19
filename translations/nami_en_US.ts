@@ -568,6 +568,18 @@
         <source>无法读取屏幕像素</source>
         <translation>Unable to read screen pixels</translation>
     </message>
+    <message>
+        <source>截图历史…</source>
+        <translation>Screenshot History…</translation>
+    </message>
+    <message>
+        <source>记录截图历史</source>
+        <translation>Record Screenshot History</translation>
+    </message>
+    <message>
+        <source>默认关闭。开启后，未保存的截图也会复制到本机历史。</source>
+        <translation>Off by default. When enabled, unsaved screenshots are also copied to local history.</translation>
+    </message>
 </context>
 <context>
     <name>I18n</name>
@@ -1624,6 +1636,97 @@ Put the runtime and models back in the program folder and try again.</translatio
         <location line="+1"/>
         <source>越南语</source>
         <translation>Vietnamese</translation>
+    </message>
+</context>
+<context>
+    <name>HistoryDialog</name>
+    <message>
+        <source>截图历史</source>
+        <translation>Screenshot History</translation>
+    </message>
+    <message>
+        <source>记录截图历史（仅保存在本机）</source>
+        <translation>Record screenshot history (local only)</translation>
+    </message>
+    <message>
+        <source>默认关闭。开启后，未保存的截图也会复制到本机历史；可随时关闭或清空。</source>
+        <translation>Off by default. When enabled, unsaved screenshots are copied to local history; disable or clear it at any time.</translation>
+    </message>
+    <message>
+        <source>暂无历史截图</source>
+        <translation>No screenshot history</translation>
+    </message>
+    <message>
+        <source>%1 项 · %2</source>
+        <translation>%1 items · %2</translation>
+    </message>
+    <message>
+        <source>%1 × %2 · %3</source>
+        <translation>%1 × %2 · %3</translation>
+    </message>
+    <message>
+        <source>双击贴图</source>
+        <translation>Double-click to pin</translation>
+    </message>
+    <message>
+        <source>贴图</source>
+        <translation>Pin</translation>
+    </message>
+    <message>
+        <source>复制</source>
+        <translation>Copy</translation>
+    </message>
+    <message>
+        <source>保存</source>
+        <translation>Save</translation>
+    </message>
+    <message>
+        <source>删除</source>
+        <translation>Delete</translation>
+    </message>
+    <message>
+        <source>清空</source>
+        <translation>Clear</translation>
+    </message>
+    <message>
+        <source>关闭</source>
+        <translation>Close</translation>
+    </message>
+    <message>
+        <source>已复制到剪贴板</source>
+        <translation>Copied to clipboard</translation>
+    </message>
+    <message>
+        <source>已保存到 %1</source>
+        <translation>Saved to %1</translation>
+    </message>
+    <message>
+        <source>保存图片</source>
+        <translation>Save Image</translation>
+    </message>
+    <message>
+        <source>保存失败，请检查路径或磁盘空间后重试</source>
+        <translation>Save failed. Check the path or free disk space and try again.</translation>
+    </message>
+    <message>
+        <source>复制失败，剪贴板可能被占用，请重试</source>
+        <translation>Copy failed. The clipboard may be in use; try again.</translation>
+    </message>
+    <message>
+        <source>删除历史</source>
+        <translation>Delete History</translation>
+    </message>
+    <message>
+        <source>确定删除选中的 %1 项历史记录？应用副本会被删除，用户保存的图片不受影响。</source>
+        <translation>Delete the selected %1 history items? App-owned copies are removed; user-saved images are untouched.</translation>
+    </message>
+    <message>
+        <source>清空历史</source>
+        <translation>Clear History</translation>
+    </message>
+    <message>
+        <source>确定清空全部截图历史？应用副本会被删除，用户保存的图片不受影响。</source>
+        <translation>Clear all screenshot history? App-owned copies are removed; user-saved images are untouched.</translation>
     </message>
 </context>
 </TS>

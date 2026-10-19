@@ -1,6 +1,7 @@
 #include "capture/capture_overlay.h"
 #include <QWindow>
 #include "platform/output.h"
+#include "shared/settings.h"
 #include "shared/widgets.h"
 #include "text/cards/ocr_dialog.h"
 #include <QGuiApplication>
@@ -96,7 +97,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     }
 
-    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
+    NamiSettings settings;
     m_roundEnabled = settings.value(QStringLiteral("Capture/roundEnabled"), false).toBool();
     m_roundRadius = qBound(0, settings.value(QStringLiteral("Capture/roundRadius"), 0).toInt(), 60);
     m_sizeUnit = settings.value(QStringLiteral("Capture/sizeUnit"), QStringLiteral("px")).toString()
@@ -1099,7 +1100,7 @@ void CaptureOverlay::recoverDetector()
             if (!m_detectionOptions.disabledUiPrograms.contains(win.program, Qt::CaseInsensitive)) {
                 m_detectionOptions.disabledUiPrograms.append(win.program);
                 if (windowHung(win.hwnd)) {
-                    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
+                    NamiSettings settings;
                     QStringList disabled = settings.value(QStringLiteral("Snip/crashes")).toStringList();
                     if (!disabled.contains(win.program, Qt::CaseInsensitive)) disabled.append(win.program);
                     settings.setValue(QStringLiteral("Snip/crashes"), disabled);
@@ -1503,7 +1504,7 @@ void CaptureOverlay::applyRoundSettings(bool persist)
     }
     if (m_radiusValue) m_radiusValue->setText(QString::number(m_roundRadius));
     if (persist) {
-        QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
+        NamiSettings settings;
         settings.setValue(QStringLiteral("Capture/roundEnabled"), m_roundEnabled);
         settings.setValue(QStringLiteral("Capture/roundRadius"), m_roundRadius);
     }
@@ -1602,7 +1603,7 @@ void CaptureOverlay::setSizeUnit(SizeUnit unit, bool persist)
 {
     m_sizeUnit = unit;
     if (persist) {
-        QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
+        NamiSettings settings;
         settings.setValue(QStringLiteral("Capture/sizeUnit"),
                           unit == SizeUnit::Dp ? QStringLiteral("dp") : QStringLiteral("px"));
     }
@@ -1921,7 +1922,7 @@ void CaptureOverlay::applyCustomPreset(int index)
 void CaptureOverlay::loadSizePresets()
 {
     m_sizePresets.clear();
-    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
+    NamiSettings settings;
     for (const QString &entry : settings.value(QStringLiteral("Capture/presets")).toStringList()) {
         const QStringList parts = entry.split(QLatin1Char('|'));
         if (parts.size() != 5) continue;
@@ -1940,7 +1941,7 @@ void CaptureOverlay::saveSizePresets() const
         entries.append(QStringLiteral("%1|%2|%3|%4|%5").arg(preset.name)
                            .arg(preset.global.x()).arg(preset.global.y())
                            .arg(preset.global.width()).arg(preset.global.height()));
-    QSettings(QStringLiteral("Nami"), QStringLiteral("Nami"))
+    NamiSettings()
         .setValue(QStringLiteral("Capture/presets"), entries);
 }
 
@@ -2246,6 +2247,16 @@ void CaptureOverlay::translateCapture() { openTextCard(true); }
 
 void CaptureOverlay::barcodeCapture() { openTextCard(false,true); }
 
+void CaptureOverlay::reportCaptured(const QPixmap &pix, const QRect &globalRegion)
+{
+    if (m_captured || pix.isNull() || globalRegion.isEmpty()) return;
+    m_captured = true;
+    QPixmap report = pix;
+    if (globalRegion.width() > 0)
+        report.setDevicePixelRatio(qreal(pix.width()) / globalRegion.width());
+    emit captured(report, globalRegion);
+}
+
 void CaptureOverlay::openTextCard(bool translate, bool barcode)
 {
     stopItemDrag();
@@ -2268,6 +2279,7 @@ void CaptureOverlay::openTextCard(bool translate, bool barcode)
         show(); showToolBars(); update();
         return;
     }
+    reportCaptured(QPixmap::fromImage(image), captureRect);
     m_ocrDialog=dialog;
     connect(dialog,&QDialog::finished,this,[this,dialog] {
         if (dialog->returnedToSource()) {
@@ -2330,10 +2342,12 @@ void CaptureOverlay::saveCapture()
 
 bool CaptureOverlay::saveCaptureTo(const QString &path)
 {
-    if (!saveImageAtomic(cropped().toImage(), path)) {
+    const QPixmap pix = cropped();
+    if (!saveImageAtomic(pix.toImage(), path)) {
         showOutputError(tr("保存失败，请检查路径或磁盘空间后重试"));
         return false;
     }
+    reportCaptured(pix, globalScreenRect(m_sel.normalized()));
     close();
     return true;
 }
@@ -2341,10 +2355,12 @@ bool CaptureOverlay::saveCaptureTo(const QString &path)
 void CaptureOverlay::copyCapture()
 {
     commitTextEdit();
-    if (!copyImageToClipboard(cropped().toImage())) {
+    const QPixmap pix = cropped();
+    if (!copyImageToClipboard(pix.toImage())) {
         showOutputError(tr("复制失败，剪贴板可能被占用，请重试"));
         return;
     }
+    reportCaptured(pix, globalScreenRect(m_sel.normalized()));
     close();
 }
 
@@ -2366,6 +2382,7 @@ void CaptureOverlay::pinCapture()
         return;
     }
     const QRect global = globalScreenRect(m_sel.normalized());
+    reportCaptured(pix, global);
     close();
     emit grabbed(pix, global);
 }

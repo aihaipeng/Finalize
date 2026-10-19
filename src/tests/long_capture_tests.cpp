@@ -30,6 +30,7 @@
 #include <QWheelEvent>
 #include <QApplication>
 #include <QCheckBox>
+#include "shared/settings.h"
 #include <QSettings>
 #include <qt_windows.h>
 #include <cstdio>
@@ -654,7 +655,7 @@ int LongCapture::testOutput()
 int LongCapture::testLiveCapture(const QString &previewPath)
 {
     // The live row-count expectation assumes auto crop is off; keep the user's setting untouched.
-    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
+    NamiSettings settings;
     const QVariant savedAutoCrop = settings.value(QStringLiteral("LongShot/AutoCrop"));
     settings.setValue(QStringLiteral("LongShot/AutoCrop"), false);
     settings.sync();

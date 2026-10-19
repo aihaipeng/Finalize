@@ -7,6 +7,7 @@
 #include <QImage>
 #include <QKeyEvent>
 #include <QScreen>
+#include "shared/settings.h"
 #include <QSettings>
 #include <QSlider>
 #include <QThread>
@@ -45,7 +46,7 @@ int CaptureOverlay::testRoundRefresh(const QString &previewPath)
         if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); }
     };
 
-    QSettings settings(QStringLiteral("Nami"), QStringLiteral("Nami"));
+    NamiSettings settings;
     const QVariant oldEnabled = settings.value(QStringLiteral("Capture/roundEnabled"));
     const QVariant oldRadius = settings.value(QStringLiteral("Capture/roundRadius"));
 
