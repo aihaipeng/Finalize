@@ -366,21 +366,41 @@ int OcrDialog::testTranslate()
         std::fprintf(stderr, "FAIL: translate card capture has no selectable text\n");
         return 1;
     }
+    const QString recognizedAll = dialog.m_ocrLineTexts.join(QLatin1Char('\n'));
     dialog.m_imageView->selectRange(0, dialog.m_imageView->glyphCount() - 1);
-    if (!sourceText->toPlainText().contains(dialog.m_imageView->selectedText().section(QLatin1Char('\n'), 0, 0))) {
+    QString mirroredSource = sourceText->textCursor().selectedText();
+    mirroredSource.replace(QChar(0x2029), QLatin1Char('\n'));
+    if (!sourceText->toPlainText().contains(dialog.m_imageView->selectedText().section(QLatin1Char('\n'), 0, 0))
+        || mirroredSource != dialog.m_imageView->selectedText()
+        || mirroredSource != recognizedAll) {
         restore();
-        std::fprintf(stderr, "FAIL: capture selection does not read the recognized text (%s)\n",
+        std::fprintf(stderr, "FAIL: capture selection does not mirror the exact recognized text (%s)\n",
                      qPrintable(dialog.m_imageView->selectedText()));
         return 1;
     }
+    dialog.m_imageView->selectRange(0, 2);
+    QString mirroredPart = sourceText->textCursor().selectedText();
+    mirroredPart.replace(QChar(0x2029), QLatin1Char('\n'));
+    const QString imagePart = dialog.m_imageView->selectedText();
+    if (imagePart.size() != 3 || mirroredPart != imagePart || imagePart == recognizedAll) {
+        restore();
+        std::fprintf(stderr, "FAIL: capture selection does not map character by character (%s)\n",
+                     qPrintable(imagePart));
+        return 1;
+    }
     dialog.m_imageView->selectRange(-1, -1);
+    if (sourceText->textCursor().hasSelection()) {
+        restore();
+        std::fprintf(stderr, "FAIL: clearing the capture selection keeps the source selection\n");
+        return 1;
+    }
     // Selecting recognized text in the source pane marks the matching glyphs on the image.
     const int foxAt = sourceText->toPlainText().indexOf(QStringLiteral("fox"), 0, Qt::CaseInsensitive);
     QTextCursor sourceCursor = sourceText->textCursor();
     sourceCursor.setPosition(qMax(0,foxAt));
     sourceCursor.setPosition(qMax(0,foxAt) + 3, QTextCursor::KeepAnchor);
     sourceText->setTextCursor(sourceCursor);
-    const bool sourceHighlights = foxAt >= 0 && !dialog.m_imageView->highlighted().isEmpty();
+    const bool sourceHighlights = foxAt >= 0 && dialog.m_imageView->highlighted().size() == 3;
     auto *title = dialog.findChild<QLabel *>(QStringLiteral("ocrTitle"));
     const bool sourceSelected = sourceText->textCursor().hasSelection();
     if (title) {

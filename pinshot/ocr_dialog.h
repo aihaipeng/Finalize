@@ -43,12 +43,13 @@ public:
     // Text on the capture: drag across characters to select them, Ctrl+C or the context menu copies.
     void setTextLines(const QVector<OcrLine> &lines);
     QString selectedText() const;
+    bool selectedTextRange(int *from, int *to) const;   // Inclusive offsets in the recognized text.
     void selectRange(int anchor, int lead);   // Glyph indices; -1 clears.
     void clearSelection();                    // Drops the glyph selection without reporting it.
     QVector<int> selectedLines() const;       // OCR line indices touched by the glyph selection.
     // Marks the glyphs whose characters the text pane has selected (amber, under the blue selection).
     void highlightText(const QString &selection);
-    void highlightLines(const QVector<int> &lines);
+    void highlightTextRange(int from, int to); // Exact recognized-text range; -1 clears.
     // Barcode mode: mark every decoded symbol and emphasize the selected one.
     void setBarcodeRegions(const QVector<QPolygonF> &regions, int selected);
     const QVector<int> &highlighted() const { return m_highlighted; }
@@ -161,12 +162,11 @@ private:
     int layoutClass() const;
     void linkFromOcrTextSelection();
     void linkFromOcrImageSelection();
+    void highlightImageForPane(QPlainTextEdit *pane);
     void clearPaneSelection(QPlainTextEdit *pane);
     void clearSelectionHighlights();
     void clearLinkHighlights();
     void applyHighlights(QPlainTextEdit *pane);
-    void setLinkMarks(QPlainTextEdit *pane, const QVector<int> &blocks,
-                      QList<QTextEdit::ExtraSelection> &marks);
     void setSelectionMark(QPlainTextEdit *pane, const QTextCursor &selection,
                           QList<QTextEdit::ExtraSelection> &marks);
     QList<QTextCursor> matches() const;

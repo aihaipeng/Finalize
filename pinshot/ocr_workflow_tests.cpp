@@ -336,9 +336,10 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     QApplication::sendEvent(zoomView,&copyKey);
     check(dragged && QApplication::clipboard()->text()==QStringLiteral("World123") && status->text()==QStringLiteral("已复制选中文字"),
           "dragging across capture text selects it without panning and Ctrl+C copies it");
-    const bool lineMarked=!text->extraSelections().isEmpty()
-        && text->extraSelections().first().cursor.selectedText()==wantedLine;
-    check(lineMarked,"selecting capture text highlights the whole matching line in the OCR pane");
+    const bool exactMirror=text->textCursor().hasSelection()
+        && text->textCursor().selectedText()==QStringLiteral("World123")
+        && text->extraSelections().isEmpty() && zoomView->highlighted().isEmpty();
+    check(exactMirror,"selecting capture text highlights exactly those characters in the OCR pane");
     const QPoint textAt=text->viewport()->rect().center();
     QMouseEvent textPress(QEvent::MouseButtonPress,QPointF(textAt),QPointF(text->viewport()->mapToGlobal(textAt)),
                           Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
@@ -346,26 +347,32 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     QMouseEvent textRelease(QEvent::MouseButtonRelease,QPointF(textAt),QPointF(text->viewport()->mapToGlobal(textAt)),
                             Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
     QApplication::sendEvent(text->viewport(),&textRelease);
-    check(lineMarked && text->extraSelections().isEmpty() && zoomView->selectedText().isEmpty(),
-          "clicking the OCR text drops the capture selection and its line highlight");
+    check(exactMirror && !text->textCursor().hasSelection() && text->extraSelections().isEmpty()
+              && zoomView->selectedText().isEmpty(),
+          "clicking the OCR text drops the capture selection and its character highlight");
     viewMouse(QEvent::MouseButtonPress,0,Qt::LeftButton);
     viewMouse(QEvent::MouseMove,glyphTotal-1,Qt::LeftButton);
     viewMouse(QEvent::MouseButtonRelease,glyphTotal-1,Qt::NoButton);
-    check(zoomView->selectedText()==expectedText,"a selection across rows keeps the recognized line breaks");
+    QString mirroredText=text->textCursor().selectedText();
+    mirroredText.replace(QChar(0x2029),QLatin1Char('\n'));
+    check(zoomView->selectedText()==expectedText && mirroredText==expectedText,
+          "a selection across rows keeps the recognized line breaks in both panes");
     viewMouse(QEvent::MouseButtonPress,3,Qt::LeftButton);
     viewMouse(QEvent::MouseButtonRelease,3,Qt::NoButton);
-    check(zoomView->selectedText().isEmpty() && text->extraSelections().isEmpty(),
-          "a click on text without dragging clears the capture selection and linked OCR line");
+    check(zoomView->selectedText().isEmpty() && !text->textCursor().hasSelection()
+              && text->extraSelections().isEmpty(),
+          "a click on text without dragging clears both panes");
     {
         const QPoint at=zoomView->mapFromScene(zoomView->glyphPolygon(helloFirst+2).boundingRect().center());
         QMouseEvent twice(QEvent::MouseButtonDblClick,QPointF(at),QPointF(zoomView->viewport()->mapToGlobal(at)),
                           Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
         QApplication::sendEvent(zoomView->viewport(),&twice);
     }
-    check(zoomView->selectedText()==wantedLine && zoomView->fitted(),"double-clicking capture text selects its whole line instead of refitting");
+    check(zoomView->selectedText()==wantedLine && text->textCursor().selectedText()==wantedLine
+              && zoomView->fitted(),"double-clicking capture text selects its whole line instead of refitting");
     zoomView->selectRange(-1,-1);
-    check(text->extraSelections().isEmpty(),
-          "clearing the capture selection clears the linked OCR line highlight");
+    check(!text->textCursor().hasSelection() && text->extraSelections().isEmpty(),
+          "clearing the capture selection clears the linked OCR characters");
     if (!previewPath.isEmpty()) {
         QTextCursor pick(text->document());
         pick.setPosition(text->toPlainText().indexOf(wantedLine));
