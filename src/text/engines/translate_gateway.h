@@ -15,7 +15,7 @@ class QNetworkReply;
 struct TranslateResult {
     // Failure class of a run. Only Network/Protocol failures may be retried on
     // another provider (Auto routing); the rest terminate the run immediately.
-    enum class Error { None, Network, Protocol, Unsupported, Cancelled, Busy };
+    enum class Error { None, Network, Protocol, Unsupported, Cancelled, Busy, Invalid };
     QStringList lines;        // One translation per request line, same order.
     QString detectedSource;   // Provider-detected source code when source was auto.
     QString provider;         // Name of the provider that produced this result.

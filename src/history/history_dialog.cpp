@@ -135,7 +135,8 @@ void HistoryDialog::refresh()
     m_entries.clear();
     m_list->clear();
 
-    const QVector<HistoryEntry> entries = HistoryStore::entries();
+    QString readError;
+    const QVector<HistoryEntry> entries = HistoryStore::entries(0, &readError);
     qint64 bytes = 0;
     for (const HistoryEntry &entry : entries) {
         m_entries.insert(entry.id, entry);
@@ -160,9 +161,11 @@ void HistoryDialog::refresh()
         m_list->addItem(item);
     }
 
-    m_status->setText(entries.isEmpty()
-            ? tr("暂无历史截图")
-            : tr("%1 项 · %2").arg(entries.size()).arg(QLocale().formattedDataSize(bytes)));
+    m_status->setText(!readError.isEmpty()
+            ? tr("读取历史失败，请检查历史数据库后重试")
+            : entries.isEmpty()
+                ? tr("暂无历史截图")
+                : tr("%1 项 · %2").arg(entries.size()).arg(QLocale().formattedDataSize(bytes)));
     m_empty->setVisible(entries.isEmpty());
     updateActions();
 }
@@ -252,7 +255,10 @@ void HistoryDialog::removeSelected()
     confirm.setDefaultButton(QMessageBox::No);
     if (confirm.exec() != QMessageBox::Yes)
         return;
-    for (const qint64 id : ids) HistoryStore::remove(id);
+    bool removed = true;
+    for (const qint64 id : ids)
+        removed = HistoryStore::remove(id) && removed;
+    if (!removed) m_status->setText(tr("部分历史删除失败，请重试"));
     refresh();
 }
 
@@ -263,7 +269,10 @@ void HistoryDialog::clearAll()
                               tr("确定清空全部截图历史？应用副本会被删除，用户保存的图片不受影响。"))
             != QMessageBox::Yes)
         return;
-    HistoryStore::clear();
+    if (!HistoryStore::clear()) {
+        m_status->setText(tr("清空历史失败，请检查历史数据库后重试"));
+        return;
+    }
     refresh();
 }
 

@@ -360,6 +360,9 @@ void WindowDetector::run()  {
     if (SUCCEEDED(com))
         CoCreateInstance(kUiaClassId, nullptr, CLSCTX_INPROC_SERVER, kUiaIid,
                          reinterpret_cast<void **>(&m_uia));
+    WindowTargets cachedTargets;
+    QElapsedTimer targetsAge;
+    bool haveTargets = false;
     while (true) {
         Request request;
         {
@@ -369,11 +372,17 @@ void WindowDetector::run()  {
             request = m_queue.takeFirst();
             if (request.id != m_id) continue;
         }
-        WindowTargets targets = m_options.windows ? detectWindowRects(m_overlay, m_options.excludedPrograms) : WindowTargets();
+        if (m_options.windows && (!haveTargets || targetsAge.elapsed() >= 300)) {
+            cachedTargets = detectWindowRects(m_overlay, m_options.excludedPrograms);
+            targetsAge.restart();
+            haveTargets = true;
+        }
+        WindowTargets targets = m_options.windows ? cachedTargets : WindowTargets();
         {
             QMutexLocker lock(&m_mutex);
-            if (!m_stop) emit gotTargets(targets, request.id);
+            if (m_stop) break;
         }
+        emit gotTargets(targets, request.id);
         QRect result;
         for (const DetectedWindow &win : targets) {
             if (!win.native.contains(request.point)) continue;
@@ -394,12 +403,15 @@ void WindowDetector::run()  {
             }
             break;
         }
-        QMutexLocker lock(&m_mutex);
+        {
+            QMutexLocker lock(&m_mutex);
+            if (m_stop) break;
+        }
         // Deliver every processed query even when a newer one is already queued: during a
         // fast slide each result is superseded before it finishes, and dropping it here
         // would freeze the hover border until the mouse stops. One worker emits in query
         // order, and the overlay rejects results that arrive out of order.
-        if (!m_stop) emit gotRect(result, request.id);
+        emit gotRect(result, request.id);
     }
     if (m_uia) { m_uia->Release(); m_uia = nullptr; }
     if (SUCCEEDED(com)) CoUninitialize();

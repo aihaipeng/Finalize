@@ -928,10 +928,15 @@ void TranslateGateway::abort()
 {
     if (!m_run)
         return;
-    if (m_run->activeReply) {
-        m_run->activeReply->abort();
-        m_run->activeReply = nullptr;
+    // Detach before aborting: QNetworkReply::abort() can emit finished synchronously.
+    QNetworkReply *reply = m_run->activeReply;
+    m_run->activeReply = nullptr;
+    if (reply) {
+        reply->disconnect(this);
+        reply->abort();
+        reply->deleteLater();
     }
+    if (!m_run) return;
     TranslateResult aborted;
     aborted.error = QStringLiteral("translation aborted");
     aborted.code = TranslateResult::Error::Cancelled;
@@ -975,6 +980,7 @@ void TranslateGateway::translate(const QStringList &lines, const QString &source
     TranslateResult rejected;
     if (m_run) {
         rejected.error = QStringLiteral("a translation is already running");
+        rejected.code = TranslateResult::Error::Busy;
     } else if (lines.isEmpty()) {
         if (done)
             done(TranslateResult());
@@ -998,6 +1004,7 @@ void TranslateGateway::translate(const QStringList &lines, const QString &source
         const QVector<QStringList> chunks = batchLines(requested, &batchError);
         if (!batchError.isEmpty()) {
             rejected.error = batchError;
+            rejected.code = TranslateResult::Error::Invalid;
         } else {
             QVector<Provider> chain;
             if (provider == Provider::Auto) {

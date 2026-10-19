@@ -67,6 +67,16 @@ int PinWindow::testPlacement()
                        - double(anchor.x() - source.x()) / source.width()) < 0.003,
           "wheel zoom starts from the displayed DPI scale and retains the cursor anchor");
     pin.close();
+    QPixmap highDpiPixels(900, 600);
+    highDpiPixels.fill(Qt::green);
+    highDpiPixels.setDevicePixelRatio(1.5);
+    PinWindow highDpiPin(highDpiPixels, QRect(0, 0, 600, 400));
+    highDpiPin.setAttribute(Qt::WA_DeleteOnClose, false);
+    check(highDpiPin.m_pix.devicePixelRatio() == 1.0
+              && highDpiPin.m_originalPix.devicePixelRatio() == 1.0
+              && highDpiPin.imageRect().size() == QSize(600, 400),
+          "high-DPI history pins normalize source pixels before painting");
+    highDpiPin.close();
     QPixmap longPixels(600, 20000);
     longPixels.fill(Qt::green);
     PinWindow longPin(longPixels, LongCapture::editorGeometry(longPixels.size(), 1.0, available));
@@ -495,8 +505,8 @@ int PinWindow::testPlacement()
     const auto barButtons = editPin.m_toolbar->findChildren<QToolButton *>();
     int shownButtons = 0;
     for (QToolButton *b : barButtons) shownButtons += !b->isHidden();
-    check(shownButtons == 16 && editPin.m_backBtn->isHidden(),
-          "pin toolbar shows eight tools, undo/redo, five actions and done; no back button");
+    check(shownButtons == 17 && editPin.m_backBtn->isHidden(),
+          "pin toolbar shows nine tools, undo/redo, five actions and done; no back button");
     {
         // Edited long captures get a back button just before done; back closes the pin and reports it.
         PinWindow longEdit(flat, QRect(300, 200, 240, 160));
@@ -527,11 +537,11 @@ int PinWindow::testPlacement()
     QToolButton *translateBtn = nullptr;
     QToolButton *barcodeBtn = nullptr;
     for (QToolButton *b : barButtons) {
-        if (b->toolTip() == QStringLiteral("形状：矩形/椭圆")) shapeBtn = b;
+        if (b->toolTip() == QStringLiteral("矩形")) shapeBtn = b;
         if (b->toolTip() == QStringLiteral("识别并翻译文字")) translateBtn = b;
         if (b->toolTip() == QStringLiteral("识别二维码/条形码")) barcodeBtn = b;
     }
-    check(shapeBtn != nullptr && shapeBtn->isCheckable(), "the shape tool sits on the pin toolbar");
+    check(shapeBtn != nullptr && shapeBtn->isCheckable(), "the rectangle tool sits on the pin toolbar");
     check(translateBtn != nullptr, "the translate tool sits on the pin toolbar");
     check(barcodeBtn != nullptr, "the barcode tool sits on the pin toolbar");
     {

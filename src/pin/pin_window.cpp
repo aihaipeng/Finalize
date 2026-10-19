@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "pin/pin_window.h"
 #include "text/cards/ocr_dialog.h"
 #include "capture/capture_overlay.h"
@@ -31,7 +32,6 @@
 #include <QMessageBox>
 #include <QCoreApplication>
 #include <QApplication>
-#include <algorithm>
 #include <QScreen>
 #include <QGuiApplication>
 #include <QSizePolicy>
@@ -55,6 +55,9 @@ PinWindow::PinWindow(const QPixmap &pix, const QRect &displayRect)
     : m_originalPix(pix), m_pix(pix), m_scale(pix.isNull() ? 1 : qMin(double(displayRect.width()) / pix.width(), double(displayRect.height()) / pix.height()))
 {
     if (pix.isNull() || displayRect.isEmpty()) return;
+    // Pins use one pixel contract: source pixels are not re-scaled by a DPR.
+    m_originalPix.setDevicePixelRatio(1.0);
+    m_pix.setDevicePixelRatio(1.0);
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
     setAttribute(Qt::WA_DeleteOnClose);
     setCursor(Qt::SizeAllCursor);
@@ -152,8 +155,11 @@ void PinWindow::applyProcessedImage()
     }
 
     m_pix = QPixmap::fromImage(img);
+    m_displayPix = QPixmap();
 
     // Invalidate OCR cache and text markups on image transformation
+    ++m_ocrGen;
+    if (m_ocrCancel) m_ocrCancel->store(true);
     m_charBoxes.clear();
     m_ocrLines.clear();
     m_selAnchor = -1;
@@ -243,8 +249,16 @@ void PinWindow::paintEvent(QPaintEvent *)
         p.drawImage(0, 0, m_shadowCache);
     }
     const QSize is = imageRect().size();
+    const qreal dpr = devicePixelRatioF();
+    if (m_displayPix.isNull() || m_displayKey != m_pix.cacheKey()
+            || m_displaySize != is || m_displayDpr != dpr) {
+        m_displayPix = m_pix.scaled(is, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        m_displayKey = m_pix.cacheKey();
+        m_displaySize = is;
+        m_displayDpr = dpr;
+    }
     p.translate(imageRect().topLeft());
-    p.drawPixmap(0, 0, m_pix.scaled(is, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+    p.drawPixmap(0, 0, m_displayPix);
 
     // Draw text selection highlight if text is selectable and selected
     if (m_textSelectable && m_selAnchor >= 0 && m_selLead >= 0
@@ -527,12 +541,17 @@ void PinWindow::runOcrForTextSelection()
     // Boxes come back in this raw pixel space (recognize resets DPR), not the pixmap's logical size.
     m_ocrImgSize = QSizeF(img.size());
     const auto cancel = m_ocrCancel;
+    const int generation = m_ocrGen;
 
     auto watcher = new QFutureWatcher<OcrResult>(this);
-    connect(watcher, &QFutureWatcher<OcrResult>::finished, this, [this, watcher] {
+    connect(watcher, &QFutureWatcher<OcrResult>::finished, this, [this, watcher, generation] {
         const OcrResult res = watcher->result();
         watcher->deleteLater();
         m_ocrRunning = false;
+        if (generation != m_ocrGen) {
+            if (m_textSelectable && m_charBoxes.isEmpty()) runOcrForTextSelection();
+            return;
+        }
         if (m_ocrCancel && m_ocrCancel->load()) return;
 
         m_ocrLines = res.lines;

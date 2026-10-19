@@ -104,7 +104,7 @@ protected:
     void contextMenuEvent(QContextMenuEvent *e) override;
 private:
     bool m_eatContextMenu = false;                   // The right press already acted (finish/deselect).
-    enum Handle { H_None = 0, H_New, H_Move, H_TL, H_TR, H_BL, H_BR, H_L, H_R, H_T, H_B, H_Rotate };
+    enum Handle : int { H_None = 0, H_New, H_Move, H_TL, H_TR, H_BL, H_BR, H_L, H_R, H_T, H_B, H_Rotate };
 
     // ---------- instant annotation ----------
     struct Annotation {
@@ -305,7 +305,7 @@ private slots:
     void longCapture();
 private:
     void openTextCard(bool translate, bool barcode = false);
-    enum Mode { Selecting, Adjusting };
+    enum Mode : int { Selecting, Adjusting };
     QPixmap m_shot;
     QPointer<OcrDialog> m_ocrDialog;
     mutable QImage m_mosaicFrame;

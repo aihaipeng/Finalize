@@ -180,12 +180,14 @@ void prune(QSqlDatabase &db)
     bool deleted = false;
     if (db.transaction()) {
         QSqlQuery remove(db);
-        remove.prepare(QStringLiteral("DELETE FROM item WHERE id=?"));
-        for (const qint64 id : removeIds) {
-            remove.addBindValue(id);
-            remove.exec();
+        bool ok = remove.prepare(QStringLiteral("DELETE FROM item WHERE id=?"));
+        for (int i = 0; ok && i < removeIds.size(); ++i) {
+            remove.bindValue(0, removeIds.at(i));
+            ok = remove.exec();
+            if (!ok) qWarning() << "history prune:" << remove.lastError().text();
         }
-        deleted = db.commit();
+        deleted = ok && db.commit();
+        if (!deleted) db.rollback();
     }
     if (!deleted) return;
     for (const QString &relative : removeFiles) {
@@ -286,13 +288,14 @@ bool HistoryStore::writeItem(const QImage &source, const QString &kind)
     return inserted;
 }
 
-QVector<HistoryEntry> HistoryStore::entries(int limit)
+QVector<HistoryEntry> HistoryStore::entries(int limit, QString *error)
 {
     QVector<HistoryEntry> result;
     HistoryDb db;
-    QString error;
-    if (!db.open(&error)) {
-        if (!error.isEmpty()) qWarning() << "history:" << error;
+    QString openError;
+    if (!db.open(&openError)) {
+        if (error) *error = openError;
+        if (!openError.isEmpty()) qWarning() << "history:" << openError;
         return result;
     }
 
@@ -302,6 +305,7 @@ QVector<HistoryEntry> HistoryStore::entries(int limit)
     if (limit > 0) sql += QStringLiteral(" LIMIT %1").arg(limit);
     QSqlQuery query(db.db());
     if (!query.exec(sql)) {
+        if (error) *error = query.lastError().text();
         qWarning() << "history:" << query.lastError().text();
         return result;
     }
@@ -349,7 +353,11 @@ bool HistoryStore::remove(qint64 id)
         QSqlQuery query(db.db());
         query.prepare(QStringLiteral("SELECT image_rel,thumb_rel FROM item WHERE id=?"));
         query.addBindValue(id);
-        if (query.exec() && query.next()) files << query.value(0).toString() << query.value(1).toString();
+        if (!query.exec()) {
+            qWarning() << "history remove:" << query.lastError().text();
+            return false;
+        }
+        if (query.next()) files << query.value(0).toString() << query.value(1).toString();
     }
     bool removed = false;
     {
@@ -377,9 +385,11 @@ bool HistoryStore::clear()
     QStringList files;
     {
         QSqlQuery query(db.db());
-        if (query.exec(QStringLiteral("SELECT image_rel,thumb_rel FROM item"))) {
-            while (query.next()) files << query.value(0).toString() << query.value(1).toString();
+        if (!query.exec(QStringLiteral("SELECT image_rel,thumb_rel FROM item"))) {
+            qWarning() << "history clear:" << query.lastError().text();
+            return false;
         }
+        while (query.next()) files << query.value(0).toString() << query.value(1).toString();
     }
     bool cleared = false;
     {
@@ -480,6 +490,26 @@ int HistoryStore::testHistory()
     record(image);
     waitForPending();
     check(entries().size() == 1, "item retention limit");
+
+    settings.setValue(QStringLiteral("History/maxItems"), 100);
+    settings.sync();
+    record(image);
+    record(image);
+    waitForPending();
+    const QVector<HistoryEntry> beforePrune = entries();
+    QStringList prunedPaths;
+    for (const HistoryEntry &entry : beforePrune) {
+        prunedPaths << absoluteImagePath(entry) << absoluteThumbPath(entry);
+    }
+    check(beforePrune.size() == 3, "multiple rows available before prune");
+    settings.setValue(QStringLiteral("History/maxItems"), 1);
+    settings.sync();
+    record(image);
+    waitForPending();
+    bool prunedFilesGone = true;
+    for (const QString &path : prunedPaths)
+        prunedFilesGone = prunedFilesGone && !path.isEmpty() && !QFileInfo::exists(path);
+    check(entries().size() == 1 && prunedFilesGone, "prune removes every old row and file");
     check(clear(), "clear history");
     check(entries().isEmpty(), "history empty after clear");
 

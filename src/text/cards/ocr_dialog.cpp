@@ -1,3 +1,4 @@
+#include <tuple>
 #include "text/cards/ocr_dialog.h"
 #include "text/engines/translate_gateway.h"
 #include "shared/settings.h"
@@ -41,7 +42,6 @@
 #include <QKeyEvent>
 #include <QGridLayout>
 #include <QTextEdit>
-#include <tuple>
 #include <QMenu>
 #include <QAction>
 #include <QActionGroup>
@@ -1336,6 +1336,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
 }
 
 OcrDialog::~OcrDialog()  {
+    m_closed = true;
     if (m_cancel) m_cancel->store(true);
     if (m_barcodeCancel) m_barcodeCancel->store(true);
 }
@@ -1665,7 +1666,7 @@ void OcrDialog::translateLines()
         showLoading(false);
         if (t.code == TranslateResult::Error::None) m_translatedSource = requested;
         setActionsEnabled(true);   // Also brings the haze back if this run failed or the original changed meanwhile.
-        if (t.code != TranslateResult::Error::None) {
+        if (t.code != TranslateResult::Error::None || !t.error.isEmpty()) {
             // Keep the previous translation; explain in plain words, never the raw engine error.
             m_text->setPlainText(m_previous);
             m_text->document()->setModified(m_previousModified);
@@ -1673,6 +1674,8 @@ void OcrDialog::translateLines()
             QString message;
             if (t.code == TranslateResult::Error::Unsupported)
                 message = tr("暂不支持这组语言，请更换原文或译文语言");
+            else if (t.code == TranslateResult::Error::Invalid)
+                message = tr("原文过长或格式不支持，请缩短后重试");
             else if (provider == TranslateGateway::Provider::Auto)
                 message = tr("翻译服务暂时不可用，请检查网络后重试");
             else

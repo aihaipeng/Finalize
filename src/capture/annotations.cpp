@@ -5,7 +5,8 @@
 #include "platform/output.h"
 #include "shared/widgets.h"
 #include "annotate/smart_erase.h"
-#include <QThreadPool>
+#include <QFutureWatcher>
+#include <QtConcurrent>
 #include <QGuiApplication>
 #include <QObject>
 #include <QImage>
@@ -1148,20 +1149,27 @@ void CaptureOverlay::scheduleSmartErase(int index, const QImage &source)
     ann.smartStroke = ann.stroke;
     ann.smartPen = ann.pen;
     const int epoch = m_smartEpoch;
-    QThreadPool::globalInstance()->start([this, epoch, index, source, mask] {
+    auto *watcher = new QFutureWatcher<QPair<QImage, QString>>(this);
+    connect(watcher, &QFutureWatcher<QPair<QImage, QString>>::finished, this,
+            [this, watcher, epoch, index] {
+        const QPair<QImage, QString> result = watcher->result();
+        watcher->deleteLater();
+        if (epoch != m_smartEpoch || index < 0 || index >= m_anns.size()) return;
+        Annotation &ann = m_anns[index];
+        ann.smartPending = false;
+        if (result.first.isNull()) {
+            ann.smartFailed = true;              // Renders as a black redaction, never the source.
+            if (!result.second.isEmpty()) qWarning() << "smart erase:" << result.second;
+        } else {
+            ann.smartResult = result.first;
+        }
+        update();
+    });
+    watcher->setFuture(QtConcurrent::run([source, mask] {
         QString error;
         const QImage erased = SmartErase::erase(source, mask, &error);
-        QMetaObject::invokeMethod(this, [this, epoch, index, erased, error] {
-            if (epoch != m_smartEpoch || index < 0 || index >= m_anns.size()) return;
-            Annotation &ann = m_anns[index];
-            ann.smartPending = false;
-            if (erased.isNull()) {
-                ann.smartFailed = true;              // Renders as a black redaction, never the source.
-                if (!error.isEmpty()) qWarning() << "smart erase:" << error;
-            } else ann.smartResult = erased;
-            update();
-        }, Qt::QueuedConnection);
-    });
+        return QPair<QImage, QString>(erased, error);
+    }));
 }
 
 void CaptureOverlay::selectEraserMode(bool rect)

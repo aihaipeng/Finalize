@@ -11,6 +11,7 @@ class OcrDialog;
 #include <QRect>
 #include <QString>
 #include <QVector>
+#include <QHash>
 #include <QWidget>
 #include <QLabel>
 #include <QList>
@@ -67,7 +68,11 @@ protected:
 private:
     // Unique local texture votes for a displacement; animation and repeated rows do not vote.
     // shortcut: Overlaps need stable unique texture; add another evidence source for textureless or fully animated pages.
+    struct Feature { int x = 0, y = 0; bool repeated = false; };
+    using FeatureIndex = QHash<quint64, Feature>;
     bool matchFullRes(const QImage &f, int &bestK) const;
+    mutable FeatureIndex m_cachedFeatures;
+    mutable qint64 m_cachedFeaturesKey = -1;
     // ---- Capture loop: polling captures and stitches frames; horizontal frames are rotated onto the vertical stitcher. ----
     void nextTick(int elapsedMs);
     void captureFrame();

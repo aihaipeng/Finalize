@@ -199,7 +199,6 @@ bool LongCapture::matchFullRes(const QImage &f, int &bestK) const
     const int minOverlap = qMin(H, qMax(24, H / 8)), maxOff = H - minOverlap;
     const double dpr = crossExtent() > 0 ? double(W) / crossExtent() : 1.0;
     const int horizontal = qMax(3, qRound(3 * dpr)), vertical = qMax(2, qRound(2 * dpr));
-    struct Feature { int x, y; bool repeated; };
     auto signature = [=](const QImage &image, int x, int y) {
         quint64 hash = 14695981039346656037ULL ^ quint64(x);
         for (int dy : {-vertical, 0, vertical}) {
@@ -214,7 +213,7 @@ bool LongCapture::matchFullRes(const QImage &f, int &bestK) const
         return hash;
     };
     auto features = [&](const QImage &image) {
-        QHash<quint64, Feature> index;
+        FeatureIndex index;
         const int step = qMax(1, W / 256);
         for (int y = vertical; y < H - vertical; ++y) {
             const QRgb *row = reinterpret_cast<const QRgb *>(image.constScanLine(y));
@@ -230,7 +229,13 @@ bool LongCapture::matchFullRes(const QImage &f, int &bestK) const
         }
         return index;
     };
-    const auto previous = features(m_lastFrame), current = features(f);
+    const qint64 lastKey = m_lastFrame.cacheKey();
+    if (m_cachedFeaturesKey != lastKey) {
+        m_cachedFeatures = features(m_lastFrame);
+        m_cachedFeaturesKey = lastKey;
+    }
+    const FeatureIndex current = features(f);
+    const FeatureIndex &previous = m_cachedFeatures;
     struct Match { int x, y, offset; };
     QVector<Match> evidence;
     QVector<int> votes(2 * maxOff + 1);
@@ -516,7 +521,9 @@ bool LongCapture::reserveRows(int head, int tail)
     const int maxRows = int((qint64(1) << 30) / m_bytesPerLine);
     // Bound buffer memory, not image height; leave the existing capture intact if allocation fails.
     if (needed > maxRows) { m_storageFull = true; return false; }
-    const int height = int(qMin(qint64(maxRows), qMax(needed, qint64(m_buf.height()) + m_tileMaxRows)));
+    // Grow geometrically so long captures do not copy the whole buffer every tile.
+    const qint64 growth = qMax<qint64>(m_tileMaxRows, m_buf.height());
+    const int height = int(qMin(qint64(maxRows), qMax(needed, qint64(m_buf.height()) + growth)));
     const int newHead = int(qMin(qint64(height - used - tail),
                                 head ? qint64(head) + m_tileMaxRows : qint64(m_headPad)));
     QImage next(m_width, height, QImage::Format_RGB32);
@@ -1072,12 +1079,17 @@ void LongCapture::finish(bool edit)
 {
     if (m_done)
         return;
-    const QPixmap pix = QPixmap::fromImage(exportImage());
+    const QImage image = exportImage();
+    if (image.isNull()) {
+        fail(tr("导出失败，请释放内存后重试"));
+        return;
+    }
+    const QPixmap pix = QPixmap::fromImage(image);
     if (pix.isNull()) {
         fail(tr("导出失败，请释放内存后重试"));
         return;
     }
-    reportCaptured(pix.toImage());
+    reportCaptured(image);
     if (edit) {                                   // The editor can come back here, so the session only steps aside.
         suspend();
         emit finished(pix, true);

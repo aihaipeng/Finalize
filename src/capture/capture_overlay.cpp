@@ -738,7 +738,8 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
     if (m_mode == Adjusting) {
         if (m_embedded) {   // Nothing to draw on: the press moves the pin itself.
             m_fwdDrag = true;
-            QMouseEvent fwd(e->type(), e->localPos(), e->windowPos(), e->screenPos(),
+            const QPoint local = mapTo(parentWidget(), e->position().toPoint());
+            QMouseEvent fwd(e->type(), QPointF(local), e->windowPos(), e->screenPos(),
                             e->button(), e->buttons(), e->modifiers());
             QApplication::sendEvent(parent(), &fwd);
             return;
@@ -767,7 +768,8 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
 void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
 {
     if (m_fwdDrag && (e->buttons() & Qt::LeftButton)) {   // A forwarded pin drag continues.
-        QMouseEvent fwd(e->type(), e->localPos(), e->windowPos(), e->screenPos(),
+        const QPoint local = mapTo(parentWidget(), e->position().toPoint());
+        QMouseEvent fwd(e->type(), QPointF(local), e->windowPos(), e->screenPos(),
                         e->button(), e->buttons(), e->modifiers());
         QApplication::sendEvent(parent(), &fwd);
         return;
@@ -834,7 +836,8 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
 {
     if (m_fwdDrag) {                              // End of a forwarded pin drag.
         m_fwdDrag = false;
-        QMouseEvent fwd(e->type(), e->localPos(), e->windowPos(), e->screenPos(),
+        const QPoint local = mapTo(parentWidget(), e->position().toPoint());
+        QMouseEvent fwd(e->type(), QPointF(local), e->windowPos(), e->screenPos(),
                         e->button(), e->buttons(), e->modifiers());
         QApplication::sendEvent(parent(), &fwd);
         return;
@@ -898,7 +901,10 @@ void CaptureOverlay::wheelEvent(QWheelEvent *e)
     if (m_embedded && !editorActive() && m_atool == ATool::None && m_selAnn < 0) {
         // Nothing armed and nothing selected: the wheel belongs to the pin
         // (zoom / opacity), as it did before any annotation existed.
-        QApplication::sendEvent(parent(), e);
+        const QPoint local = mapTo(parentWidget(), e->position().toPoint());
+        QWheelEvent fwd(QPointF(local), e->globalPosition(), e->pixelDelta(), e->angleDelta(),
+                        e->buttons(), e->modifiers(), e->phase(), e->inverted(), e->source());
+        QApplication::sendEvent(parent(), &fwd);
         return;
     }
     if (!e->angleDelta().y()) return;
@@ -959,7 +965,8 @@ void CaptureOverlay::mouseDoubleClickEvent(QMouseEvent *e)
     if (m_queryPending && (m_waitingClick || m_drag == H_New))
         m_pinAfterDetection = true;
     else if (m_embedded) {
-        QMouseEvent fwd(e->type(), e->localPos(), e->windowPos(), e->screenPos(),
+        const QPoint local = mapTo(parentWidget(), e->position().toPoint());
+        QMouseEvent fwd(e->type(), QPointF(local), e->windowPos(), e->screenPos(),
                         e->button(), e->buttons(), e->modifiers());
         QApplication::sendEvent(parent(), &fwd);   // The pin keeps its double-click actions.
     }
@@ -2096,10 +2103,24 @@ void CaptureOverlay::refreshPresetCombo(const QString &selected)
                 item->setForeground(Bar::dim);
             }
         }
-        for (const SizePreset &preset : m_sizePresets)
+        for (const SizePreset &preset : m_sizePresets) {
             m_presetCombo->addItem(preset.name, preset.global);
+            if (auto *model = qobject_cast<QStandardItemModel *>(m_presetCombo->model())) {
+                if (auto *item = model->item(m_presetCombo->count() - 1))
+                    item->setData(true, Qt::UserRole + 1);
+            }
+        }
     }
-    const int at = selected.isEmpty() ? -1 : m_presetCombo->findText(selected);
+    int at = -1;
+    if (!selected.isEmpty()) {
+        for (int i = 0; i < m_presetCombo->count(); ++i) {
+            if (m_presetCombo->itemText(i) == selected
+                && m_presetCombo->itemData(i, Qt::UserRole + 1).toBool()) {
+                at = i;
+                break;
+            }
+        }
+    }
     m_presetCombo->setCurrentIndex(at);
     m_updatingCustom = false;
 }

@@ -238,10 +238,26 @@ int OcrDialog::testTranslate()
     }
     std::printf("PASS: %s translated 2/2 lines aligned (%lldms)\n", qPrintable(out.provider), out.elapsed);
 
+    // Invalid input must be reported as a failure, not delivered as an empty success.
+    TranslateGateway validation;
+    bool validationCalled = false;
+    TranslateResult invalid;
+    validation.translate({QString(5001, QLatin1Char('a'))}, QString(), QStringLiteral("zh"),
+                         TranslateGateway::Provider::Edge,
+                         [&](const TranslateResult &result) { invalid = result; validationCalled = true; });
+    if (!validationCalled || invalid.code != TranslateResult::Error::Invalid || invalid.error.isEmpty()) {
+        std::fprintf(stderr, "FAIL: oversized input was not rejected\n");
+        return 1;
+    }
+    std::puts("PASS: oversized translation input is rejected");
+
     // Part 2: the whole card chain - rendered text through recognition and the
     // gateway ends up as translated text in the pane.
     const QString loadError = OcrEngine::instance().load(QCoreApplication::applicationDirPath());
-    if (!loadError.isEmpty()) { std::printf("SKIP: card chain: %s\n", qPrintable(loadError)); return 0; }
+    if (!loadError.isEmpty()) {
+        std::printf("SKIP: card chain: %s\n", qPrintable(loadError));
+        return 2;   // Do not let a gate treat a missing model as a pass.
+    }
     QImage image(640, 140, QImage::Format_RGB32);
     image.fill(Qt::white);
     {

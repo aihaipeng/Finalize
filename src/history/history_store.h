@@ -27,7 +27,7 @@ public:
 
     // Queues a background write. No-op while history is disabled.
     static void record(const QImage &image, const QString &kind = QStringLiteral("capture"));
-    static QVector<HistoryEntry> entries(int limit = 0);
+    static QVector<HistoryEntry> entries(int limit = 0, QString *error = nullptr);
     static QImage image(const HistoryEntry &entry, QString *error = nullptr);
     static bool remove(qint64 id);
     static bool clear();

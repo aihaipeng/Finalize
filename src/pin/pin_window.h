@@ -96,7 +96,7 @@ private:
     // other), mirroring the reference pin's per-character map<type,color>.
     // Actions operate on the intersection with the selection, so selecting
     // more or fewer characters than were marked still hits the mark.
-    enum TextDecoType { DecoHighlight = 0, DecoWavy, DecoLine, DecoStrike };
+    enum TextDecoType : int { DecoHighlight = 0, DecoWavy, DecoLine, DecoStrike };
     void ensureSelToolbar();
     void updateSelToolbar();
     void drawTextDeco(int type, const QColor &color);   // Applies to selected chars.
@@ -106,6 +106,10 @@ private:
 
     QPixmap m_originalPix;
     QPixmap m_pix;
+    mutable QPixmap m_displayPix;   // Scaled paint cache.
+    mutable qint64 m_displayKey = 0;
+    mutable QSize m_displaySize;
+    mutable qreal m_displayDpr = 0;
     double m_scale;
     QPoint m_dragOff;
     bool m_shadowOn = true;
@@ -119,6 +123,7 @@ private:
     // Text selection support
     bool m_textSelectable = false;
     bool m_ocrRunning = false;
+    int m_ocrGen = 0;
     OcrCancel m_ocrCancel;
     QVector<OcrLine> m_ocrLines;
     QVector<CharBox> m_charBoxes;
