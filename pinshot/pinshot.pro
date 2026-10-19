@@ -23,7 +23,7 @@ SOURCES  += $$ZXING_SOURCES \
             pin_window_tests.cpp widgets_tests.cpp long_capture_tests.cpp \
             window_detection_tests.cpp ocr_engine_tests.cpp ocr_dialog_tests.cpp ocr_workflow_tests.cpp \
             capture_overlay_tests.cpp color_picker_tests.cpp annotation_tests.cpp smart_erase_tests.cpp \
-            barcode_tests.cpp
+            barcode_tests.cpp round_refresh_tests.cpp
 HEADERS  += screen_capture.h output.h test_support.h pin_window.h widgets.h \
             long_capture.h window_detection.h pixel_inspector.h ocr_engine.h \
             ocr_dialog.h barcode_engine.h capture_overlay.h controller.h \

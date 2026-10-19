@@ -42,6 +42,7 @@
 #include <QCursor>
 #include <QMessageBox>
 #include <QTimer>
+#include <QVariantAnimation>
 #include <QEventLoop>
 #include <QThread>
 #include <QSettings>
@@ -55,6 +56,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
                         const DetectionOptions &options, bool liveDetection, bool pinEdit, QWidget *embedParent)
     : m_frames(frames), m_detectionOptions(options), m_pinEdit(pinEdit), m_embedded(embedParent != nullptr)
 {
+    m_liveDetection = liveDetection;
     if (m_embedded) {
         // A child canvas inside the pin: no session chrome, no freeze, no
         // foreground claim. The single frame is the pin's current pixels.
@@ -71,6 +73,8 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     } else {
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
     setAttribute(Qt::WA_DeleteOnClose);
+    // Let the hold-to-refresh button reveal the live desktop without repainting the frozen frame.
+    setAttribute(Qt::WA_TranslucentBackground);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     setCursor(Qt::CrossCursor);
@@ -88,21 +92,11 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     }
 
-    qreal scale = 1;
-    for (const ScreenFrame &frame : m_frames)
-        scale = qMax(scale, frame.image.devicePixelRatio() > 1 ? frame.image.devicePixelRatio()
-                        : qreal(frame.image.width()) / frame.logicalRect.width());
-    m_shot = QPixmap(qRound(width() * scale), qRound(height() * scale));
-    m_shot.setDevicePixelRatio(scale);
-    m_shot.fill(Qt::black);
-    QPainter painter(&m_shot);
-    for (const ScreenFrame &frame : m_frames) {
-        const QPointF local = windowHandle()->mapFromGlobal(QPointF(frame.logicalRect.topLeft()));
-        const QSizeF size = frame.image.devicePixelRatio() > 1
-            ? frame.image.deviceIndependentSize() : QSizeF(frame.logicalRect.size());
-        painter.drawImage(QRectF(local, size), frame.image);
-    }
-    painter.end();
+    QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+    m_roundEnabled = settings.value(QStringLiteral("Capture/roundEnabled"), false).toBool();
+    m_roundRadius = qBound(0, settings.value(QStringLiteral("Capture/roundRadius"), 0).toInt(), 60);
+    m_frameSource = [] { return freezeScreens(); };
+    buildShot(m_frames);
     }
     m_inspector = new PixelInspector(this);
 
@@ -144,6 +138,42 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         auto *barcode = barButton(Icon::Barcode, QStringLiteral("识别二维码/条形码"));
         barcode->setObjectName(QStringLiteral("barcodeButton"));
         barcode->setAccessibleName(QStringLiteral("识别二维码/条形码"));
+        m_roundButton = barButton(Icon::RoundRect, QStringLiteral("圆角截图"));
+        m_roundButton->setObjectName(QStringLiteral("roundButton"));
+        m_roundButton->setAccessibleName(QStringLiteral("圆角截图"));
+        m_roundButton->setCheckable(true);
+        m_roundButton->setChecked(m_roundEnabled);
+        connect(m_roundButton, &QToolButton::clicked, this, [this](bool checked) {
+            m_roundEnabled = checked;
+            applyRoundSettings(true);
+            if (checked) showRadiusPopup();
+            else if (m_radiusPopup) m_radiusPopup->close();
+            update();
+        });
+        m_refreshButton = barButton(Icon::Refresh, QStringLiteral("刷新截图（按住持续刷新）"));
+        m_refreshButton->setObjectName(QStringLiteral("refreshButton"));
+        m_refreshButton->setAccessibleName(QStringLiteral("刷新截图"));
+        m_refreshButton->setCheckable(true);
+        m_refreshAnimation = new QVariantAnimation(m_refreshButton);
+        m_refreshAnimation->setDuration(1000);
+        m_refreshAnimation->setStartValue(0.0);
+        m_refreshAnimation->setEndValue(360.0);
+        m_refreshAnimation->setLoopCount(-1);
+        connect(m_refreshAnimation, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
+            m_refreshSpinAngle = value.toReal();
+            updateRefreshIcon();
+        });
+        connect(m_refreshButton, &QToolButton::pressed, this, &CaptureOverlay::beginDesktopPreview);
+        connect(m_refreshButton, &QToolButton::released, this, [this] {
+            if (m_refreshAnimation) m_refreshAnimation->stop();
+            m_refreshSpinAngle = 0;
+            m_refreshButton->setIcon(barIcon(Icon::Refresh));
+            m_refreshButton->setChecked(false);
+            if (!m_desktopPreview) return;
+            m_desktopPreview = false;
+            refreshScreenshot();
+        });
+        connect(m_refreshButton, &QToolButton::clicked, this, [this] { m_refreshButton->setChecked(false); });
         connect(save, &QToolButton::clicked, this, &CaptureOverlay::saveCapture);
         connect(copy, &QToolButton::clicked, this, &CaptureOverlay::copyCapture);
         connect(pin, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
@@ -151,7 +181,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         connect(ocr, &QToolButton::clicked, this, &CaptureOverlay::ocrCapture);
         connect(translate, &QToolButton::clicked, this, &CaptureOverlay::translateCapture);
         connect(barcode, &QToolButton::clicked, this, &CaptureOverlay::barcodeCapture);
-        outputButtons = {scroll, ocr, translate, barcode, pin, save, copy};
+        outputButtons = {m_roundButton, scroll, ocr, translate, barcode, pin, m_refreshButton, save, copy};
     }
     // Instant annotation tools: draw inside the committed selection; every capture
     // action composes them in. One shape button covers rect / ellipse; per-tool
@@ -264,6 +294,24 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     }
 }
 
+void CaptureOverlay::buildShot(const QVector<ScreenFrame> &frames)
+{
+    qreal scale = 1;
+    for (const ScreenFrame &frame : frames)
+        scale = qMax(scale, frame.image.devicePixelRatio() > 1 ? frame.image.devicePixelRatio()
+                        : qreal(frame.image.width()) / frame.logicalRect.width());
+    m_shot = QPixmap(qRound(width() * scale), qRound(height() * scale));
+    m_shot.setDevicePixelRatio(scale);
+    m_shot.fill(Qt::black);
+    QPainter painter(&m_shot);
+    for (const ScreenFrame &frame : frames) {
+        const QPointF local = windowHandle()->mapFromGlobal(QPointF(frame.logicalRect.topLeft()));
+        const QSizeF size = frame.image.devicePixelRatio() > 1
+            ? frame.image.deviceIndependentSize() : QSizeF(frame.logicalRect.size());
+        painter.drawImage(QRectF(local, size), frame.image);
+    }
+}
+
 CaptureOverlay::~CaptureOverlay()
 {
     if (m_detector) m_detector->stop();
@@ -273,6 +321,35 @@ CaptureOverlay::~CaptureOverlay()
 void CaptureOverlay::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
+    const auto paintBars = [&] {
+        for (QWidget *glass : {m_tools, m_toolOptions}) {   // Rounded dark surface with a faint light rim.
+            if (m_embedded) break;                   // Detached or unused bars paint themselves.
+            if (!glass->isVisible()) continue;
+            const QRectF bar = glass->geometry();
+            p.setRenderHint(QPainter::Antialiasing);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(255, 255, 255, 17));    // 1px light rim lifts the bar off dark captures.
+            p.drawRoundedRect(bar.adjusted(-1, -1, 1, 1), Bar::radius + 1, Bar::radius + 1);
+            p.setBrush(Bar::surface);
+            p.drawRoundedRect(bar, Bar::radius, Bar::radius);
+            p.setRenderHint(QPainter::Antialiasing, false);
+        }
+    };
+    if (m_desktopPreview) {                       // Hold-to-refresh: keep the frame over the live desktop.
+        if (!m_sel.isNull()) {
+            p.setRenderHint(QPainter::Antialiasing);
+            p.setPen(QPen(QColor("#2080f0"), 1));
+            p.setBrush(QBrush(Qt::NoBrush));
+            if (m_roundEnabled && m_roundRadius > 0 && !m_embedded) p.drawPath(selectionPath(m_sel));
+            else p.drawRect(QRectF(m_sel).adjusted(0.5, 0.5, -0.5, -0.5));
+            p.setRenderHint(QPainter::Antialiasing, false);
+            if (!m_pinEdit)
+                for (const QRect &h : handleRects(m_sel))
+                    paintHandle(p, h.center() + QPoint(1, 1));
+        }
+        paintBars();
+        return;
+    }
     // Embedded: a transparent layer of marks only; the pin paints its own
     // pixels, border and text markups underneath, unchanged.
     if (!m_embedded) p.drawPixmap(0, 0, m_shot);   // Frozen frame covers the virtual desktop.
@@ -284,14 +361,26 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
     }
     if (!m_pinEdit) {                           // Pin editing draws on the pin as-is:
         QPainterPath mask;                      // no dim mask and no selection frame.
-        mask.addRect(rect());
-        mask.addRect(hole);
+        mask.setFillRule(Qt::OddEvenFill);
+        mask.addRect(QRectF(rect()));
+        mask.addPath(selectionPath(hole));
         p.fillPath(mask, QColor(0, 0, 0, 120));
         p.setPen(QPen(QColor("#2080f0"), 1));
-        p.drawRect(QRectF(hole).adjusted(0.5, 0.5, -0.5, -0.5));
+        p.setBrush(QBrush(Qt::NoBrush));
+        if (m_roundEnabled && m_roundRadius > 0 && !m_embedded) {
+            p.setRenderHint(QPainter::Antialiasing);
+            p.drawPath(selectionPath(hole));
+            p.setRenderHint(QPainter::Antialiasing, false);
+        } else {
+            p.drawRect(QRectF(hole).adjusted(0.5, 0.5, -0.5, -0.5));
+        }
     }
-    if (m_mode == Adjusting && !m_sel.isNull())   // Annotations clip to the selection.
+    if (m_mode == Adjusting && !m_sel.isNull()) {   // Annotations clip to the selection shape.
+        p.save();
+        p.setClipPath(selectionPath(m_sel), Qt::IntersectClip);
         paintAnnotations(p, QPointF(0, 0), 1.0, QRectF(m_sel), false);
+        p.restore();
+    }
     if (m_live && regionItem(m_ann))              // Thin frame shows the dragged region.
         paintMosaicBorder(p, m_ann, false);
     if (m_mode == Adjusting && !m_live
@@ -338,18 +427,7 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         p.setPen(QPen(QColor(0, 0, 0, 90), 1));
         p.drawRect(m_sel.adjusted(0, 0, -1, -1));
     }
-    for (QWidget *glass : {m_tools, m_toolOptions}) {   // Rounded dark surface with a faint light rim.
-        if (m_embedded) break;                   // Detached or unused bars paint themselves.
-        if (!glass->isVisible()) continue;
-        const QRectF bar = glass->geometry();
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(255, 255, 255, 17));    // 1px light rim lifts the bar off dark captures.
-        p.drawRoundedRect(bar.adjusted(-1, -1, 1, 1), Bar::radius + 1, Bar::radius + 1);
-        p.setBrush(Bar::surface);
-        p.drawRoundedRect(bar, Bar::radius, Bar::radius);
-        p.setRenderHint(QPainter::Antialiasing, false);
-    }
+    paintBars();
 }
 
 void CaptureOverlay::mousePressEvent(QMouseEvent *e)
@@ -790,6 +868,9 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
         }
     }
     switch (e->key()) {
+    case Qt::Key_F5:
+        if (!m_embedded && !m_pinEdit) refreshScreenshot();
+        break;
     case Qt::Key_Escape:
         if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) break;   // Only a right click ends it.
         if (m_live) { m_live = false; endAnnotationDrag(); }
@@ -1338,6 +1419,219 @@ void CaptureOverlay::presetSelection(const QRect &localSel, ATool tool)
     update();
 }
 
+QPainterPath CaptureOverlay::selectionPath(const QRect &r) const
+{
+    QPainterPath path;
+    if (r.isEmpty()) return path;
+    if (m_roundEnabled && m_roundRadius > 0 && !m_embedded && !m_pinEdit)
+        path.addRoundedRect(QRectF(r), m_roundRadius, m_roundRadius);
+    else
+        path.addRect(QRectF(r));
+    return path;
+}
+
+void CaptureOverlay::applyRoundSettings(bool persist)
+{
+    if (m_embedded) return;
+    if (m_roundButton) {
+        const QSignalBlocker lock(m_roundButton);
+        m_roundButton->setChecked(m_roundEnabled);
+    }
+    if (m_radiusSlider) {
+        const QSignalBlocker lock(m_radiusSlider);
+        m_radiusSlider->setValue(m_roundRadius);
+    }
+    if (m_radiusValue) m_radiusValue->setText(QString::number(m_roundRadius));
+    if (persist) {
+        QSettings settings(QStringLiteral("pinshot"), QStringLiteral("pinshot"));
+        settings.setValue(QStringLiteral("Capture/roundEnabled"), m_roundEnabled);
+        settings.setValue(QStringLiteral("Capture/roundRadius"), m_roundRadius);
+    }
+    update();
+}
+
+void CaptureOverlay::showRadiusPopup()
+{
+    if (m_radiusPopup) { m_radiusPopup->close(); return; }
+    auto *popup = new QDialog(this, Qt::Popup | Qt::FramelessWindowHint);
+    m_radiusPopup = popup;
+    popup->setObjectName(QStringLiteral("roundRadiusPanel"));
+    popup->setAttribute(Qt::WA_DeleteOnClose);
+    popup->setStyleSheet(QStringLiteral("QDialog{background:#18181b;border:1px solid #27272a;}"
+                                        "QLabel{color:#fcfcfc;font-size:12px;}"));
+    auto *row = new QHBoxLayout(popup);
+    row->setContentsMargins(8, 6, 8, 6);
+    row->setSpacing(6);
+    auto *label = new QLabel(QStringLiteral("圆角半径"), popup);
+    m_radiusSlider = new QSlider(Qt::Horizontal, popup);
+    m_radiusSlider->setObjectName(QStringLiteral("roundRadiusSlider"));
+    m_radiusSlider->setAccessibleName(QStringLiteral("圆角半径"));
+    m_radiusSlider->setRange(0, 60);
+    m_radiusSlider->setPageStep(1);
+    m_radiusSlider->setFixedSize(128, 22);
+    m_radiusSlider->setFocusPolicy(Qt::NoFocus);
+    m_radiusSlider->setStyleSheet(darkSliderQss);
+    m_radiusValue = new QLabel(QString::number(m_roundRadius), popup);
+    m_radiusValue->setObjectName(QStringLiteral("roundRadiusValue"));
+    m_radiusValue->setFixedWidth(24);
+    m_radiusValue->setAlignment(Qt::AlignCenter);
+    row->addWidget(label);
+    row->addWidget(m_radiusSlider);
+    row->addWidget(m_radiusValue);
+    connect(m_radiusSlider, &QSlider::valueChanged, this, [this](int value) {
+        m_roundRadius = value;
+        if (value > 0) m_roundEnabled = true;   // Match the reference: a non-zero radius enables the button.
+        applyRoundSettings(true);
+    });
+    connect(popup, &QDialog::finished, this, [this] { if (isVisible()) setFocus(); });
+    popup->show();
+    popup->adjustSize();
+    const QPoint below = m_roundButton->mapToGlobal(QPoint(0, m_roundButton->height()));
+    const QScreen *screen = QGuiApplication::screenAt(below);
+    const QRect available = (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry();
+    const int y = below.y() + popup->height() <= available.bottom() + 1 ? below.y()
+        : qMax(available.top(), m_roundButton->mapToGlobal(QPoint()).y() - popup->height());
+    popup->move(qBound(available.left(), below.x(), available.right() + 1 - popup->width()), y);
+}
+
+void CaptureOverlay::updateRefreshIcon()
+{
+    if (!m_refreshButton) return;
+    const qreal dpr = devicePixelRatioF();
+    QPixmap pm(qCeil(Bar::icon * dpr), qCeil(Bar::icon * dpr));
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setRenderHint(QPainter::SmoothPixmapTransform);
+    p.translate(Bar::icon / 2.0, Bar::icon / 2.0);
+    p.rotate(m_refreshSpinAngle);
+    p.drawPixmap(QPointF(-Bar::icon / 2.0, -Bar::icon / 2.0),
+                 barIcon(Icon::Refresh).pixmap(QSize(Bar::icon, Bar::icon)));
+    p.end();
+    m_refreshButton->setIcon(QIcon(pm));
+}
+
+void CaptureOverlay::beginDesktopPreview()
+{
+    if (m_embedded || m_pinEdit || m_refreshing) return;
+    m_desktopPreview = true;
+    if (m_refreshButton) {
+        const QSignalBlocker lock(m_refreshButton);
+        m_refreshButton->setChecked(true);
+    }
+    cancelDetection();
+    if (m_detector) m_detector->stop();
+    if (m_radiusPopup) m_radiusPopup->close();
+    if (m_sizePopup) m_sizePopup->close();
+    m_hover = QRect();
+    m_sizeTip->hide();
+    m_inspector->hide();
+    m_toolOptions->hide();
+    if (m_refreshAnimation) m_refreshAnimation->start();
+    update();
+}
+
+void CaptureOverlay::refreshScreenshot()
+{
+    if (m_embedded || m_pinEdit || m_refreshing) return;
+    m_refreshing = true;
+    if (m_refreshAnimation) m_refreshAnimation->stop();
+    m_refreshSpinAngle = 0;
+    if (m_refreshButton) {
+        m_refreshButton->setIcon(barIcon(Icon::Refresh));
+        m_refreshButton->setChecked(false);
+    }
+    cancelDetection();
+    if (m_detector) m_detector->stop();
+    if (m_radiusPopup) m_radiusPopup->close();
+    if (m_sizePopup) m_sizePopup->close();
+    if (m_colorDialog) m_colorDialog->close();
+    m_toolOptions->hide();
+    m_inspector->hide();
+    m_sizeTip->hide();
+
+    const HWND hwnd = reinterpret_cast<HWND>(winId());
+    // Excluding the capture window keeps the frame visible while the desktop
+    // underneath is grabbed, so the selection never flashes away.
+    const bool excluded = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) != FALSE;
+    if (excluded) {
+        m_desktopPreview = true;
+        m_tools->show();
+        update();
+    } else {
+        m_desktopPreview = false;
+        hide();
+    }
+    QTimer::singleShot(150, this, [this, hwnd, excluded] {
+        if (!m_refreshing) {
+            SetWindowDisplayAffinity(hwnd, WDA_NONE);
+            return;
+        }
+        const QVector<ScreenFrame> frames = m_frameSource ? m_frameSource() : freezeScreens();
+        SetWindowDisplayAffinity(hwnd, WDA_NONE);
+        if (frames.isEmpty()) {
+            m_refreshing = false;
+            m_desktopPreview = false;
+            show(); raise(); activateWindow(); setFocus();
+            if (!m_sel.isNull()) {
+                placeToolbar();
+                showToolBars();
+                updateTip();
+                updateInspector();
+            } else if (m_liveDetection) {
+                startDetector();
+                requestDetection(mapFromGlobal(QCursor::pos()));
+            }
+            showOutputError(QStringLiteral("刷新失败，请重试"));
+            update();
+            return;
+        }
+        applyRefreshFrames(frames);
+        m_refreshing = false;
+        m_desktopPreview = false;
+        if (!excluded) show();
+        raise(); activateWindow(); setFocus();
+        if (!m_sel.isNull()) {
+            placeToolbar();
+            showToolBars();
+            updateTip();
+            updateInspector();
+        } else if (m_liveDetection) {
+            startDetector();
+            requestDetection(mapFromGlobal(QCursor::pos()));
+        }
+        update();
+    });
+}
+
+void CaptureOverlay::applyRefreshFrames(const QVector<ScreenFrame> &frames)
+{
+    if (editorActive()) commitTextEdit();
+    if (m_live) { m_live = false; commitAnnotation(); }
+    m_frames = frames;
+    buildShot(frames);
+    m_mosaicFrame = QImage();
+    // Refresh replaces the frozen pixels only: keep the committed selection,
+    // annotations, history and armed tool exactly as the user left them.
+    m_pressSel = QRect();
+    m_hover = QRect();
+    m_hoverHistory.clear();
+    m_windowRects.clear();
+    m_mode = m_sel.isNull() ? Selecting : Adjusting;
+    m_drag = H_None;
+    m_itemDrag = H_None;
+    m_dragStarted = false;
+    m_queryId = 0;
+    m_queryPending = m_waitingClick = false;
+    m_pinAfterDetection = false;
+    m_detectionPoint = QPoint();
+    syncToolButtons();
+    syncUndoButtons();
+    if (m_colorDialog) m_colorDialog->close();
+    update();
+}
+
 QPixmap CaptureOverlay::cropped() const
 {
     if (m_sel.isEmpty() || m_shot.isNull()) return {};
@@ -1346,7 +1640,24 @@ QPixmap CaptureOverlay::cropped() const
     QPixmap pix = m_shot.copy(QRect(qRound(r.x() * scale), qRound(r.y() * scale),
                                    qRound(r.width() * scale), qRound(r.height() * scale)));
     pix.setDevicePixelRatio(1);
-    if (!m_anns.isEmpty() || editorActive()) {   // Unfinished text is also included in previews.
+    const bool rounded = m_roundEnabled && m_roundRadius > 0 && !m_embedded && !m_pinEdit;
+    if (rounded) {
+        // Render through a rounded clip so save/copy/pin keep transparent corners.
+        QImage out(pix.size(), QImage::Format_ARGB32_Premultiplied);
+        out.fill(Qt::transparent);
+        QPainter p(&out);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        QPainterPath clip;
+        const qreal radius = m_roundRadius * scale;
+        clip.addRoundedRect(QRectF(0, 0, out.width(), out.height()), radius, radius);
+        p.setClipPath(clip);
+        p.drawPixmap(0, 0, pix);
+        if (!m_anns.isEmpty() || editorActive())
+            paintAnnotations(p, -QPointF(r.topLeft()) * scale, scale, QRectF(r));
+        p.end();
+        pix = QPixmap::fromImage(out);
+    } else if (!m_anns.isEmpty() || editorActive()) {   // Unfinished text is also included in previews.
         QPainter p(&pix);
         paintAnnotations(p, -QPointF(r.topLeft()) * scale, scale, QRectF(r));
     }

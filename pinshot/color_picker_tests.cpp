@@ -308,7 +308,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     // Both rows stay horizontal and move above the selection when the screen bottom is full.
     const QRect avail = QGuiApplication::primaryScreen()->availableGeometry()
                            .translated(-overlay.geometry().topLeft());
-    overlay.m_sel = QRect(avail.topLeft() + QPoint(60, 60), QSize(640, 120));
+    overlay.m_sel = QRect(avail.topLeft() + QPoint(60, 60), QSize(980, 120));
     overlay.m_mode = Adjusting;
     overlay.placeToolbar();
     check(overlay.m_tools->y() >= overlay.m_sel.bottom() + 1

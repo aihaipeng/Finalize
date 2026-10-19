@@ -38,6 +38,10 @@ int main(int argc, char **argv)
         return OcrDialog::testLifetime();
     if (app.arguments().contains(QStringLiteral("--test-translate")))
         return OcrDialog::testTranslate();
+    if (app.arguments().contains(QStringLiteral("--test-round-refresh"))) {
+        const QString preview = app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-round-refresh"))+1);
+        return CaptureOverlay::testRoundRefresh(preview);
+    }
     if (app.arguments().contains(QStringLiteral("--test-barcode"))) {
         const QString preview = app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-barcode"))+1);
         const int card = OcrDialog::testBarcode(preview);

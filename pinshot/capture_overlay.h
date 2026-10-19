@@ -39,7 +39,10 @@
 #include <QPointer>
 #include <QCloseEvent>
 #include <QPolygonF>
+#include <functional>
 #include <qt_windows.h>
+
+class QVariantAnimation;
 
 // ---------- Fullscreen selection: frozen frame, adjustable region, and action toolbar. ----------
 class CaptureOverlay : public QWidget
@@ -71,6 +74,7 @@ public:
     void presetSelection(const QRect &localSel, ATool tool = ATool::None);
     static int testOcr(const QString &previewPath);
     static int testBarcode(const QString &previewPath);
+    static int testRoundRefresh(const QString &previewPath);
     static int testSelection();
     static int testColorPicker(const QString &previewPath);
     static int testMosaic(const QString &previewPath);
@@ -260,6 +264,14 @@ private:
     void hideToolBars();
     void showToolBars();
     QPixmap cropped() const;
+    void buildShot(const QVector<ScreenFrame> &frames);
+    QPainterPath selectionPath(const QRect &r) const;
+    void showRadiusPopup();
+    void applyRoundSettings(bool persist);
+    void beginDesktopPreview();
+    void refreshScreenshot();
+    void applyRefreshFrames(const QVector<ScreenFrame> &frames);
+    void updateRefreshIcon();
 private slots:
     void ocrCapture();
     void translateCapture();
@@ -344,6 +356,19 @@ private:
     QPointer<QSlider> m_sizeSlider;
     QPointer<QLabel> m_sizeValue;
     bool m_sizeDragUndo = false;
+    QToolButton *m_roundButton = nullptr;
+    QToolButton *m_refreshButton = nullptr;
+    QVariantAnimation *m_refreshAnimation = nullptr;
+    qreal m_refreshSpinAngle = 0;
+    QPointer<QDialog> m_radiusPopup;
+    QPointer<QSlider> m_radiusSlider;
+    QPointer<QLabel> m_radiusValue;
+    bool m_roundEnabled = false;
+    int m_roundRadius = 0;                         // Slider value in logical pixels, 0..60.
+    bool m_desktopPreview = false;                 // Hold-to-see-desktop state for the refresh button.
+    bool m_refreshing = false;
+    bool m_liveDetection = false;
+    std::function<QVector<ScreenFrame>()> m_frameSource;   // Replaceable for deterministic tests.
     QSlider *m_mosaicSlider = nullptr;
     QLabel *m_mosaicStrengthLabel = nullptr;
     QToolButton *m_mosaicPreview = nullptr;
