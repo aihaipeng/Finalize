@@ -10,6 +10,7 @@
 #include "shared/settings.h"
 #include <QSettings>
 #include <QSlider>
+#include <QSpinBox>
 #include <QThread>
 #include <QToolButton>
 #include <QVariant>
@@ -90,34 +91,45 @@ int CaptureOverlay::testRoundRefresh(const QString &previewPath)
           "radius zero keeps square corners");
     overlay.m_roundRadius = 24;
 
-    auto *round = overlay.findChild<QToolButton *>(QStringLiteral("roundButton"));
+    auto *corner = overlay.findChild<QToolButton *>(QStringLiteral("sizeCorner"));
+    auto *radius = overlay.findChild<QSpinBox *>(QStringLiteral("sizeRadius"));
     auto *refresh = overlay.findChild<QToolButton *>(QStringLiteral("refreshButton"));
-    check(round && refresh, "capture toolbar exposes round and refresh actions");
+    check(corner && radius && refresh, "selection strip exposes corner/radius controls and refresh");
     check(refresh->toolTip() == QStringLiteral("刷新截图（按住持续刷新）"),
           "refresh tooltip documents hold-to-refresh");
-    check(round->isChecked(), "loaded round setting is reflected by the button");
+    check(corner->isChecked(), "loaded round setting is reflected by the corner button");
 
     overlay.m_roundEnabled = false;
     overlay.applyRoundSettings(false);
-    round->click();
-    auto *slider = overlay.findChild<QSlider *>(QStringLiteral("roundRadiusSlider"));
-    check(overlay.m_roundEnabled && slider && slider->minimum() == 0 && slider->maximum() == 60,
-          "rounding button opens the 0..60 radius slider");
-    slider->setValue(12);
+    corner->click();
+    check(overlay.m_roundEnabled && radius && radius->minimum() == 0 && radius->maximum() == 60,
+          "the corner strip shows the inline 0..60 radius stepper");
+    radius->setValue(12);
     check(overlay.m_roundRadius == 12 && overlay.m_roundEnabled,
-          "moving the slider stores the radius and enables rounding");
-    slider->setValue(0);
+          "stepping the radius stores it and keeps rounding enabled");
+    auto *radiusUp = overlay.findChild<QToolButton *>(QStringLiteral("sizeRadiusUp"));
+    const int beforeRadiusStep = overlay.m_roundRadius;
+    if (radiusUp) radiusUp->click();
+    check(radiusUp && overlay.m_roundRadius > beforeRadiusStep,
+          "the radius stepper adjusts the live corner radius");
+    const int beforeRadiusWheel = overlay.m_roundRadius;
+    QWheelEvent radiusWheel(QPointF(5, 5), QPointF(radius->mapToGlobal(QPoint(5, 5))),
+                            QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                            Qt::NoScrollPhase, false);
+    QApplication::sendEvent(radius, &radiusWheel);
+    check(overlay.m_roundRadius > beforeRadiusWheel,
+          "the wheel adjusts the radius and the live corner");
+    radius->setValue(0);
     const QImage zeroRadius = overlay.cropped().toImage();
     check(zeroRadius.pixelColor(0, 0).alpha() == 255,
-          "slider zero returns to square corners without losing the stored value");
-    slider->setValue(12);
+          "a zero radius returns to square corners without losing the stored value");
+    radius->setValue(12);
     if (!previewPath.isEmpty()) {
         overlay.placeToolbar();
         overlay.showToolBars();
         overlay.grab().save(previewPath + QStringLiteral("-round-toolbar.png"));
         overlay.cropped().save(previewPath + QStringLiteral("-round-crop.png"));
     }
-    if (overlay.m_radiusPopup) overlay.m_radiusPopup->close();
 
     // Refresh replaces only the frozen frame: the committed selection, its
     // annotations and the armed tool must stay exactly as the user left them.

@@ -495,6 +495,10 @@
         <source>贴图失败，请确认选区有效并检查内存后重试</source>
         <translation>贴图失败，请确认选区有效并检查内存后重试</translation>
     </message>
+    <message>
+        <source>笔宽</source>
+        <translation>笔宽</translation>
+    </message>
 </context>
 <context>
     <name>ColorBoard</name>
@@ -1269,6 +1273,66 @@
         <source>还原</source>
         <translation>还原</translation>
     </message>
+    <message>
+        <source>文字识别</source>
+        <translation>文字识别</translation>
+    </message>
+    <message>
+        <source>识别并翻译</source>
+        <translation>识别并翻译</translation>
+    </message>
+    <message>
+        <source>二维码 / 条形码</source>
+        <translation>二维码 / 条形码</translation>
+    </message>
+    <message>
+        <source>截图对照</source>
+        <translation>截图对照</translation>
+    </message>
+    <message>
+        <source>识别内容</source>
+        <translation>识别内容</translation>
+    </message>
+    <message>
+        <source>识别结果</source>
+        <translation>识别结果</translation>
+    </message>
+    <message>
+        <source>原文</source>
+        <translation>原文</translation>
+    </message>
+    <message>
+        <source>%1 个字符</source>
+        <translation>%1 个字符</translation>
+    </message>
+    <message>
+        <source>请调整截图范围后重新识别。</source>
+        <translation>请调整截图范围后重新识别。</translation>
+    </message>
+    <message>
+        <source>文字识别暂不可用</source>
+        <translation>文字识别暂不可用</translation>
+    </message>
+    <message>
+        <source>请检查本地识别资源后重试。</source>
+        <translation>请检查本地识别资源后重试。</translation>
+    </message>
+    <message>
+        <source>请确保图像清晰且码完整。</source>
+        <translation>请确保图像清晰且码完整。</translation>
+    </message>
+    <message>
+        <source>翻译未完成</source>
+        <translation>翻译未完成</translation>
+    </message>
+    <message>
+        <source>原文已更改 · Ctrl+Enter 重新翻译</source>
+        <translation>原文已更改 · Ctrl+Enter 重新翻译</translation>
+    </message>
+    <message>
+        <source>复制</source>
+        <translation>复制</translation>
+    </message>
 </context>
 <context>
     <name>OcrEngine</name>
@@ -1624,6 +1688,15 @@
         <location line="+1"/>
         <source>越南语</source>
         <translation>越南语</translation>
+    </message>
+</context>
+<context>
+    <name>HistoryDialog</name>
+    <message>
+        <source>截图历史为空
+开启记录后，新截图将显示在这里。</source>
+        <translation>截图历史为空
+开启记录后，新截图将显示在这里。</translation>
     </message>
 </context>
 </TS>

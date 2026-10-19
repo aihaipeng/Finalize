@@ -78,6 +78,7 @@ public:
     static int testBarcode(const QString &previewPath);
     static int testRoundRefresh(const QString &previewPath);
     static int testSelection();
+    static int testThemeUi(const QString &previewPath);
     static int testColorPicker(const QString &previewPath);
     static int testMosaic(const QString &previewPath);
     static int testSmartErase(const QString &previewPath);
@@ -269,7 +270,6 @@ private:
     QPixmap cropped() const;
     void buildShot(const QVector<ScreenFrame> &frames);
     QPainterPath selectionPath(const QRect &r) const;
-    void showRadiusPopup();
     void applyRoundSettings(bool persist);
     enum class SizeUnit { Px, Dp };
     struct SizePreset { QString name; QRect global; };
@@ -328,6 +328,12 @@ private:
     Handle m_drag = H_None;
     Mode m_mode = Selecting;
     QLabel *m_sizeTip = nullptr;
+    QWidget *m_sizeBar = nullptr;
+    QToolButton *m_sizeUnitButton = nullptr;
+    QToolButton *m_sizeCornerButton = nullptr;
+    QSpinBox *m_sizeRadiusSpin = nullptr;
+    QWidget *m_sizeRadiusDivider = nullptr;
+    QToolButton *m_sizeLockButton = nullptr;
     QWidget *m_tools = nullptr;
     QVector<QWidget *> m_toolButtons;
     ATool m_atool = ATool::None;
@@ -380,23 +386,17 @@ private:
     bool m_sizeDragUndo = false;
     QPointer<QDialog> m_customSizePopup;
     QPointer<QSpinBox> m_customX, m_customY, m_customWidth, m_customHeight;
-    QPointer<QComboBox> m_customUnit;
-    QPointer<QCheckBox> m_customLock;
     QPointer<QComboBox> m_presetCombo;
     QVector<SizePreset> m_sizePresets;
     bool m_updatingCustom = false;
     SizeUnit m_sizeUnit = SizeUnit::Px;
     bool m_lockAspect = false;
     qreal m_aspect = 1.0;
-    QToolButton *m_roundButton = nullptr;
     QToolButton *m_refreshButton = nullptr;
     QVariantAnimation *m_refreshAnimation = nullptr;
     qreal m_refreshSpinAngle = 0;
-    QPointer<QDialog> m_radiusPopup;
-    QPointer<QSlider> m_radiusSlider;
-    QPointer<QLabel> m_radiusValue;
     bool m_roundEnabled = false;
-    int m_roundRadius = 0;                         // Slider value in logical pixels, 0..60.
+    int m_roundRadius = 0;                         // Radius in logical pixels, 0..60.
     bool m_desktopPreview = false;                 // Hold-to-see-desktop state for the refresh button.
     bool m_refreshing = false;
     bool m_liveDetection = false;

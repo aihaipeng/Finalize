@@ -21,15 +21,8 @@ PixelInspector::PixelInspector(QWidget *parent) : QWidget(parent)
     f.setPointSize(11);
     f.setStyleStrategy(QFont::StyleStrategy(QFont::PreferAntialias | QFont::NoSubpixelAntialias));
     setFont(f);
-    m_tips.setDefaultFont(QFont(QStringLiteral("Microsoft YaHei")));
-    QFont tipsFont = m_tips.defaultFont();
-    tipsFont.setPixelSize(13);
-    tipsFont.setStyleStrategy(QFont::StyleStrategy(QFont::PreferAntialias | QFont::NoSubpixelAntialias));
-    m_tips.setDefaultFont(tipsFont);
-    m_tips.setDocumentMargin(0);
-    m_tips.setHtml(tr("<div align='center' style='color:white'>按 <b>C</b> 复制颜色值<br>按 <b>Shift</b> 切换 RGB/HEX</div>"));
-    setFixedSize(qMax(179, qCeil(m_tips.idealWidth()) + 4), 217);
-    m_tips.setTextWidth(width());
+    setAttribute(Qt::WA_TranslucentBackground);
+    setFixedSize(230, 220);
     hide();
 }
 
@@ -72,8 +65,11 @@ void PixelInspector::toggleFormat() { m_hex = !m_hex; update(); }
 void PixelInspector::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
-    p.fillRect(rect(), QColor(0, 0, 0, 188));
-    const QRect view((width() - 177) / 2, 1, 177, 121);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(Bar::divider,1));p.setBrush(Bar::surface);
+    p.drawRoundedRect(QRectF(rect()).adjusted(0.5,0.5,-0.5,-0.5),8,8);
+    p.setBrush(Qt::NoBrush);
+    const QRect view((width() - 177) / 2, 12, 177, 121);
     p.setRenderHint(QPainter::SmoothPixmapTransform, false);
     p.save();
     p.setClipRect(view);
@@ -91,23 +87,10 @@ void PixelInspector::paintEvent(QPaintEvent *)
     p.restore();
     p.setPen(Qt::white);
     p.drawRect(view.adjusted(0, 0, -1, -1));
-    const int line = fontMetrics().height(), y = 127;
-    const QString x = QStringLiteral("(%1").arg(m_position.x());
-    const QString coordinateY = QStringLiteral("%1)").arg(m_position.y());
-    const int xWidth = fontMetrics().horizontalAdvance(x);
-    const int commaWidth = fontMetrics().horizontalAdvance(QLatin1Char(','));
-    const int yWidth = fontMetrics().horizontalAdvance(coordinateY);
-    const int coordinateLeft = (width() - xWidth - commaWidth - yWidth - 12) / 2;
-    p.drawText(QRect(coordinateLeft, y, xWidth, line), Qt::AlignVCenter, x);
-    p.drawText(QRect(coordinateLeft + xWidth + 6, y, commaWidth, line), Qt::AlignVCenter, QStringLiteral(","));
-    p.drawText(QRect(coordinateLeft + xWidth + commaWidth + 12, y, yWidth, line), Qt::AlignVCenter, coordinateY);
-    const QString text = m_hex ? colorText()
-        : QStringLiteral("%1, %2, %3").arg(m_color.red(), 3).arg(m_color.green(), 3).arg(m_color.blue(), 3);
-    const int left = (width() - fontMetrics().horizontalAdvance(text) - 20) / 2;
-    const QRect swatch(left, 153 + (line - 14) / 2, 14, 14);
-    p.fillRect(swatch, m_color);
-    p.drawRect(swatch.adjusted(0, 0, -1, -1));
-    p.drawText(QRect(left + 20, 153, width() - left - 20, line), Qt::AlignVCenter, text);
-    p.translate(0, 179);
-    m_tips.drawContents(&p);
+    QFont valueFont=font();valueFont.setPixelSize(14);p.setFont(valueFont);
+    p.setPen(Bar::ink);p.setBrush(m_color);p.drawRoundedRect(QRect(20,150,20,20),4,4);
+    p.drawText(QRect(52,148,160,24),Qt::AlignVCenter,m_color.name(QColor::HexRgb).toUpper());
+    QFont rgb=valueFont;rgb.setPixelSize(12);p.setFont(rgb);p.setPen(Bar::muted);
+    p.drawText(QRect(20,180,190,20),Qt::AlignVCenter,
+        QStringLiteral("RGB  %1, %2, %3").arg(m_color.red()).arg(m_color.green()).arg(m_color.blue()));
 }

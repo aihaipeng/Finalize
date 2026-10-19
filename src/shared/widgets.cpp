@@ -43,8 +43,47 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
         "card-fit", "card-translate", "card-reload", "card-copy",
         "card-zoom-in", "card-zoom-out", "card-actual", "card-pin", "card-minimize", "card-maximize",
         "card-restore", "card-close", "card-search", "card-up", "card-down", "card-right", "card-format",
-        "back", "crop", "crop_start", "crop_end", "barcode", "card-link", "round_rect"};
-    QSvgRenderer svg(QStringLiteral(":/icons/%1.svg").arg(QLatin1String(names[int(icon)])));
+        "back", "crop", "crop_start", "crop_end", "barcode", "card-link", "round_rect",
+        "corner_square", "corner_rounded", "aspect_lock", "warning"};
+    // A shared stroke grid keeps primary tools and card actions visually aligned.
+    const char *path = nullptr;
+    switch (icon) {
+    case Icon::Save: path = "M4 3h13l4 4v14H3V3z M7 3v6h10V3 M7 21v-8h10v8"; break;
+    case Icon::Copy: case Icon::CardCopy: path = "M9 8h11v13H9z M5 16H3V3h12v2"; break;
+    case Icon::Pin: case Icon::CardPin: path = "M8 3h8 M9 3v6l-4 5h14l-4-5V3 M12 14v8"; break;
+    case Icon::Rect: path = "M4 5h16v14H4z"; break;
+    case Icon::Ellipse: path = "M20 12a8 7 0 1 1-16 0a8 7 0 1 1 16 0"; break;
+    case Icon::Arrow: path = "M5 19L19 5 M8 5h11v11"; break;
+    case Icon::Pen: path = "M4 20l4-1 12-12-3-3L5 16z M14 7l3 3"; break;
+    case Icon::Marker: path = "M5 14l9-10 6 6-10 9z M4 21h9"; break;
+    case Icon::Text: path = "M4 5h16 M12 5v15 M8 20h8"; break;
+    case Icon::Number: path = "M8 4L6 20 M17 4l-2 16 M3 9h18 M2 15h18"; break;
+    case Icon::Mosaic: path = "M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z"; break;
+    case Icon::Eraser: path = "M3 14l10-10 8 8-9 9H9z M9 8l8 8 M12 21h10"; break;
+    case Icon::Undo: path = "M8 6L3 11l5 5 M4 11h10a6 6 0 0 1 6 6"; break;
+    case Icon::Redo: path = "M16 6l5 5-5 5 M20 11H10a6 6 0 0 0-6 6"; break;
+    case Icon::Cancel: case Icon::CardClose: path = "M6 6l12 12 M18 6L6 18"; break;
+    case Icon::Refresh: case Icon::CardReload: path = "M20 8a8 8 0 1 0 1 7 M20 3v6h-6"; break;
+    case Icon::Ocr: path = "M3 8V3h5 M16 3h5v5 M21 16v5h-5 M8 21H3v-5 M7 12h10 M8 8h8 M8 16h6"; break;
+    case Icon::Barcode: path = "M3 3h6v6H3z M15 3h6v6h-6z M3 15h6v6H3z M15 15h2v2h-2z M19 15h2v6h-6v-2"; break;
+    case Icon::Translate: case Icon::CardTranslate: path = "M3 5h11 M9 2v3 M5 5c0 6 5 10 9 11 M12 5c-1 7-4 11-9 13 M14 21l4-11 4 11 M16 17h4"; break;
+    case Icon::LongShot: path = "M5 3h14v18H5z M9 8l3-3 3 3 M12 5v14 M9 16l3 3 3-3"; break;
+    case Icon::RoundRect: path = "M4 14V9a5 5 0 0 1 5-5h5 M4 18v2h2 M18 4h2v2 M20 18v2h-2"; break;
+    case Icon::CornerSquare: path = "M4 20V4h16"; break;
+    case Icon::CornerRounded: path = "M4 20V10a6 6 0 0 1 6-6h10"; break;
+    case Icon::AspectLock: path = "M8 10V7a4 4 0 0 1 8 0v3 M5 10h14v10H5z"; break;
+    case Icon::Search: case Icon::CardSearch: path = "M16 10a6 6 0 1 1-12 0a6 6 0 1 1 12 0 M15 15l6 6"; break;
+    case Icon::Back: path = "M14 5l-7 7 7 7 M7 12h14"; break;
+    case Icon::Minimize: case Icon::CardMinimize: path = "M5 12h14"; break;
+    case Icon::Maximize: case Icon::CardMaximize: path = "M5 5h14v14H5z"; break;
+    case Icon::View: path = "M2 12c6-9 14-9 20 0-6 9-14 9-20 0 M15 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0"; break;
+    case Icon::Warning: path = "M12 3L2 21h20z M12 9v6 M12 18v.1"; break;
+    case Icon::Check: path = "M4 12l5 5L20 6"; break;
+    default: break;
+    }
+    QSvgRenderer svg;
+    if (path) svg.load(QByteArray("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='") + path + "'/></svg>");
+    else svg.load(QStringLiteral(":/icons/%1.svg").arg(QLatin1String(names[int(icon)])));
     QIcon result;
     for (const auto &variant : variants)
     for (int px : {size, size * 3 / 2, size * 2}) {   // 1x / 1.5x / 2x variants of one logical size.
@@ -66,8 +105,8 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
 QIcon makeIcon(Icon icon, int size, bool dark)
 {
     // Light bar language: dark glyphs, grey when disabled, white on the checked theme fill.
-    const QColor ink = dark ? QColor(0xe3, 0xe3, 0xe3) : QColor(0x32, 0x32, 0x32);
-    const QColor off = dark ? QColor(0x66, 0x66, 0x66) : QColor(0x7b, 0x7b, 0x7b);
+    const QColor ink = dark ? Bar::ink : QColor(0x32, 0x32, 0x32);
+    const QColor off = dark ? Bar::dim : QColor(0x7b, 0x7b, 0x7b);
     return renderIcon(icon, size, dark, {
         {ink, QIcon::Off, {QIcon::Normal, QIcon::Active, QIcon::Selected}},
         {off, QIcon::Off, {QIcon::Disabled}},
@@ -78,8 +117,8 @@ QIcon makeIcon(Icon icon, int size, bool dark)
 
 QIcon cardIcon(Icon icon, int size)
 {
-    // Card palette: muted zinc ink, accent blue on hover and when checked.
-    const QColor muted(0xa1, 0xa1, 0xaa), accent(0x04, 0x85, 0xf7), off(0x52, 0x52, 0x5b);
+    // Card glyphs share the chrome palette and tint on hover or selection.
+    const QColor muted = Bar::muted, accent = Bar::accent, off = Bar::dim;
     return renderIcon(icon, size, 2, {
         {muted, QIcon::Off, {QIcon::Normal, QIcon::Selected}},
         {accent, QIcon::Off, {QIcon::Active}},
@@ -122,16 +161,16 @@ QToolButton *barButton(Icon icon, const QString &tip)
 
 const QString darkSliderQss = QStringLiteral(
     "QSlider{margin:0px 1px 0px 1px;}"
-    "QSlider::groove:horizontal{border:none;background:#27272a;height:14px;border-radius:7px;}"
-    "QSlider::sub-page:horizontal{background:#0485f7;border-radius:7px;}"
-    "QSlider::handle:horizontal{background:#f4f4f4;width:10px;margin:2px 2px;border-radius:5px;}");
+    "QSlider::groove:horizontal{border:none;background:#2b2d33;height:4px;border-radius:2px;}"
+    "QSlider::sub-page:horizontal{background:#5e6ad2;border-radius:2px;}"
+    "QSlider::handle:horizontal{background:#ffffff;width:10px;margin:-3px 0px;border-radius:5px;}");
 
 const QString darkMenuQss = QStringLiteral(
-    "QMenu{background:#18181b;color:#fcfcfc;border:1px solid #27272a;padding:4px;border-radius:8px;}"
-    "QMenu::item{padding:6px 24px 6px 20px;border-radius:6px;}"
-    "QMenu::item:selected{background:#0485f7;color:#ffffff;}"
-    "QMenu::item:disabled{color:#52525b;}"
-    "QMenu::separator{height:1px;background:#27272a;margin:4px 8px;}");
+    "QMenu{background:#18191d;color:#f4f5f8;border:1px solid #2b2d33;padding:4px;border-radius:8px;}"
+    "QMenu::item{min-height:22px;padding:6px 24px 6px 20px;border-radius:6px;}"
+    "QMenu::item:selected{background:#5e6ad2;color:#ffffff;}"
+    "QMenu::item:disabled{color:#73757f;}"
+    "QMenu::separator{height:1px;background:#2b2d33;margin:4px 8px;}");
 
 QToolButton *colorButton(const QColor &color, const QString &tip, int size)
 {
@@ -167,10 +206,11 @@ static const QColor kPresets[ColorBoard::PresetCount] = {
 
 const QColor &ColorBoard::preset(int index) { return kPresets[qBound(0, index, PresetCount - 1)]; }
 
-ColorBoard::ColorBoard(const QColor &current, QWidget *parent) : QWidget(parent), m_current(current)
+ColorBoard::ColorBoard(const QColor &current, QWidget *parent)
+    : QWidget(parent), m_current(current)
 {
     setObjectName(QStringLiteral("colorBoard"));
-    setFixedSize(158, 26);                             // 24px current color, 3px gap, 10 x 13px cells, 1px hover margin.
+    setFixedSize(90, 30);
     setMouseTracking(true);
     setCursor(Qt::PointingHandCursor);
     setFocusPolicy(Qt::NoFocus);
@@ -179,7 +219,14 @@ ColorBoard::ColorBoard(const QColor &current, QWidget *parent) : QWidget(parent)
 
 QRect ColorBoard::swatchRect(int index)
 {
-    return QRect(28 + 13 * (index % 10), 1 + 13 * (index / 10), 11, 11);
+    if (index < 0 || index >= CommonCount) return {};
+    return QRect(30 + 15 * (index % 4), 1 + 15 * (index / 4), 12, 12);
+}
+
+const QColor &ColorBoard::swatchColor(int index) const
+{
+    static constexpr int common[] = {0, 10, 3, 4, 5, 6, 7, 8};
+    return preset(common[qBound(0, index, CommonCount - 1)]);
 }
 
 void ColorBoard::setCurrentColor(const QColor &color)
@@ -191,7 +238,7 @@ void ColorBoard::setCurrentColor(const QColor &color)
 
 int ColorBoard::swatchAt(const QPoint &pos) const
 {
-    for (int i = 0; i < PresetCount; ++i)
+    for (int i = 0; i < CommonCount; ++i)
         if (swatchRect(i).contains(pos)) return i;   // Gaps between cells pick nothing.
     return -1;
 }
@@ -210,15 +257,16 @@ void ColorBoard::paintEvent(QPaintEvent *)
     p.setPen(Qt::NoPen);
     p.setBrush(m_current);
     p.drawRoundedRect(big.adjusted(2.5, 2.5, -2.5, -2.5), 4, 4);
-    for (int i = 0; i < PresetCount; ++i) {
-        const QColor &c = kPresets[i];
+    for (int i = 0; i < CommonCount; ++i) {
+        const QColor &c = swatchColor(i);
         QRectF r = swatchRect(i);
         if (i == m_hover) r.adjust(-1, -1, 1, 1);
         // Rounded chip; a faint outline keeps dark chips visible on the dark bar, brighter when hovered.
-        p.setPen(QPen(i == m_hover ? QColor(0xa1, 0xa1, 0xaa) : QColor(0x4b, 0x4b, 0x4b), 1));
+        p.setPen(QPen(i == m_hover ? Bar::muted : QColor(0x4b, 0x4b, 0x4b), 1));
         p.setBrush(c);
         p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
     }
+
 }
 
 void ColorBoard::mouseMoveEvent(QMouseEvent *e)
@@ -233,7 +281,7 @@ void ColorBoard::mouseReleaseEvent(QMouseEvent *e)
 {
     if (e->button() != Qt::LeftButton) return;
     const int index = swatchAt(e->pos());
-    if (index >= 0) emit presetPicked(kPresets[index]);
+    if (index >= 0) emit presetPicked(swatchColor(index));
     else if (currentRect().contains(e->pos())) emit customRequested();
 }
 

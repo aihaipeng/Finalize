@@ -53,6 +53,7 @@ public:
     // Placed capture (editor or pin): native size when it fits, scaled down to fit otherwise, centered with room for the bar below.
     static QRect editorGeometry(const QSize &pixels, qreal dpr, const QRect &available);
     static int testStitching();
+    static int testThemeUi(const QString &previewPath);
     static int testOutput();
     static int testLiveCapture(const QString &previewPath);
     void cancel();
@@ -133,7 +134,9 @@ private:
     QWidget *m_axis = nullptr;                       // Drags the selection along the scroll axis.
     QWidget *m_dragging = nullptr;
     QPoint m_dragAt;
-    QLabel *m_label = nullptr;
+    QLabel *m_label = nullptr, *m_feedback = nullptr;
+    bool m_feedbackAffinity = false, m_hidFeedback = false;
+    void updateFeedback();
     QComboBox *m_dir = nullptr;
     QToolButton *m_auto = nullptr, *m_autoUp = nullptr, *m_save = nullptr;
     QList<QToolButton *> m_gated;                    // Edit, OCR, translate, pin, copy: bounded image length only.

@@ -1,3 +1,4 @@
+#include "shared/dialog_chrome.h"
 #include "onnxruntime_c_api.h"
 #include <QClipboard>
 // nami — screenshot capture, pinned images, scrolling capture, and offline OCR (Qt 6 / MinGW).
@@ -20,6 +21,7 @@
 #include <QString>
 #include <QStringList>
 #include <QApplication>
+#include <QFont>
 #include <QtMath>
 #include <QMessageBox>
 #include <QMimeData>
@@ -38,6 +40,9 @@ int main(int argc, char **argv)
     QSettings::setDefaultFormat(QSettings::IniFormat);   // User settings live in %APPDATA%/Nami/Nami.ini.
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Nami"));
+    QFont baseFont = QApplication::font();
+    baseFont.setPointSizeF(10.5);                              // 96 dpi ≈ 14 px standard UI body.
+    app.setFont(baseFont);
     app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);   // Standard dialogs match the dark application chrome.
     QObject::connect(qApp, &QCoreApplication::aboutToQuit, [] { HistoryStore::waitForPending(); });
     QTranslator applicationTranslator, qtTranslator;
@@ -46,25 +51,41 @@ int main(int argc, char **argv)
                   !I18n::isTestMode(app.arguments()) || i18nTest);
     // One palette for every unstyled control: menus, tooltips, message boxes and the color dialog.
     QPalette dark;
-    dark.setColor(QPalette::Window, QColor(QStringLiteral("#18181b")));
-    dark.setColor(QPalette::WindowText, QColor(QStringLiteral("#fcfcfc")));
-    dark.setColor(QPalette::Base, QColor(QStringLiteral("#060607")));
-    dark.setColor(QPalette::AlternateBase, QColor(QStringLiteral("#101013")));
-    dark.setColor(QPalette::ToolTipBase, QColor(QStringLiteral("#18181b")));
-    dark.setColor(QPalette::ToolTipText, QColor(QStringLiteral("#fcfcfc")));
-    dark.setColor(QPalette::Text, QColor(QStringLiteral("#fcfcfc")));
-    dark.setColor(QPalette::Button, QColor(QStringLiteral("#18181b")));
-    dark.setColor(QPalette::ButtonText, QColor(QStringLiteral("#fcfcfc")));
+    dark.setColor(QPalette::Window, QColor(QStringLiteral("#18191d")));
+    dark.setColor(QPalette::WindowText, QColor(QStringLiteral("#f4f5f8")));
+    dark.setColor(QPalette::Base, QColor(QStringLiteral("#0c0d10")));
+    dark.setColor(QPalette::AlternateBase, QColor(QStringLiteral("#111216")));
+    dark.setColor(QPalette::ToolTipBase, QColor(QStringLiteral("#18191d")));
+    dark.setColor(QPalette::ToolTipText, QColor(QStringLiteral("#f4f5f8")));
+    dark.setColor(QPalette::Text, QColor(QStringLiteral("#f4f5f8")));
+    dark.setColor(QPalette::Button, QColor(QStringLiteral("#18191d")));
+    dark.setColor(QPalette::ButtonText, QColor(QStringLiteral("#f4f5f8")));
     dark.setColor(QPalette::BrightText, QColor(QStringLiteral("#ffffff")));
-    dark.setColor(QPalette::Link, QColor(QStringLiteral("#0485f7")));
-    dark.setColor(QPalette::Highlight, QColor(QStringLiteral("#264f78")));
-    dark.setColor(QPalette::HighlightedText, QColor(QStringLiteral("#fcfcfc")));
-    dark.setColor(QPalette::PlaceholderText, QColor(QStringLiteral("#8b8b94")));
-    dark.setColor(QPalette::Mid, QColor(QStringLiteral("#27272a")));
-    dark.setColor(QPalette::Dark, QColor(QStringLiteral("#060607")));
+    dark.setColor(QPalette::Link, QColor(QStringLiteral("#5e6ad2")));
+    dark.setColor(QPalette::Highlight, QColor(QStringLiteral("#32345b")));
+    dark.setColor(QPalette::HighlightedText, QColor(QStringLiteral("#f4f5f8")));
+    dark.setColor(QPalette::PlaceholderText, QColor(QStringLiteral("#9c9da1")));
+    dark.setColor(QPalette::Mid, QColor(QStringLiteral("#2b2d33")));
+    dark.setColor(QPalette::Dark, QColor(QStringLiteral("#0c0d10")));
     for (const auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
-        dark.setColor(QPalette::Disabled, role, QColor(QStringLiteral("#71717a")));
+        dark.setColor(QPalette::Disabled, role, QColor(QStringLiteral("#73757f")));
     app.setPalette(dark);
+    installDialogChrome(&app);
+    app.setStyleSheet(QStringLiteral(
+        "QToolTip{background:#18191d;color:#f4f5f8;border:1px solid #2b2d33;"
+            "border-radius:6px;padding:5px 8px;font-size:12px;}"
+        "QMessageBox,QInputDialog,QColorDialog{background:#18191d;color:#f4f5f8;}"
+        "QPushButton{background:#18191d;color:#f4f5f8;border:1px solid #2b2d33;"
+            "border-radius:6px;min-height:28px;padding:0 12px;font-size:14px;text-align:center;}"
+        "QPushButton:hover{background:#222326;}"
+        "QPushButton:pressed{background:#2b2d33;}"
+        "QPushButton:default{background:#5e6ad2;border-color:#5e6ad2;color:#ffffff;}"
+        "QPushButton:disabled{color:#73757f;}"
+        "QPushButton:focus{border-color:#5e6ad2;}"
+        "QLineEdit,QSpinBox,QDoubleSpinBox{background:#111216;color:#f4f5f8;"
+            "border:1px solid #2b2d33;border-radius:6px;padding:3px 8px;"
+            "selection-background-color:#32345b;selection-color:#f4f5f8;}"
+        "QLineEdit:focus,QSpinBox:focus,QDoubleSpinBox:focus{border-color:#5e6ad2;}"));
     if (app.arguments().contains(QStringLiteral("--test-i18n"))) {
         const QString locale = I18n::effectiveLocale(app.arguments());
         const bool english = locale.startsWith(QStringLiteral("en"));
@@ -84,10 +105,19 @@ int main(int argc, char **argv)
                     qPrintable(capture), qPrintable(loading), qPrintable(arrow));
         return ok ? 0 : 1;
     }
+    if (app.arguments().contains(QStringLiteral("--test-ui-theme"))) {
+        const QString preview = app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-ui-theme")) + 1);
+        const int capture = CaptureOverlay::testThemeUi(preview);
+        const int pin = PinWindow::testThemeUi(preview);
+        const int scrolling = LongCapture::testThemeUi(preview);
+        const int history = HistoryDialog::testUi(preview);
+        const int tray = Controller::testThemeUi(preview);
+        return capture || pin || scrolling || history || tray ? 1 : 0;
+    }
     if (app.arguments().contains(QStringLiteral("--test-history")))
         return HistoryStore::testHistory();
     if (app.arguments().contains(QStringLiteral("--test-history-ui")))
-        return HistoryDialog::testUi();
+        return HistoryDialog::testUi(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-history-ui")) + 1));
     if (app.arguments().contains(QStringLiteral("--test-ocr-lifetime")))
         return OcrDialog::testLifetime();
     if (app.arguments().contains(QStringLiteral("--test-translate")))
@@ -206,8 +236,9 @@ int main(int argc, char **argv)
     hf.onHotkey = [&ctrl] { ctrl.startCapture(); };
     app.installNativeEventFilter(&hf);
     if (!RegisterHotKey(nullptr, 1, MOD_NOREPEAT, VK_F1))
-        QMessageBox::warning(nullptr, QStringLiteral("Nami"),
-                             QCoreApplication::translate("Main", "注册 F1 热键失败（可能被其他截图工具占用）"));
+        showAlert(nullptr, QCoreApplication::translate("Main", "无法注册截图热键"),
+                  QCoreApplication::translate("Main",
+                      "F1 已被其他程序占用。\n请释放该快捷键后重新启动 Nami。"));
 
     const int exitCode = app.exec();
     QThreadPool::globalInstance()->waitForDone();

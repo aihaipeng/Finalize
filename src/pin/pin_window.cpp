@@ -428,7 +428,7 @@ public:
         m_valLabel = new QLabel(QString::number(initialVal) + QStringLiteral("%"), this);
         m_valLabel->setFixedWidth(40);
         m_valLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        m_valLabel->setStyleSheet(QStringLiteral("color:#fcfcfc;font-size:12px;"));
+        m_valLabel->setStyleSheet(QStringLiteral("color:#f4f5f8;font-size:13px;"));
 
         m_slider = new QSlider(Qt::Horizontal, this);
         m_slider->setRange(minVal, maxVal);
@@ -712,16 +712,16 @@ void PinWindow::ensureSelToolbar()
     // Scoped to the window: a bare QWidget selector would frame every child,
     // which is where the stray rounded border around the palette came from.
     m_selToolbar->setStyleSheet(QStringLiteral(
-        "#selToolbar { background: #18181b; border: 1px solid #27272a; border-radius: 8px; }"
+        "#selToolbar { background: #18191d; border: 1px solid #2b2d33; border-radius: 8px; }"
         "QToolButton { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 0; }"
-        "QToolButton:hover { background-color: #26262a; }"
-        "QToolButton:pressed { background-color: #27272a; }"
+        "QToolButton:hover { background-color: #222326; }"
+        "QToolButton:pressed { background-color: #2b2d33; }"
     ));
     auto *root = new QVBoxLayout(m_selToolbar);
-    root->setContentsMargins(4, 2, 4, 2);
+    root->setContentsMargins(12, 8, 12, 8);
     root->setSpacing(0);
     auto *row = new QHBoxLayout;
-    row->setSpacing(0);
+    row->setSpacing(8);
     root->addLayout(row);
 
     auto *copyBtn = pinButton(Icon::Copy, tr("复制"));
@@ -740,7 +740,7 @@ void PinWindow::ensureSelToolbar()
     // A quiet line between the tools and the colors, instead of a frame around them.
     auto *rule = new QFrame(m_selToolbar);
     rule->setFixedHeight(1);
-    rule->setStyleSheet(QStringLiteral("background:#27272a;border:none;"));
+    rule->setStyleSheet(QStringLiteral("background:#2b2d33;border:none;"));
     root->addSpacing(3);
     root->addWidget(rule);
     root->addSpacing(3);
@@ -748,7 +748,7 @@ void PinWindow::ensureSelToolbar()
     auto *strip = new QWidget(m_selToolbar);
     auto *stripLay = new QHBoxLayout(strip);
     stripLay->setContentsMargins(0, 0, 0, 0);
-    stripLay->setSpacing(0);
+    stripLay->setSpacing(6);
     root->addWidget(strip);
 
     const struct { int type; Icon icon; QString tip; } markups[] = {
@@ -848,23 +848,24 @@ void PinWindow::toggleToolbar(bool enabled)
             m_toolbar->setAttribute(Qt::WA_DeleteOnClose, false);
             m_toolbar->setObjectName(QStringLiteral("pinToolbar"));
             m_toolbar->setStyleSheet(QStringLiteral(
-                "#pinToolbar { background: #18181b; border: 1px solid #27272a; border-radius: 8px; }"
+                "#pinToolbar { background: #18191d; border: 1px solid #2b2d33; border-radius: 8px; }"
                 "QToolButton { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 0; }"
-                "QToolButton:hover { background-color: #26262a; }"
-                "QToolButton:pressed { background-color: #27272a; }"
+                "QToolButton:hover { background-color: #222326; }"
+                "QToolButton:pressed { background-color: #2b2d33; }"
                 "QToolButton:checked { background: transparent; }"
-                "QToolButton:checked:hover { background-color: #26262a; }"
-                "QFrame#barSeparator { background-color: #27272a; margin: 0px 6px; border: none; }"
+                "QToolButton:checked:hover { background-color: #222326; }"
+                "QFrame#barSeparator { background-color: #2b2d33; margin: 0px 6px; border: none; }"
             ));
             auto *lay = new QHBoxLayout(m_toolbar);
-            lay->setContentsMargins(6, 5, 6, 6);
+            lay->setContentsMargins(11, 7, 11, 7);
             lay->setSpacing(4);
 
             // The full annotation tool set: any tool arms the in-place canvas
             // inside the pin; reclicking disarms it. Options live on the strip
             // that opens under this toolbar; undo/redo follow the canvas stacks.
             const struct { CaptureOverlay::ATool tool; Icon icon; QString tip; } annTools[] = {
-                { CaptureOverlay::ATool::Rect, Icon::Rect, tr("形状：矩形/椭圆") },
+                { CaptureOverlay::ATool::Rect, Icon::Rect, tr("矩形") },
+                { CaptureOverlay::ATool::Ellipse, Icon::Ellipse, tr("椭圆") },
                 { CaptureOverlay::ATool::Arrow, Icon::Arrow, tr("箭头") },
                 { CaptureOverlay::ATool::Pen, Icon::Pen, tr("画笔") },
                 { CaptureOverlay::ATool::Marker, Icon::Marker, tr("荧光笔") },
@@ -1029,7 +1030,6 @@ void PinWindow::armPinTool(int tool)
         connect(m_canvas.data(), &CaptureOverlay::stripRebuilt, this, [this] {
             // Tool buttons follow the canvas, which can disarm itself (Esc, right-click).
             auto armed = m_canvas->armedTool();
-            if (armed == CaptureOverlay::ATool::Ellipse) armed = CaptureOverlay::ATool::Rect;
             if (m_toolbar)
                 for (QToolButton *b : m_toolbar->findChildren<QToolButton *>()) {
                     const QVariant t = b->property("pinTool");

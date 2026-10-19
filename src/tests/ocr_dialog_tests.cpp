@@ -10,6 +10,7 @@
 #include "shared/settings.h"
 #include <QSettings>
 #include <QPlainTextEdit>
+#include <QWheelEvent>
 #include <QScrollBar>
 #include <QPushButton>
 #include <QTextDocument>
@@ -306,13 +307,14 @@ int OcrDialog::testTranslate()
         && provider->itemData(0).toInt() == int(TranslateGateway::Provider::Auto) && provider->currentIndex() == 0
         && source->itemData(0).toString().isEmpty() && target->currentData().toString() == QStringLiteral("zh")
         && again->isEnabled() && status->text().isEmpty()
-        && again->parentWidget() == resultBar && translateAgain->parentWidget() == resultBar
-        && viewButton->parentWidget() == resultBar
-        && viewButton->mapTo(resultBar,QPoint()).x() < translateAgain->mapTo(resultBar,QPoint()).x()
-        && translateAgain->mapTo(resultBar,QPoint()).x() < again->mapTo(resultBar,QPoint()).x()
-        && again->mapTo(resultBar,QPoint()).x()+again->width() == resultBar->width()
-        && !translateToolbar->isAncestorOf(again) && !translateToolbar->isAncestorOf(translateAgain)
-        && !translateToolbar->isAncestorOf(viewButton);   // Pickers stay up top; card actions replace the service label.
+        && again->parentWidget() == translateToolbar && translateAgain->parentWidget() == translateToolbar
+        && viewButton->parentWidget() == translateToolbar
+        && source->mapTo(translateToolbar,QPoint()).x() < target->mapTo(translateToolbar,QPoint()).x()
+        && target->mapTo(translateToolbar,QPoint()).x() < provider->mapTo(translateToolbar,QPoint()).x()
+        && provider->mapTo(translateToolbar,QPoint()).x() < viewButton->mapTo(translateToolbar,QPoint()).x()
+        && viewButton->mapTo(translateToolbar,QPoint()).x() < translateAgain->mapTo(translateToolbar,QPoint()).x()
+        && translateAgain->mapTo(translateToolbar,QPoint()).x() < again->mapTo(translateToolbar,QPoint()).x()
+        && again->mapTo(translateToolbar,QPoint()).x()+again->width() == translateToolbar->width();
     bool switched = false, reran = false, retargeted = false;
     if (lists) {
         provider->setCurrentIndex(provider->findData(int(TranslateGateway::Provider::Transmart)));
@@ -348,17 +350,51 @@ int OcrDialog::testTranslate()
     auto *sourceText = dialog.findChild<QPlainTextEdit *>(QStringLiteral("translateSourceText"));
     const bool recognized = sourceText && sourceText->toPlainText().contains(QStringLiteral("fox"), Qt::CaseInsensitive)
         && !sourceText->isReadOnly() && !sourceText->document()->isModified();
-    // Each text block carries its own copy button and character count along its bottom edge.
-    const QList<QLabel *> counts = dialog.findChildren<QLabel *>(QStringLiteral("ocrCharacterCount"));
-    auto *sourceCopy = dialog.findChild<QToolButton *>(QStringLiteral("translateSourceCopy"));
-    const bool blocks = counts.size() == 2 && sourceCopy && sourceCopy->isEnabled()
+    auto *sourceFooter=dialog.findChild<QWidget *>(QStringLiteral("translateSourceBar"));
+    auto *resultFooter=dialog.findChild<QWidget *>(QStringLiteral("translateResultBar"));
+    auto *sourceCopy=dialog.findChild<QToolButton *>(QStringLiteral("translateSourceCopy"));
+    auto *resultCopy=dialog.findChild<QToolButton *>(QStringLiteral("ocrTextCopy"));
+    auto *sourceCount=dialog.findChild<QLabel *>(QStringLiteral("translateSourceCount"));
+    auto *resultCount=dialog.findChild<QLabel *>(QStringLiteral("ocrTextCount"));
+    auto *imageCount=dialog.findChild<QLabel *>(QStringLiteral("ocrImageCount"));
+    const bool blocks = sourceFooter && resultFooter && sourceText && sourceCopy && resultCopy
+        && sourceCount && resultCount && imageCount
+        && dialog.findChildren<QLabel *>(QStringLiteral("cardSectionTitle")).isEmpty()
         && dialog.findChild<QWidget *>(QStringLiteral("translateToolbar"))->isAncestorOf(source)
-        && sourceText && sourceCopy->mapTo(&dialog, QPoint()).y() >= sourceText->mapTo(&dialog, QPoint()).y() + sourceText->height()
-        && std::any_of(counts.begin(), counts.end(), [&](QLabel *l) { return l->text() == QString::number(sourceText->toPlainText().toUcs4().size()); })
-        && std::any_of(counts.begin(), counts.end(), [&](QLabel *l) { return l->text() == QString::number(pane->toPlainText().toUcs4().size()); });
-    if (!blocks) {
+        && sourceFooter->mapTo(&dialog,QPoint()).y()>=sourceText->mapTo(&dialog,QPoint()).y()+sourceText->height()
+        && resultFooter->mapTo(&dialog,QPoint()).y()>=pane->mapTo(&dialog,QPoint()).y()+pane->height()
+        && sourceText->lineWrapMode()==QPlainTextEdit::WidgetWidth
+        && pane->lineWrapMode()==QPlainTextEdit::WidgetWidth
+        && sourceCount->text()==QString::number(sourceText->toPlainText().toUcs4().size())
+        && resultCount->text()==QString::number(pane->toPlainText().toUcs4().size())
+        && imageCount->text()==sourceCount->text()
+        && !sourceCount->text().contains(QStringLiteral("字符"));
+    if(!blocks){restore();std::fprintf(stderr,"FAIL: translation must use per-module footers and preserve both reading panes\n");return 1;}
+    auto *sourceZoomLevel=dialog.findChild<QLabel *>(QStringLiteral("translateSourceZoomLevel"));
+    auto *resultZoomLevel=dialog.findChild<QLabel *>(QStringLiteral("ocrTextZoomLevel"));
+    const qreal sourceFontBefore=sourceText->font().pointSizeF();
+    const qreal resultFontBefore=pane->font().pointSizeF();
+    const QPointF sourceWheelPos(sourceText->viewport()->rect().center());
+    QWheelEvent sourceWheelUp(sourceWheelPos,sourceText->viewport()->mapToGlobal(sourceWheelPos.toPoint()),
+                              QPoint(),QPoint(0,120),Qt::NoButton,Qt::ControlModifier,
+                              Qt::NoScrollPhase,false);
+    QApplication::sendEvent(sourceText->viewport(),&sourceWheelUp);
+    const bool sourceZoomed=sourceText->font().pointSizeF()>sourceFontBefore
+        && sourceZoomLevel->text()==QStringLiteral("110%")
+        && qAbs(pane->font().pointSizeF()-resultFontBefore)<0.01
+        && resultZoomLevel->text()==QStringLiteral("100%");
+    QWheelEvent sourceWheelDown(sourceWheelPos,sourceText->viewport()->mapToGlobal(sourceWheelPos.toPoint()),
+                                QPoint(),QPoint(0,-120),Qt::NoButton,Qt::ControlModifier,
+                                Qt::NoScrollPhase,false);
+    QApplication::sendEvent(sourceText->viewport(),&sourceWheelDown);
+    const bool sourceBack=qAbs(sourceText->font().pointSizeF()-sourceFontBefore)<0.01
+        && sourceZoomLevel->text()==QStringLiteral("100%");
+    const bool normalFooters=sourceFooter->height()==28 && resultFooter->height()==28
+        && sourceCopy->width()==22 && sourceCopy->height()==24
+        && resultCopy->iconSize()==QSize(16,16);
+    if(!sourceZoomed || !sourceBack || !normalFooters){
         restore();
-        std::fprintf(stderr, "FAIL: source/translation blocks lack their own copy button and character count\n");
+        std::fprintf(stderr,"FAIL: Ctrl+wheel or compact per-module footers are not correct\n");
         return 1;
     }
     // The capture in the translate card carries the recognized characters as selectable text.

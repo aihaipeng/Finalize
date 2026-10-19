@@ -33,6 +33,7 @@
 #include <QFontMetrics>
 #include <QMimeData>
 #include <QEventLoop>
+#include <QElapsedTimer>
 #include <QBoxLayout>
 #include <QHelpEvent>
 #include <qt_windows.h>
@@ -105,6 +106,18 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
                               Qt::NoModifier);
             QApplication::sendEvent(&liveOverlay, &event);
         };
+        if (qApp->arguments().contains(QStringLiteral("--wait-for-foreground"))) {
+            liveOverlay.setWindowTitle(QStringLiteral("Nami UI regression"));
+            QElapsedTimer wait; wait.start();
+            while (wait.elapsed() < 10000) {
+                DWORD foreground = 0;
+                GetWindowThreadProcessId(GetForegroundWindow(), &foreground);
+                if (foreground == GetCurrentProcessId()) break;
+                QEventLoop settle;
+                QTimer::singleShot(50, &settle, &QEventLoop::quit);
+                settle.exec(QEventLoop::ExcludeUserInputEvents);
+            }
+        }
         moveCursor(center);
         const QPoint local = liveOverlay.mapFromGlobal(center);
         liveOverlay.m_sel = QRect(local - QPoint(60, 40), QSize(180, 120));
@@ -170,14 +183,14 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     QImage panel(inspector->size(), QImage::Format_RGB32);
     inspector->render(&panel);
     const int left = (inspector->width() - 177) / 2;
-    check(inspector->size() == QSize(179, 217), "the compact card uses a 25 by 17 sample at sevenfold magnification");
-    check(panel.pixelColor(left + 88, 61) == QColor(1, 4, 9), "highlighted pixel retains its raw color");
-    check(panel.pixelColor(left + 15, 9) == QColor(90, 150, 210), "nearest-neighbor magnifier preserves neighboring pixels");
+    check(inspector->size() == QSize(230, 220), "the compact card uses a 25 by 17 sample at sevenfold magnification");
+    check(panel.pixelColor(left + 88, 72) == QColor(1, 4, 9), "highlighted pixel retains its raw color");
+    check(panel.pixelColor(left + 15, 20) == QColor(90, 150, 210), "nearest-neighbor magnifier preserves neighboring pixels");
     QImage translucent(inspector->size(), QImage::Format_ARGB32_Premultiplied);
     translucent.fill(Qt::transparent);
     inspector->render(&translucent, QPoint(), QRegion(), QWidget::DrawChildren);
-    check(translucent.pixelColor(0, 170) == QColor(0, 0, 0, 188), "the dark surface has alpha 188 rather than fading text and pixels");
-    check(translucent.pixelColor(left + 88, 61) == QColor(1, 4, 9), "the center color remains opaque on the translucent surface");
+    check(translucent.pixelColor(1, 170) == QColor("#18191d"), "the magnifier uses the approved opaque surface without fading sampled pixels");
+    check(translucent.pixelColor(left + 88, 72) == QColor(1, 4, 9), "the center color retains its original opaque pixels");
     check(inspector->setSample(frame, sample, QRectF(0, 0, 121, 91)), "a magnifier may preview the selection boundary");
     inspector->render(&panel);
     check(panel.pixelColor(left + 165, 100) != QColor(1, 4, 9)
@@ -374,7 +387,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         }
         QApplication::processEvents();
     };
-    clickBoard(ColorBoard::swatchRect(8).center());
+    clickBoard(ColorBoard::swatchRect(7).center());
     check(overlay.m_anns[0].color == QColor("#3f48cc") && overlay.m_undoStack.size() == beforeColorUndo + 1
               && overlay.m_acolor == QColor("#3f48cc") && overlay.m_colorBoard->currentColor() == QColor("#3f48cc"),
           "a preset click recolors the selected annotation as one undo step");
@@ -730,7 +743,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
               && overlay.m_toolOptions->isVisible(),
           "the merged shape button arms the rectangle with its option strip");
     overlay.selectTool(ATool::Ellipse);
-    check(overlay.m_shapeEllipse && overlay.m_shapeButton->isChecked(),
+    check(overlay.m_shapeEllipse && overlay.m_toolBtn[int(ATool::Ellipse)]->isChecked() && !overlay.m_shapeButton->isChecked(),
           "arming the ellipse flips the shared button's sub-shape");
     overlay.pickToolColor(QColor("#22b14c"));
     for (ATool shared : {ATool::Marker, ATool::Arrow, ATool::Pen, ATool::Text, ATool::Number, ATool::Rect}) {
@@ -1140,8 +1153,8 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
             std::fprintf(stderr, "bar background %d,%d,%d edge %s corner %s size=%dx%d dpr=%.2f main=%d\n",
                          background.red(), background.green(), background.blue(), qPrintable(edge.name()),
                          qPrintable(corner.name()), bar->width(), bar->height(), double(dpr), bar == overlay.m_tools);
-        check(background == Bar::surface && edge == Bar::surface && corner != Bar::surface && bar->height() == 42,
-              "main and option bars render a 42px dark surface with rounded corners");
+        check(background == Bar::surface && edge == Bar::surface && corner != Bar::surface && bar->height() == (bar == overlay.m_tools ? 42 : 44),
+              "main and option bars keep their approved compact heights and rounded surfaces");
     }
     for (QWidget *widget : overlay.m_toolButtons) {
         const QIcon icon = static_cast<QToolButton *>(widget)->icon();

@@ -87,6 +87,16 @@ private:
     bool m_selecting = false;
 };
 
+// Text pane with an optional Ctrl+wheel handler; the handler returns true when it consumed the wheel.
+class OcrTextEdit : public QPlainTextEdit
+{
+public:
+    using QPlainTextEdit::QPlainTextEdit;
+    std::function<bool(QWheelEvent *)> wheelHandler;
+protected:
+    void wheelEvent(QWheelEvent *event) override;
+};
+
 class QSplitter;
 class TranslateGateway;
 
@@ -136,6 +146,7 @@ public:
 protected:
     bool event(QEvent *event) override;
     bool eventFilter(QObject *object,QEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void showEvent(QShowEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
@@ -161,6 +172,7 @@ private:
     void updateMask();
     void setActionsEnabled(bool enabled);
     void showLoading(bool loading, const QString &text = {});
+    void showEmptyState(const QString &title,const QString &detail);
     void applyLayout(bool force = false);
     int layoutClass() const;
     void linkFromOcrTextSelection();
@@ -182,13 +194,17 @@ private:
     QImage m_image;
     QPlainTextEdit *m_text = nullptr;
     QLabel *m_status = nullptr, *m_findCount = nullptr, *m_busy = nullptr;
-    QToolButton *m_retry = nullptr, *m_copy = nullptr, *m_maximize = nullptr,
+    QLabel *m_imageCount = nullptr, *m_sourceCount = nullptr, *m_resultCount = nullptr;
+    QLabel *m_sourceZoomLevel = nullptr, *m_resultZoomLevel = nullptr;
+    QToolButton *m_retry = nullptr, *m_maximize = nullptr,
                 *m_format = nullptr, *m_replaceToggle = nullptr;
     QSplitter *m_split = nullptr, *m_textSplit = nullptr;
     OcrImageView *m_imageView = nullptr;
     QWidget *m_imagePanel = nullptr, *m_find = nullptr, *m_replaceRow = nullptr;
     QWidget *m_content = nullptr, *m_toolbar = nullptr, *m_loadingPage = nullptr;
     OcrLoadingBar *m_loadingBar = nullptr;
+    QToolButton *m_emptyRetry = nullptr;
+    QLabel *m_emptyIcon = nullptr;
     QRect m_screenRect;
     QSize m_finalSize;
     QLineEdit *m_findEdit = nullptr, *m_replaceEdit = nullptr;
@@ -213,6 +229,8 @@ private:
     QWidget *m_mask = nullptr;                // Haze over a translation the edited original no longer matches.
     QString m_translatedSource;               // Original text the shown translation was requested for.
     QStringList m_ocrLineTexts;               // Recognized lines, in image-line order.
+    QFont m_sourceBaseFont, m_resultBaseFont;
+    qreal m_sourceScale = 1.0, m_resultScale = 1.0;
     QList<QTextEdit::ExtraSelection> m_resultLinkMarks, m_findMarks;
     // Card-drawn window frame: edge resize, drag from any empty spot, maximize to the work area.
     Qt::Edges m_resizing;

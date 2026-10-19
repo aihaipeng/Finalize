@@ -495,6 +495,10 @@
         <source>贴图失败，请确认选区有效并检查内存后重试</source>
         <translation>Pin failed. Make sure the selection is valid and check available memory, then try again.</translation>
     </message>
+    <message>
+        <source>笔宽</source>
+        <translation>Stroke width</translation>
+    </message>
 </context>
 <context>
     <name>ColorBoard</name>
@@ -1281,6 +1285,66 @@ Save or pin it.</translation>
         <source>还原</source>
         <translation>Restore</translation>
     </message>
+    <message>
+        <source>文字识别</source>
+        <translation>Text recognition</translation>
+    </message>
+    <message>
+        <source>识别并翻译</source>
+        <translation>Recognize and translate</translation>
+    </message>
+    <message>
+        <source>二维码 / 条形码</source>
+        <translation>QR codes / Barcodes</translation>
+    </message>
+    <message>
+        <source>截图对照</source>
+        <translation>Image</translation>
+    </message>
+    <message>
+        <source>识别内容</source>
+        <translation>Decoded content</translation>
+    </message>
+    <message>
+        <source>识别结果</source>
+        <translation>Recognized text</translation>
+    </message>
+    <message>
+        <source>原文</source>
+        <translation>Original</translation>
+    </message>
+    <message>
+        <source>%1 个字符</source>
+        <translation>%1 characters</translation>
+    </message>
+    <message>
+        <source>请调整截图范围后重新识别。</source>
+        <translation>Adjust the capture area and try again.</translation>
+    </message>
+    <message>
+        <source>文字识别暂不可用</source>
+        <translation>Text recognition is unavailable</translation>
+    </message>
+    <message>
+        <source>请检查本地识别资源后重试。</source>
+        <translation>Check the local recognition resources and try again.</translation>
+    </message>
+    <message>
+        <source>请确保图像清晰且码完整。</source>
+        <translation>Make sure the image is clear and the code is complete.</translation>
+    </message>
+    <message>
+        <source>翻译未完成</source>
+        <translation>Translation did not complete</translation>
+    </message>
+    <message>
+        <source>原文已更改 · Ctrl+Enter 重新翻译</source>
+        <translation>Original text changed · Ctrl+Enter to translate again</translation>
+    </message>
+    <message>
+        <source>复制</source>
+        <translation>Copy</translation>
+    </message>
 </context>
 <context>
     <name>OcrEngine</name>
@@ -1727,6 +1791,12 @@ Put the runtime and models back in the program folder and try again.</translatio
     <message>
         <source>确定清空全部截图历史？应用副本会被删除，用户保存的图片不受影响。</source>
         <translation>Clear all screenshot history? App-owned copies are removed; user-saved images are untouched.</translation>
+    </message>
+    <message>
+        <source>截图历史为空
+开启记录后，新截图将显示在这里。</source>
+        <translation>Screenshot history is empty
+Enable recording to keep new screenshots here.</translation>
     </message>
 </context>
 </TS>

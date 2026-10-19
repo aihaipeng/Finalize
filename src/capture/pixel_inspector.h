@@ -9,7 +9,6 @@
 #include <QColor>
 #include <QPaintEvent>
 #include <QWidget>
-#include <QTextDocument>
 #include <QtMath>
 #include <qt_windows.h>
 
@@ -29,5 +28,4 @@ private:
     QColor m_color;
     QPoint m_position;
     bool m_hex = false;
-    QTextDocument m_tips;
 };

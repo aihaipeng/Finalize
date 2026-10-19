@@ -1,4 +1,5 @@
 #include "app/controller.h"
+#include "shared/dialog_chrome.h"
 #include "shared/i18n.h"
 #include "shared/settings.h"
 #include "shared/widgets.h"
@@ -86,9 +87,8 @@ Controller::Controller()
         languageGroup->addAction(action);
         connect(action, &QAction::triggered, this, [locale] {
             I18n::saveLocale(locale);
-            QMessageBox::information(nullptr, QCoreApplication::translate("Controller", "语言"),
-                                     QCoreApplication::translate("Controller",
-                                         "语言将在下次启动 Nami 时生效。"));
+            showNotice(nullptr, QCoreApplication::translate("Controller", "语言已保存"),
+                       QCoreApplication::translate("Controller", "将在下次启动 Nami 时生效。"));
         });
     };
     addLanguage(QStringLiteral("system"));
@@ -96,6 +96,11 @@ Controller::Controller()
         if (locale != QLatin1String("system")) addLanguage(locale);
     m->addSeparator();
     m->addAction(tr("退出"), qApp, &QApplication::quit);
+    const QList<QAction *> actions=m->actions();
+    actions[0]->setIcon(barIcon(Icon::Crop));actions[0]->setText(tr("截图")+QStringLiteral("\tF1"));
+    actions[1]->setIcon(barIcon(Icon::LongShot));
+    detection->setIcon(barIcon(Icon::View));language->setIcon(barIcon(Icon::Translate));
+    actions.last()->setIcon(barIcon(Icon::Cancel));
     m_tray.setContextMenu(m);
     m_tray.show();
 }

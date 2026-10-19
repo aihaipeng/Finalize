@@ -118,7 +118,7 @@ int OcrDialog::testBarcode(const QString &previewPath)
     card.show();
     auto *text = card.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"));
     auto *retry = card.findChild<QToolButton *>(QStringLiteral("ocrRetry"));
-    auto *copy = card.findChild<QToolButton *>(QStringLiteral("ocrCopy"));
+    auto *copy = card.findChild<QToolButton *>(QStringLiteral("ocrTextCopy"));
     auto *open = card.findChild<QToolButton *>(QStringLiteral("barcodeOpen"));
     auto *picker = card.findChild<QComboBox *>(QStringLiteral("barcodePicker"));
     auto *kind = card.findChild<QLabel *>(QStringLiteral("barcodeKind"));
@@ -169,10 +169,12 @@ int OcrDialog::testBarcode(const QString &previewPath)
     auto *noneText = none.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"));
     auto *noneRetry = none.findChild<QToolButton *>(QStringLiteral("ocrRetry"));
     auto *noneOpen = none.findChild<QToolButton *>(QStringLiteral("barcodeOpen"));
-    waitFor([&] { return noneRetry->isEnabled() && !noneText->toPlainText().isEmpty(); });
-    check(noneText->toPlainText() == QStringLiteral("未识别到二维码或条形码")
+    waitFor([&] { return noneRetry->isEnabled() && none.m_emptyRetry->isVisible(); });
+    check(noneText->toPlainText().isEmpty() && none.m_busy->text().contains(QStringLiteral("未识别到二维码或条形码"))
+              && !none.findChild<QToolButton *>(QStringLiteral("ocrTextCopy"))->isEnabled()
               && none.barcodeRegionCount() == 0 && noneOpen->isHidden(),
           "an empty result explains itself, marks nothing and hides open-link");
+    if(!previewPath.isEmpty())none.grab().save(previewPath+QStringLiteral("-barcode-empty.png"));
     none.reject();
     QApplication::processEvents();
     QThreadPool::globalInstance()->waitForDone();

@@ -28,6 +28,7 @@ class Controller : public QObject
     Q_OBJECT
 public:
     Controller();
+    static int testThemeUi(const QString &previewPath);
 public slots:
     void startCapture();
     void openHistory();

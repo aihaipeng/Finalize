@@ -1,3 +1,4 @@
+#include "shared/dialog_chrome.h"
 #include "capture/capture_overlay.h"
 #include <QClipboard>
 #include <QAbstractItemView>
@@ -41,6 +42,7 @@
 #include <QtMath>
 #include <QToolButton>
 #include <QComboBox>
+#include <QSpinBox>
 #include <QStylePainter>
 #include <QStyledItemDelegate>
 #include <QStyleOptionComboBox>
@@ -745,6 +747,19 @@ bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
         ev->accept();
         return true;
     }
+    if (ev->type() == QEvent::Wheel) {
+        QSpinBox *spin = qobject_cast<QSpinBox *>(obj);
+        if (!spin && obj->parent()) spin = qobject_cast<QSpinBox *>(obj->parent());
+        if (spin && (spin == m_customX || spin == m_customY
+                     || spin == m_customWidth || spin == m_customHeight
+                     || spin == m_sizeRadiusSpin)) {
+            const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
+            if (delta)
+                spin->setValue(spin->value() + (delta > 0 ? 1 : -1) * spin->singleStep());
+            ev->accept();
+            return true;
+        }
+    }
     if ((obj == m_tools || obj == m_toolOptions)
         && (ev->type() == QEvent::Enter || ev->type() == QEvent::Leave))
         updateInspector();
@@ -910,7 +925,7 @@ void CaptureOverlay::beginTextEdit(const QPoint &pos, int existing)
     m_textView->raise();
     m_tools->raise();
     m_toolOptions->raise();
-    m_sizeTip->hide();
+    m_sizeBar->hide();
     m_inspector->hide();
     m_textView->setFocus();
     m_editor->setFocus(Qt::MouseFocusReason);
@@ -979,9 +994,9 @@ void CaptureOverlay::editorFontStep(int dir)
 
 void CaptureOverlay::tipPosition(const QPoint &at)
 {
-    m_sizeTip->adjustSize();
-    m_sizeTip->move(qBound(0, at.x() - m_sizeTip->width() / 2, width() - m_sizeTip->width()),
-                    qMax(0, at.y() - m_sizeTip->height() - 16));
+    m_sizeBar->adjustSize();
+    m_sizeBar->move(qBound(0, at.x() - m_sizeBar->width() / 2, width() - m_sizeBar->width()),
+                    qMax(0, at.y() - m_sizeBar->height() - 16));
 }
 
 QPoint CaptureOverlay::keyDelta(int key)
@@ -1268,7 +1283,7 @@ void CaptureOverlay::syncSizeInput()
         const QSignalBlocker lock(m_sizeSlider);
         m_sizeSlider->setValue(qRound(widthControlValue()));
     }
-    if (m_sizeValue) m_sizeValue->setText(QString::number(widthControlValue()));
+    if (m_sizeValue) m_sizeValue->setText(QStringLiteral("%1 %2").arg(widthControlValue()).arg(optionsTool() == ATool::Number ? QStringLiteral("pt") : QStringLiteral("px")));
     if (!m_sizeInput) return;
     const QSignalBlocker lock(m_sizeInput);
     m_sizeInput->setEditText(QString::number(toolSize()));
@@ -1280,11 +1295,14 @@ void CaptureOverlay::showSizePopup(QToolButton *anchor, int minimum, int maximum
     auto *popup = new QDialog(this, Qt::Popup | Qt::FramelessWindowHint);
     m_sizePopup = popup;
     popup->setAttribute(Qt::WA_DeleteOnClose);
-    popup->setStyleSheet(QStringLiteral("QDialog{background:#18181b;border:1px solid #27272a;}"
-                                        "QLabel{color:#fcfcfc;font-size:12px;}"));
+    popup->setStyleSheet(QStringLiteral("QDialog{background:#18191d;border:1px solid #2b2d33;border-radius:8px;}"
+                                        "QLabel{color:#f4f5f8;font-size:12px;}"));
     auto *row = new QHBoxLayout(popup);
-    row->setContentsMargins(8, 6, 8, 6);
-    row->setSpacing(6);
+    row->setContentsMargins(12, 8, 12, 8);
+    row->setSpacing(10);
+    auto *label = new QLabel(optionsTool() == ATool::Number ? tr("字号") : tr("笔宽"), popup);
+    label->setObjectName(QStringLiteral("sizePopupLabel"));
+    row->addWidget(label);
     m_sizeSlider = new QSlider(Qt::Horizontal, popup);
     m_sizeSlider->setObjectName(QStringLiteral("sizeSlider"));
     m_sizeSlider->setAccessibleName(anchor->accessibleName());
@@ -1295,8 +1313,9 @@ void CaptureOverlay::showSizePopup(QToolButton *anchor, int minimum, int maximum
     m_sizeSlider->setStyleSheet(darkSliderQss);
     m_sizeSlider->installEventFilter(this);
     m_sizeValue = new QLabel(popup);
-    m_sizeValue->setFixedWidth(24);
-    m_sizeValue->setAlignment(Qt::AlignCenter);
+    m_sizeValue->setFixedWidth(40);
+    m_sizeValue->setObjectName(QStringLiteral("sizePopupValue"));
+    m_sizeValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     row->addWidget(m_sizeSlider);
     row->addWidget(m_sizeValue);
     m_sizeDragUndo = false;
@@ -1307,12 +1326,13 @@ void CaptureOverlay::showSizePopup(QToolButton *anchor, int minimum, int maximum
     connect(popup, &QDialog::finished, this, [this] { if (isVisible()) setFocus(); });
     popup->show();
     popup->adjustSize();
-    const QPoint below = anchor->mapToGlobal(QPoint(0, anchor->height()));
-    const QScreen *screen = QGuiApplication::screenAt(below);
+    const QRect strip(m_toolOptions->mapToGlobal(QPoint()), m_toolOptions->size());
+    const QScreen *screen = QGuiApplication::screenAt(strip.center());
     const QRect available = (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry();
-    const int y = below.y() + popup->height() <= available.bottom() + 1 ? below.y()
-        : qMax(available.top(), anchor->mapToGlobal(QPoint()).y() - popup->height());
-    popup->move(qBound(available.left(), below.x(), available.right() + 1 - popup->width()), y);
+    const int y = strip.bottom() + 1 + Bar::gap + popup->height() <= available.bottom() + 1
+        ? strip.bottom() + 1 + Bar::gap : qMax(available.top(), strip.top() - Bar::gap - popup->height());
+    popup->move(qBound(available.left(), strip.right() + 1 - popup->width(),
+                      qMax(available.left(), available.right() + 1 - popup->width())), y);
 }
 
 void CaptureOverlay::commitSizeInput()
@@ -1431,7 +1451,7 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
     else if (m_atool != ATool::Arrow) m_ann.rect = QRect(pos, pos);
     syncSizeInput();                             // Keep the active options visible while drawing.
     m_inspector->hide();
-    m_sizeTip->hide();
+    m_sizeBar->hide();
 }
 
 void CaptureOverlay::updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers mods)
@@ -1531,7 +1551,7 @@ void CaptureOverlay::stopItemDrag()
 
 void CaptureOverlay::endAnnotationDrag()                         // Restore what stepped aside.
 {
-    m_sizeTip->hide();
+    m_sizeBar->hide();
     placeToolbar();
     showToolBars();
     syncSizeInput();
@@ -1567,7 +1587,7 @@ void CaptureOverlay::selectTool(ATool tool)                      // Shared by to
     update();
 }
 
-void CaptureOverlay::syncToolButtons()                           // Rect and Ellipse share one button.
+void CaptureOverlay::syncToolButtons()
 {
     const QToolButton *active = m_atool == ATool::None ? nullptr : m_toolBtn[int(m_atool)];
     for (int t = 1; t < m_toolBtn.size(); ++t) {
@@ -1604,7 +1624,7 @@ void CaptureOverlay::showColorPalette()
     if (m_colorDialog) return;
     const QColor oldColor = m_acolor;
     const QVector<Annotation> before = m_anns;
-    auto *dialog = new QColorDialog(oldColor, this);
+    auto *dialog = new ColorDialog(oldColor, this);
     m_colorDialog = dialog;
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setOption(QColorDialog::ShowAlphaChannel);
@@ -1768,7 +1788,7 @@ void CaptureOverlay::updateToolOptions()
     const QList<QWidget *> stale = m_toolOptions->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly);
     for (QWidget *w : stale) delete w;
     auto *lay = new QHBoxLayout(m_toolOptions);
-    lay->setContentsMargins(8, 5, 8, 6);         // 42px strip, same height as the main bar.
+    lay->setContentsMargins(12, 7, 12, 7);       // 44px option strip with compact controls.
     lay->setSpacing(4);
     lay->setAlignment(Qt::AlignLeft);
     auto addOption = [this](QHBoxLayout *l, Icon icon, const QString &tip, bool on,

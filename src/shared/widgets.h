@@ -27,7 +27,7 @@ enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, 
                   CardFit, CardTranslate, CardReload, CardCopy, CardZoomIn,
                   CardZoomOut, CardActual, CardPin, CardMinimize, CardMaximize, CardRestore, CardClose, CardSearch,
                   CardUp, CardDown, CardRight, CardFormat, Back, Crop, CropStart, CropEnd, Barcode, CardLink,
-                  RoundRect };
+                  RoundRect, CornerSquare, CornerRounded, AspectLock, Warning };
 
 // dark: glyphs for a dark surface (light ink) instead of the light bars.
 QIcon makeIcon(Icon icon, int size = 16, bool dark = false);
@@ -39,9 +39,10 @@ QToolButton *iconButton(Icon icon, const QString &tip);
 
 // Shared dark chrome tokens: one surface, ink, accent and radius scale for every floating bar and menu.
 namespace Bar {
-inline const QColor surface{0x18, 0x18, 0x1b}, ink{0xfc, 0xfc, 0xfc}, dim{0x52, 0x52, 0x5b},
-    accent{0x04, 0x85, 0xf7}, field{0x06, 0x06, 0x07}, divider{0x27, 0x27, 0x2a}, muted{0x71, 0x71, 0x7b};
-constexpr int button = 31, icon = 21, radius = 8, gap = 8;
+inline const QColor background{"#101114"}, surface{"#18191d"}, content{"#0c0d10"},
+    field{"#111216"}, ink{"#f4f5f8"}, muted{"#9c9da1"}, dim{"#73757f"},
+    accent{"#5e6ad2"}, divider{"#2b2d33"}, hover{"#222326"}, selection{"#32345b"};
+constexpr int button = 28, icon = 18, radius = 8, gap = 8;
 }
 // Capture bar glyphs: light ink, accent when checked, dim when disabled.
 QIcon barIcon(Icon icon, int size = Bar::icon);
@@ -60,7 +61,7 @@ extern const QString darkMenuQss;
 // 1px vertical divider between toolbar groups, styled by the bar stylesheet.
 QWidget *barSeparator(bool dark = false);
 
-// ---------- Color strip: current-color button plus a 2x10 preset grid. ----------
+// ---------- Compact color strip with the complete palette available on demand. ----------
 class ColorBoard : public QWidget
 {
     Q_OBJECT
@@ -68,10 +69,10 @@ public:
     explicit ColorBoard(const QColor &current, QWidget *parent = nullptr);
     void setCurrentColor(const QColor &color);
     QColor currentColor() const { return m_current; }
-    QRect currentRect() const { return QRect(1, 1, 24, 24); }
-    static QRect swatchRect(int index);        // Normal 11x11 cell; hover grows it by 1px.
+    QRect currentRect() const { return QRect(1, 3, 24, 24); }
+    static QRect swatchRect(int index);
     static const QColor &preset(int index);
-    static constexpr int PresetCount = 20;
+    static constexpr int PresetCount = 20, CommonCount = 8;
     static int testRendering();
 signals:
     void presetPicked(const QColor &color);
@@ -84,6 +85,7 @@ protected:
     void leaveEvent(QEvent *) override;
 private:
     int swatchAt(const QPoint &pos) const;
+    const QColor &swatchColor(int index) const;
     QColor m_current;
     int m_hover = -1;
 };

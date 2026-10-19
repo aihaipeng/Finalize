@@ -16,6 +16,7 @@
 #include <QStringList>
 #include <QColor>
 #include <QFont>
+#include <QFontDatabase>
 #include <QPaintEvent>
 #include <QApplication>
 #include <QWidget>
@@ -37,6 +38,7 @@
 #include <QPointer>
 #include <QSplitter>
 #include <QPlainTextEdit>
+#include <QWheelEvent>
 #include <QThreadPool>
 #include <qt_windows.h>
 #include <cstdio>
@@ -238,48 +240,97 @@ int CaptureOverlay::testOcr(const QString &previewPath)
                   : ocrText->height()>ocrImage->height()),
           "card width, not capture shape, picks the OCR split and gives reading more room");
     check(!text->isReadOnly() && text->toPlainText()==expectedText,"OCR recognizes the composed screenshot including annotations and allows editing");
-    auto *copy=dialog->findChild<QToolButton *>(QStringLiteral("ocrCopy"));
+    auto *copy=dialog->findChild<QToolButton *>(QStringLiteral("ocrTextCopy"));
     auto *back=dialog->findChild<QToolButton *>(QStringLiteral("ocrBack"));
     auto *headerPin=dialog->findChild<QToolButton *>(QStringLiteral("ocrPin"));
     auto *format=dialog->findChild<QToolButton *>(QStringLiteral("ocrFormat"));
     auto *search=dialog->findChild<QToolButton *>(QStringLiteral("ocrSearch"));
     auto *status=dialog->findChild<QLabel *>(QStringLiteral("ocrStatus"));
+    auto *topBar=dialog->findChild<QWidget *>(QStringLiteral("ocrToolbar"));
     auto *textBar=dialog->findChild<QWidget *>(QStringLiteral("ocrTextBar"));
+    auto *imageBar=dialog->findChild<QWidget *>(QStringLiteral("ocrImageBar"));
+    auto *imageCount=dialog->findChild<QLabel *>(QStringLiteral("ocrImageCount"));
+    auto *textCount=dialog->findChild<QLabel *>(QStringLiteral("ocrTextCount"));
     auto *zoomView=static_cast<OcrImageView *>(dialog->findChild<QGraphicsView *>());
     auto *zoomLevel=dialog->findChild<QLabel *>(QStringLiteral("ocrZoomLevel"));
-    auto *zoomFit=dialog->findChild<QToolButton *>(QStringLiteral("ocrFit"));
-    const bool fittedAtFirst=zoomView->fitted();
-    zoomFit->click();                                     // Fitted: the toggle shows one-to-one.
-    const bool actual=zoomView->percent()==100 && zoomLevel->text()==QStringLiteral("100%") && !zoomView->fitted();
-    dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomIn"))->click();
-    const bool larger=zoomView->percent()==110 && zoomLevel->text()==QStringLiteral("110%");
-    dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomOut"))->click();
-    dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomOut"))->click();
-    const bool smaller=zoomView->percent()==90;
-    zoomFit->click();                                     // Zoomed: the same toggle fits again.
-    check(fittedAtFirst && actual && larger && smaller && zoomView->fitted() && zoomFit->toolTip().contains(QStringLiteral("1:1")),
-          "image block zooms in ten-point steps, shows the percentage and toggles between fit and one-to-one");
-    check(dialog->findChild<QLabel *>(QStringLiteral("ocrCharacterCount"))->text()==QString::number(text->toPlainText().toUcs4().size()),
-          "the text block counts the characters it holds");
+    auto *zoomIn=dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomIn"));
+    auto *zoomOut=dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomOut"));
+    const int beforeZoom=zoomView->percent();
+    zoomIn->click();
+    const bool wrappedText=text->lineWrapMode()==QPlainTextEdit::WidgetWidth;
+    const bool larger=zoomView->percent()==beforeZoom+10
+        && zoomLevel->text()==QStringLiteral("%1%").arg(beforeZoom+10);
+    zoomOut->click();
+    zoomOut->click();
+    const bool smaller=zoomView->percent()==beforeZoom-10;
+    auto *fitToggle=dialog->findChild<QToolButton *>(QStringLiteral("ocrFitToggle"));
+    const bool fitInFooter=fitToggle && fitToggle->parentWidget()==imageBar
+        && fitToggle->mapTo(imageBar,QPoint()).x()>zoomLevel->mapTo(imageBar,QPoint()).x()+zoomLevel->width()
+        && imageCount->mapTo(imageBar,QPoint()).x()>fitToggle->mapTo(imageBar,QPoint()).x()+fitToggle->width()
+        && fitToggle->size()==QSize(22,24);
+    fitToggle->click();
+    const bool fittedNow=zoomView->fitted()
+        && fitToggle->toolTip()==OcrDialog::tr("原始大小 (1:1)");
+    fitToggle->click();
+    const bool actualNow=!zoomView->fitted() && zoomView->percent()==100
+        && fitToggle->toolTip()==OcrDialog::tr("适应屏幕");
+    check(wrappedText && larger && smaller && fitInFooter && fittedNow && actualNow,
+          "text wraps to the fixed pane width; image tools toggle fit and one-to-one");
+    const QString chars=QString::number(text->toPlainText().toUcs4().size());
+    check(imageCount->text()==chars && textCount->text()==chars
+              && !textCount->text().contains(QStringLiteral("字符")),
+          "each module footer shows only its numeric character count");
+    check(dialog->findChildren<QLabel *>(QStringLiteral("cardSectionTitle")).isEmpty(),
+          "the screenshot/original/result section captions are gone");
+    auto *textZoomIn=dialog->findChild<QToolButton *>(QStringLiteral("ocrTextZoomIn"));
+    auto *textZoomOut=dialog->findChild<QToolButton *>(QStringLiteral("ocrTextZoomOut"));
+    auto *textZoomLevel=dialog->findChild<QLabel *>(QStringLiteral("ocrTextZoomLevel"));
+    const qreal beforeTextFont=text->font().pointSizeF();
+    textZoomIn->click();
+    const bool textLarger=text->font().pointSizeF()>beforeTextFont
+        && textZoomLevel->text()==QStringLiteral("110%");
+    textZoomOut->click();
+    const bool textBack=qAbs(text->font().pointSizeF()-beforeTextFont)<0.01
+        && textZoomLevel->text()==QStringLiteral("100%");
+    const QPointF wheelPos(text->viewport()->rect().center());
+    QWheelEvent wheelUp(wheelPos,text->viewport()->mapToGlobal(wheelPos.toPoint()),
+                        QPoint(),QPoint(0,120),Qt::NoButton,Qt::ControlModifier,
+                        Qt::NoScrollPhase,false);
+    QApplication::sendEvent(text->viewport(),&wheelUp);
+    const bool wheelLarger=text->font().pointSizeF()>beforeTextFont
+        && textZoomLevel->text()==QStringLiteral("110%");
+    QWheelEvent wheelDown(wheelPos,text->viewport()->mapToGlobal(wheelPos.toPoint()),
+                          QPoint(),QPoint(0,-120),Qt::NoButton,Qt::ControlModifier,
+                          Qt::NoScrollPhase,false);
+    QApplication::sendEvent(text->viewport(),&wheelDown);
+    const bool wheelBack=qAbs(text->font().pointSizeF()-beforeTextFont)<0.01
+        && textZoomLevel->text()==QStringLiteral("100%");
+    check(textLarger && textBack && wheelLarger && wheelBack
+              && !dialog->findChild<QToolButton *>(QStringLiteral("ocrFit")),
+          "text footer +/- and Ctrl+wheel change only that module font; the old fit control is gone");
     const int textBottom=text->mapTo(dialog,QPoint()).y()+text->height();
-    const bool actionsAtRight = textBar && format && search
-        && format->parentWidget()==textBar && search->parentWidget()==textBar
-        && retry->parentWidget()==textBar && copy->parentWidget()==textBar
-        && format->mapTo(textBar,QPoint()).x()>copy->mapTo(textBar,QPoint()).x()+copy->width()
-        && search->mapTo(textBar,QPoint()).x()>format->mapTo(textBar,QPoint()).x()
-        && retry->mapTo(textBar,QPoint()).x()>search->mapTo(textBar,QPoint()).x()
-        && retry->mapTo(textBar,QPoint()).x()+retry->width()==textBar->width();
-    check(retry->text().isEmpty() && copy->text().isEmpty() && !retry->icon().isNull() && !copy->icon().isNull()
-              && retry->mapTo(dialog,QPoint()).y()>=textBottom && copy->mapTo(dialog,QPoint()).y()>=textBottom
+    const bool actionsAtRight = topBar && format && search
+        && format->parentWidget()==topBar && search->parentWidget()==topBar
+        && retry->parentWidget()==topBar && status->parentWidget()==topBar
+        && format->mapTo(topBar,QPoint()).x()<search->mapTo(topBar,QPoint()).x()
+        && search->mapTo(topBar,QPoint()).x()<retry->mapTo(topBar,QPoint()).x()
+        && retry->mapTo(topBar,QPoint()).x()+retry->width()==topBar->width();
+    check(retry->text()==OcrDialog::tr("重新识别") && !retry->icon().isNull() && !copy->icon().isNull()
+              && textBar && imageBar && imageBar->isVisible() && textBar->isVisible()
+              && textBar->mapTo(dialog,QPoint()).y()>=textBottom
+              && copy->toolTip()==OcrDialog::tr("复制识别文本")
               && back && headerPin && back->parentWidget()==headerPin->parentWidget()
               && back->mapTo(dialog,QPoint()).x()<headerPin->mapTo(dialog,QPoint()).x()
-              && actionsAtRight && status->text().isEmpty() && status->mapTo(dialog,QPoint()).y()>=textBottom
+              && actionsAtRight && status->text().isEmpty()
               && text->toolTip().isEmpty(),
-          "back sits left of pin; the three text actions sit at the right of the bottom row without timing, confidence or tooltip");
+          "top actions sit right; each module has its own footer copy/zoom/count and no section captions");
     if (!previewPath.isEmpty()) check(dialog->grab().save(previewPath+QStringLiteral("-comparison.png")),"save comparison window preview");
-    check(text->font().pointSizeF()>=12 && dialog->font().pointSizeF()>=10.5 && copy->size()==QSize(28,28)
-              && retry->size()==copy->size() && copy->iconSize()==QSize(16,16),
-          "OCR uses readable point-sized system fonts and consistent 16px glyphs on 28px action targets");
+    check(qAbs(text->font().pointSizeF()-qMax(11.25,QFontDatabase::systemFont(QFontDatabase::GeneralFont).pointSizeF()))<0.01
+              && qAbs(dialog->font().pointSizeF()-qMax(9.0,QFontDatabase::systemFont(QFontDatabase::GeneralFont).pointSizeF()))<0.01
+              && copy->width()==22 && copy->height()==24 && retry->height()==32
+              && copy->iconSize()==QSize(16,16) && textBar->height()==28
+              && fitToggle->size()==QSize(22,24),
+          "OCR keeps the approved type scale and compact footer targets");
     // Recognized characters are selectable on the capture, and text-pane selections light them up.
     const QString wantedLine=QStringLiteral("HelloWorld123");
     const int glyphTotal=QString(expectedText).remove(QLatin1Char('\n')).size();
@@ -300,7 +351,7 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     const int helloFirst=QStringLiteral("截图文字识别").size();
     check(lit==QVector<int>({helloFirst,helloFirst+1,helloFirst+2,helloFirst+3,helloFirst+4})
               && !textMarks.isEmpty()
-              && textMarks.first().format.background().color()==QColor(0x26,0x4f,0x78),
+              && textMarks.first().format.background().color()==QColor(0x32,0x34,0x5b),
           "selecting text in the OCR pane highlights exactly those characters with a text selection");
     auto *title = dialog->findChild<QLabel *>(QStringLiteral("ocrTitle"));
     const bool selectedBefore = text->textCursor().hasSelection();
@@ -334,8 +385,8 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     zoomView->setFocus();
     QKeyEvent copyKey(QEvent::KeyPress,Qt::Key_C,Qt::ControlModifier);
     QApplication::sendEvent(zoomView,&copyKey);
-    check(dragged && QApplication::clipboard()->text()==QStringLiteral("World123") && status->text()==QStringLiteral("已复制选中文字"),
-          "dragging across capture text selects it without panning and Ctrl+C copies it");
+    check(dragged && QApplication::clipboard()->text()==QStringLiteral("World123") && status->text().isEmpty(),
+          "dragging across capture text selects it without panning; Ctrl+C copies it without a copy toast");
     const bool exactMirror=text->textCursor().hasSelection()
         && text->textCursor().selectedText()==QStringLiteral("World123")
         && text->extraSelections().isEmpty() && zoomView->highlighted().isEmpty();
@@ -362,6 +413,7 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     check(zoomView->selectedText().isEmpty() && !text->textCursor().hasSelection()
               && text->extraSelections().isEmpty(),
           "a click on text without dragging clears both panes");
+    const int zoomBeforeDouble=zoomView->percent();
     {
         const QPoint at=zoomView->mapFromScene(zoomView->glyphPolygon(helloFirst+2).boundingRect().center());
         QMouseEvent twice(QEvent::MouseButtonDblClick,QPointF(at),QPointF(zoomView->viewport()->mapToGlobal(at)),
@@ -369,7 +421,8 @@ int CaptureOverlay::testOcr(const QString &previewPath)
         QApplication::sendEvent(zoomView->viewport(),&twice);
     }
     check(zoomView->selectedText()==wantedLine && text->textCursor().selectedText()==wantedLine
-              && zoomView->fitted(),"double-clicking capture text selects its whole line instead of refitting");
+              && zoomView->percent()==zoomBeforeDouble,
+          "double-clicking capture text selects its whole line without refitting");
     zoomView->selectRange(-1,-1);
     check(!text->textCursor().hasSelection() && text->extraSelections().isEmpty(),
           "clearing the capture selection clears the linked OCR characters");
@@ -390,18 +443,20 @@ int CaptureOverlay::testOcr(const QString &previewPath)
         const double first=luminance(a),second=luminance(b);
         return (qMax(first,second)+0.05)/(qMin(first,second)+0.05);
     };
-    check(contrast(QColor("#fcfcfc"),QColor("#060607"))>=7
-              && contrast(QColor("#a1a1aa"),QColor("#060607"))>=4.5
-              && contrast(QColor("#0485f7"),QColor("#18181b"))>=3
-              && contrast(QColor("#fcfcfc"),QColor("#264f78"))>=4.5,
+    check(contrast(QColor("#f4f5f8"),QColor("#0c0d10"))>=7
+              && contrast(QColor("#9c9da1"),QColor("#0c0d10"))>=4.5
+              && contrast(QColor("#5e6ad2"),QColor("#18191d"))>=3
+              && contrast(QColor("#f4f5f8"),QColor("#32345b"))>=4.5,
           "card text, muted metadata, accent controls and text selection meet their contrast budgets");
     const QList<QWidget *> tabOrder{back,
         dialog->findChild<QToolButton *>(QStringLiteral("ocrPin")),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrMinimize")),dialog->findChild<QToolButton *>(QStringLiteral("ocrMaximize")),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrClose")),dialog->findChild<QGraphicsView *>(),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrCopyImage")),dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomIn")),
-        dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomOut")),dialog->findChild<QToolButton *>(QStringLiteral("ocrFit")),
-        text,copy,
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomOut")),
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrFitToggle")),
+        text,copy,dialog->findChild<QToolButton *>(QStringLiteral("ocrTextZoomIn")),
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrTextZoomOut")),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrFormat")),dialog->findChild<QToolButton *>(QStringLiteral("ocrSearch")),retry};
     tabOrder.first()->setFocus();
     for (int i=1;i<tabOrder.size();++i) {
@@ -412,20 +467,24 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     const QSize normalSize=dialog->size();
     dialog->resize(dialog->minimumSize()); QApplication::processEvents();
     const auto controlsFit = [&] {
-        const QRect panelRect=dialog->findChild<QWidget *>(QStringLiteral("ocrTextPanel"))->rect();
-        QWidget *panel=dialog->findChild<QWidget *>(QStringLiteral("ocrTextPanel"));
-        return dialog->rect().contains(QRect(panel->mapTo(dialog,QPoint()),panel->size()))
-            && panelRect.contains(QRect(retry->mapTo(panel,QPoint()),retry->size()))
-            && panelRect.contains(QRect(copy->mapTo(panel,QPoint()),copy->size()))
-            && copy->mapTo(dialog,QPoint()).x()+copy->width()<=retry->mapTo(dialog,QPoint()).x()
-            && text->height()>100 && copy->width()>=copy->sizeHint().width();
+        const auto inBar = [](QWidget *bar, QWidget *widget) {
+            return bar && widget && bar->rect().contains(QRect(widget->mapTo(bar,QPoint()),widget->size()));
+        };
+        return dialog->rect().contains(QRect(topBar->mapTo(dialog,QPoint()),topBar->size()))
+            && inBar(topBar,format) && inBar(topBar,search) && inBar(topBar,retry)
+            && inBar(textBar,copy) && inBar(textBar,textZoomIn) && inBar(textBar,textZoomOut)
+            && inBar(textBar,textZoomLevel) && inBar(textBar,textCount)
+            && copy->mapTo(textBar,QPoint()).x()<textZoomIn->mapTo(textBar,QPoint()).x()
+            && textZoomIn->mapTo(textBar,QPoint()).x()<textZoomOut->mapTo(textBar,QPoint()).x()
+            && textCount->mapTo(textBar,QPoint()).x()+textCount->width()==textBar->width()
+            && text->height()>100;
     };
     if (dialog->size()!=dialog->minimumSize() || !controlsFit())
-        std::fprintf(stderr,"MIN: copy=%d/%d dialog=%dx%d min=%dx%d hint=%dx%d text-height=%d retry=(%d,%d) copy=(%d,%d)\n",
-            copy->width(),copy->sizeHint().width(),dialog->width(),dialog->height(),dialog->minimumWidth(),dialog->minimumHeight(),
+        std::fprintf(stderr,"MIN: dialog=%dx%d min=%dx%d hint=%dx%d text-height=%d copy=%dx%d\n",
+            dialog->width(),dialog->height(),dialog->minimumWidth(),dialog->minimumHeight(),
             dialog->minimumSizeHint().width(),dialog->minimumSizeHint().height(),text->height(),
-            retry->mapTo(dialog,QPoint()).x(),retry->mapTo(dialog,QPoint()).y(),copy->mapTo(dialog,QPoint()).x(),copy->mapTo(dialog,QPoint()).y());
-    check(dialog->size()==dialog->minimumSize() && controlsFit(),"minimum OCR window retains both panes and every primary action without overlap");
+            copy->width(),copy->height());
+    check(dialog->size()==dialog->minimumSize() && controlsFit(),"minimum OCR window retains both panes and every footer control without overlap");
     if (!previewPath.isEmpty()) check(dialog->grab().save(previewPath+QStringLiteral("-compact.png")),"save minimum-size OCR preview");
     QVector<QPair<QWidget *,QFont>> savedFonts;
     for (QWidget *widget:dialog->findChildren<QWidget *>())
@@ -437,8 +496,13 @@ int CaptureOverlay::testOcr(const QString &previewPath)
         entry.first->setFont(largeFont);
     }
     for (int pass=0;pass<3;++pass) QApplication::processEvents();
-    check(retry->font().pointSizeF()>=13 && text->font().pointSizeF()>=15,
-          "the enlarged-font preview actually increases both interface and reading fonts");
+    const auto originalPointSize = [&savedFonts](QWidget *widget) {
+        for (const auto &entry : savedFonts) if (entry.first == widget) return entry.second.pointSizeF();
+        return 0.0;
+    };
+    check(qAbs(retry->font().pointSizeF() - originalPointSize(retry) * 1.25) < 0.01
+              && qAbs(text->font().pointSizeF() - originalPointSize(text) * 1.25) < 0.01,
+          "the enlarged-font preview increases both interface and reading fonts by exactly 25 percent");
     if (!controlsFit()) std::fprintf(stderr,"LAYOUT: dialog=%dx%d panel=%dx%d retry=(%d,%d %dx%d) copy=(%d,%d %dx%d) text-height=%d\n",
         dialog->width(),dialog->height(),retry->parentWidget()->width(),retry->parentWidget()->height(),
         retry->x(),retry->y(),retry->width(),retry->height(),

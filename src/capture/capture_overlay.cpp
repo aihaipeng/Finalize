@@ -1,3 +1,4 @@
+#include "shared/dialog_chrome.h"
 #include "capture/capture_overlay.h"
 #include <QWindow>
 #include "platform/output.h"
@@ -31,6 +32,8 @@
 #include <QtMath>
 #include <QToolButton>
 #include <QComboBox>
+#include <QStylePainter>
+#include <QStyleOptionComboBox>
 #include <QAbstractItemView>
 #include <QDialog>
 #include <QLineEdit>
@@ -55,6 +58,30 @@
 #include <qt_windows.h>
 #include <dwmapi.h>
 #include <imm.h>
+
+namespace {
+// Keep the normal combo popup behavior while painting the current text centered.
+class CenteredCombo : public QComboBox
+{
+public:
+    using QComboBox::QComboBox;
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QStylePainter painter(this);
+        QStyleOptionComboBox opt;
+        initStyleOption(&opt);
+        const QString text = opt.currentText;
+        opt.currentText.clear();
+        painter.drawComplexControl(QStyle::CC_ComboBox, opt);
+        const QRect field = style()->subControlRect(QStyle::CC_ComboBox, &opt,
+                                                    QStyle::SC_ComboBoxEditField, this);
+        painter.drawText(field, Qt::AlignCenter,
+                         fontMetrics().elidedText(text, Qt::ElideRight, field.width()));
+    }
+};
+} // namespace
 
 CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
                         const WindowTargets &nativeWindows,
@@ -100,36 +127,169 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     NamiSettings settings;
     m_roundEnabled = settings.value(QStringLiteral("Capture/roundEnabled"), false).toBool();
     m_roundRadius = qBound(0, settings.value(QStringLiteral("Capture/roundRadius"), 0).toInt(), 60);
-    m_sizeUnit = settings.value(QStringLiteral("Capture/sizeUnit"), QStringLiteral("px")).toString()
-                         .compare(QStringLiteral("dp"), Qt::CaseInsensitive) == 0 ? SizeUnit::Dp : SizeUnit::Px;
+    const QString savedUnit = settings.value(QStringLiteral("Capture/sizeUnit"), QStringLiteral("px")).toString();
+    m_sizeUnit = savedUnit.compare(QStringLiteral("dp"), Qt::CaseInsensitive) == 0
+                      || savedUnit.compare(QStringLiteral("dip"), Qt::CaseInsensitive) == 0
+                  ? SizeUnit::Dp : SizeUnit::Px;
     m_frameSource = [] { return freezeScreens(); };
     buildShot(m_frames);
     }
     m_inspector = new PixelInspector(this);
 
-    m_sizeTip = new QLabel(this);
-    m_sizeTip->setStyleSheet(
-        "background:#18181b;color:#fcfcfc;padding:2px 6px;border:1px solid #0485f7;"
-        "border-radius:4px;font-size:12px;");
+    // Size strip: the region size, its unit, and the aspect lock stay together.
+    m_sizeBar = new QWidget(this);
+    m_sizeBar->setObjectName(QStringLiteral("sizeBar"));
+    m_sizeBar->setFixedHeight(32);
+    m_sizeBar->setStyleSheet(QStringLiteral(
+        "QWidget#sizeBar{background:#18191d;border:1px solid #2b2d33;border-radius:4px;}"
+        "QLabel{color:#f4f5f8;background:transparent;border:none;font-size:14px;padding:0 9px;}"
+        "QToolButton{color:#f4f5f8;background:transparent;border:none;font-size:13px;padding:0;text-align:center;}"
+        "QToolButton:hover{background:#222326;}"
+        "QToolButton:pressed{background:#2b2d33;}"
+        "QFrame#sizeBarDivider{background:#2b2d33;border:none;}"));
+    auto *sizeBarLayout = new QHBoxLayout(m_sizeBar);
+    sizeBarLayout->setContentsMargins(0, 0, 0, 0);
+    sizeBarLayout->setSpacing(0);
+
+    m_sizeTip = new QLabel(m_sizeBar);
     m_sizeTip->setCursor(Qt::PointingHandCursor);
     m_sizeTip->setAccessibleName(tr("自定义截图"));
-    m_sizeTip->setAccessibleDescription(tr("点击调整区域大小、尺寸单位和长宽比"));
+    m_sizeTip->setAccessibleDescription(tr("点击调整区域大小"));
     m_sizeTip->installEventFilter(this);
-    m_sizeTip->hide();
+    sizeBarLayout->addWidget(m_sizeTip);
+
+    const auto addDivider = [&] {
+        auto *line = new QFrame(m_sizeBar);
+        line->setObjectName(QStringLiteral("sizeBarDivider"));
+        line->setFixedSize(1, 16);
+        sizeBarLayout->addWidget(line, 0, Qt::AlignVCenter);
+    };
+
+    addDivider();
+    m_sizeUnitButton = new QToolButton(m_sizeBar);
+    m_sizeUnitButton->setObjectName(QStringLiteral("sizeUnit"));
+    m_sizeUnitButton->setText(QStringLiteral("px"));
+    m_sizeUnitButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_sizeUnitButton->setCursor(Qt::PointingHandCursor);
+    m_sizeUnitButton->setToolTip(tr("更改尺寸单位"));
+    m_sizeUnitButton->setAccessibleName(tr("尺寸单位"));
+    m_sizeUnitButton->setFixedWidth(38);
+    connect(m_sizeUnitButton, &QToolButton::clicked, this, [this] {
+        setSizeUnit(m_sizeUnit == SizeUnit::Px ? SizeUnit::Dp : SizeUnit::Px, true);
+        updateCustomSizeInputs();
+    });
+    sizeBarLayout->addWidget(m_sizeUnitButton);
+
+    addDivider();
+    m_sizeCornerButton = new QToolButton(m_sizeBar);
+    m_sizeCornerButton->setObjectName(QStringLiteral("sizeCorner"));
+    m_sizeCornerButton->setCheckable(true);
+    const bool rounded = m_roundEnabled;
+    m_sizeCornerButton->setChecked(rounded);
+    m_sizeCornerButton->setIcon(barIcon(rounded ? Icon::CornerRounded : Icon::CornerSquare));
+    m_sizeCornerButton->setIconSize(QSize(16, 16));
+    m_sizeCornerButton->setCursor(Qt::PointingHandCursor);
+    m_sizeCornerButton->setToolTip(tr("切换直角/圆角"));
+    m_sizeCornerButton->setAccessibleName(tr("圆角截图"));
+    m_sizeCornerButton->setFixedWidth(34);
+    connect(m_sizeCornerButton, &QToolButton::clicked, this, [this](bool checked) {
+        m_roundEnabled = checked;
+        if (checked && m_roundRadius <= 0) m_roundRadius = 24;
+        applyRoundSettings(true);
+        updateTip();
+    });
+    sizeBarLayout->addWidget(m_sizeCornerButton);
+
+    m_sizeRadiusDivider = new QFrame(m_sizeBar);
+    m_sizeRadiusDivider->setObjectName(QStringLiteral("sizeBarDivider"));
+    m_sizeRadiusDivider->setFixedSize(1, 16);
+    m_sizeRadiusDivider->setVisible(rounded);
+    sizeBarLayout->addWidget(m_sizeRadiusDivider, 0, Qt::AlignVCenter);
+
+    auto *radiusBox = new QWidget(m_sizeBar);
+    radiusBox->setObjectName(QStringLiteral("sizeRadiusBox"));
+    radiusBox->setFixedWidth(56);
+    radiusBox->setVisible(rounded);
+    auto *radiusLayout = new QHBoxLayout(radiusBox);
+    radiusLayout->setContentsMargins(0, 0, 0, 0);
+    radiusLayout->setSpacing(0);
+    m_sizeRadiusSpin = new QSpinBox(radiusBox);
+    m_sizeRadiusSpin->setObjectName(QStringLiteral("sizeRadius"));
+    m_sizeRadiusSpin->setRange(0, 60);
+    m_sizeRadiusSpin->setValue(m_roundRadius);
+    m_sizeRadiusSpin->setAlignment(Qt::AlignCenter);
+    m_sizeRadiusSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    m_sizeRadiusSpin->setFrame(false);
+    m_sizeRadiusSpin->setFixedHeight(28);
+    m_sizeRadiusSpin->setStyleSheet(QStringLiteral(
+        "QSpinBox{color:#f4f5f8;background:transparent;border:none;padding:0;font-size:14px;}"));
+    m_sizeRadiusSpin->installEventFilter(this);
+    for (QWidget *child : m_sizeRadiusSpin->findChildren<QWidget *>())
+        child->installEventFilter(this);
+    radiusLayout->addWidget(m_sizeRadiusSpin, 1, Qt::AlignVCenter);
+    auto *radiusSteps = new QWidget(radiusBox);
+    auto *radiusStepLayout = new QVBoxLayout(radiusSteps);
+    radiusStepLayout->setContentsMargins(0, 0, 0, 0);
+    radiusStepLayout->setSpacing(0);
+    const auto makeRadiusStep = [radiusSteps, this](const QString &name, Icon icon, auto step) {
+        auto *button = new QToolButton(radiusSteps);
+        button->setObjectName(name);
+        button->setIcon(makeIcon(icon, 9, true));
+        button->setIconSize(QSize(9, 9));
+        button->setFixedSize(14, 15);
+        button->setAutoRaise(true);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setStyleSheet(QStringLiteral(
+            "QToolButton{background:transparent;border:none;padding:0;}"
+            "QToolButton:hover{background:#222326;border-radius:2px;}"));
+        QObject::connect(button, &QToolButton::clicked, m_sizeRadiusSpin, step);
+        return button;
+    };
+    radiusStepLayout->addWidget(makeRadiusStep(QStringLiteral("sizeRadiusUp"), Icon::ChevronUp, &QSpinBox::stepUp));
+    radiusStepLayout->addWidget(makeRadiusStep(QStringLiteral("sizeRadiusDown"), Icon::ChevronDown, &QSpinBox::stepDown));
+    radiusLayout->addWidget(radiusSteps, 0, Qt::AlignVCenter);
+    sizeBarLayout->addWidget(radiusBox);
+    connect(m_sizeRadiusSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        m_roundRadius = value;
+        applyRoundSettings(true);
+        updateTip();
+    });
+
+    addDivider();
+    m_sizeLockButton = new QToolButton(m_sizeBar);
+    m_sizeLockButton->setObjectName(QStringLiteral("sizeLockAspect"));
+    m_sizeLockButton->setCheckable(true);
+    m_sizeLockButton->setIcon(barIcon(Icon::AspectLock));
+    m_sizeLockButton->setIconSize(QSize(16, 16));
+    m_sizeLockButton->setCursor(Qt::PointingHandCursor);
+    m_sizeLockButton->setToolTip(tr("锁定长宽比"));
+    m_sizeLockButton->setAccessibleName(tr("锁定长宽比"));
+    m_sizeLockButton->setFixedWidth(34);
+    connect(m_sizeLockButton, &QToolButton::toggled, this, [this](bool locked) {
+        m_lockAspect = locked;
+        // The strip is usable while the editor is closed, so derive the ratio
+        // from the live selection instead of stale editor fields.
+        if (locked && !m_sel.isNull() && m_sel.height() > 0)
+            m_aspect = qreal(m_sel.width()) / m_sel.height();
+        updateTip();
+    });
+    sizeBarLayout->addWidget(m_sizeLockButton);
+    m_sizeBar->hide();
 
     // The overlay paints matching solid backgrounds for both toolbar containers.
     qApp->installEventFilter(this);                  // Swallows hover tooltips of every capture control.
     m_tools = new QWidget(this);
     m_tools->installEventFilter(this);
     m_tools->setCursor(Qt::ArrowCursor);
-    // Dark bar language: flat 31px buttons, translucent zinc hover, accent glyph when checked, 1px dividers.
+    // Dark bar language: compact buttons, neutral hover, accent glyph when checked, 1px dividers.
     const QString barQss = QStringLiteral(
-        "QToolButton{color:#fcfcfc;background:transparent;border:none;border-radius:4px;padding:5px;}"
-        "QToolButton:hover{background-color:#26262a;}"
-        "QToolButton:pressed{background-color:#27272a;}"
+        "QToolButton{color:#f4f5f8;background:transparent;border:none;border-radius:4px;padding:5px;}"
+        "QToolButton:hover{background-color:#222326;}"
+        "QToolButton:pressed{background-color:#2b2d33;}"
         "QToolButton:checked{background:transparent;}"
-        "QToolButton:checked:hover{background-color:#26262a;}"
-        "QFrame#barSeparator{background-color:#27272a;margin:0px 6px;border:none;}");
+        "QToolButton:checked:hover{background-color:#222326;}"
+        "QFrame#barSeparator{background-color:#2b2d33;margin:0px 6px;border:none;}");
     m_tools->setStyleSheet(barQss);
     // Capture output actions; a pin edit session replaces them with one
     // confirm button that applies the result back to the pin.
@@ -150,18 +310,6 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         auto *barcode = barButton(Icon::Barcode, tr("识别二维码/条形码"));
         barcode->setObjectName(QStringLiteral("barcodeButton"));
         barcode->setAccessibleName(tr("识别二维码/条形码"));
-        m_roundButton = barButton(Icon::RoundRect, tr("圆角截图"));
-        m_roundButton->setObjectName(QStringLiteral("roundButton"));
-        m_roundButton->setAccessibleName(tr("圆角截图"));
-        m_roundButton->setCheckable(true);
-        m_roundButton->setChecked(m_roundEnabled);
-        connect(m_roundButton, &QToolButton::clicked, this, [this](bool checked) {
-            m_roundEnabled = checked;
-            applyRoundSettings(true);
-            if (checked) showRadiusPopup();
-            else if (m_radiusPopup) m_radiusPopup->close();
-            update();
-        });
         m_refreshButton = barButton(Icon::Refresh, tr("刷新截图（按住持续刷新）"));
         m_refreshButton->setObjectName(QStringLiteral("refreshButton"));
         m_refreshButton->setAccessibleName(tr("刷新截图"));
@@ -193,7 +341,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         connect(ocr, &QToolButton::clicked, this, &CaptureOverlay::ocrCapture);
         connect(translate, &QToolButton::clicked, this, &CaptureOverlay::translateCapture);
         connect(barcode, &QToolButton::clicked, this, &CaptureOverlay::barcodeCapture);
-        outputButtons = {m_roundButton, scroll, ocr, translate, barcode, pin, m_refreshButton, save, copy};
+        outputButtons = {scroll, ocr, translate, barcode, pin, m_refreshButton, save, copy};
     }
     // Instant annotation tools: draw inside the committed selection; every capture
     // action composes them in. One shape button covers rect / ellipse; per-tool
@@ -205,21 +353,21 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     connect(redo, &QToolButton::clicked, this, &CaptureOverlay::redoAnnotation);
     m_redoButton = redo;
     syncUndoButtons();                             // Empty stacks: both start greyed out.
-    m_shapeButton = new QToolButton;               // One button for both shapes.
+    m_shapeButton = new QToolButton;
     m_shapeButton->setIcon(barIcon(Icon::Rect));
     m_shapeButton->setIconSize(QSize(Bar::icon, Bar::icon));
     m_shapeButton->setToolTip(tr("形状：矩形/椭圆 (R=矩形 / O=椭圆)"));
     m_shapeButton->setCheckable(true);
     m_shapeButton->setCursor(Qt::PointingHandCursor);
     connect(m_shapeButton, &QToolButton::clicked, this, [this] {
-        const bool armed = m_atool == ATool::Rect || m_atool == ATool::Ellipse;
-        selectTool(armed ? ATool::None : m_shapeEllipse ? ATool::Ellipse : ATool::Rect);   // Reclick disarms.
+        selectTool(m_atool == ATool::Rect ? ATool::None : ATool::Rect);
         setCursor(Qt::CrossCursor);
         update();
     });
     m_toolBtn.fill(nullptr, int(ATool::Eraser) + 1);
-    m_toolBtn[int(ATool::Rect)] = m_toolBtn[int(ATool::Ellipse)] = m_shapeButton;
+    m_toolBtn[int(ATool::Rect)] = m_shapeButton;
     struct { ATool tool; Icon icon; const char *tip; } const tools[] = {
+        {ATool::Ellipse, Icon::Ellipse, QT_TRANSLATE_NOOP("CaptureOverlay", "椭圆 (O)")},
         {ATool::Arrow, Icon::Arrow, QT_TRANSLATE_NOOP("CaptureOverlay", "箭头 (A)")},
         {ATool::Pen, Icon::Pen, QT_TRANSLATE_NOOP("CaptureOverlay", "画笔 (P)")},
         {ATool::Marker, Icon::Marker, QT_TRANSLATE_NOOP("CaptureOverlay", "荧光笔 (H)")},
@@ -242,11 +390,11 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     if (pinEdit) {
         auto *done = barButton(Icon::Check, tr("完成编辑 (Enter)"));
         connect(done, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
-        m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
+        m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Ellipse)], m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
                          m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
                          m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)], undo, redo, done};
     } else {
-        m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
+        m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Ellipse)], m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
                          m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
                          m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)], undo, redo};
         m_toolButtons += outputButtons;
@@ -254,16 +402,16 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     for (QWidget *button : m_toolButtons) button->setFocusPolicy(Qt::NoFocus);
 
     const QString optionsQss = barQss + QStringLiteral(
-        "QLabel{color:#fcfcfc;font-size:12px;border:none;}"
-        "QComboBox{color:#fcfcfc;background:#060607;border:none;border-radius:12px;"
-        "padding:1px 4px 1px 12px;font-size:12px;}"
-        "QComboBox:hover{background:#0c0c0e;}"
+        "QLabel{color:#f4f5f8;font-size:13px;border:none;}"
+        "QComboBox{color:#f4f5f8;background:#0c0d10;border:none;border-radius:12px;"
+        "padding:1px 4px 1px 12px;font-size:13px;}"
+        "QComboBox:hover{background:#222326;}"
         "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
         "QComboBox::down-arrow{image:none;width:0px;height:0px;}"
-        "QComboBox QAbstractItemView{outline:0px;color:#fcfcfc;background:#18181b;border:1px solid #27272a;"
-        "padding:4px;selection-background-color:#0485f7;selection-color:#fcfcfc;}"
-        "QLineEdit{color:#fcfcfc;background:transparent;border:none;"
-        "selection-background-color:#0485f7;selection-color:#fcfcfc;}");
+        "QComboBox QAbstractItemView{outline:0px;color:#f4f5f8;background:#18191d;border:1px solid #2b2d33;"
+        "padding:4px;selection-background-color:#5e6ad2;selection-color:#ffffff;}"
+        "QLineEdit{color:#f4f5f8;background:transparent;border:none;"
+        "selection-background-color:#5e6ad2;selection-color:#ffffff;}");
     if (m_embedded) {
         // The option strip detaches as a small top-level rounded bar;
         // the pin positions it below its own toolbar.
@@ -271,7 +419,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         m_toolOptions->setObjectName(QStringLiteral("pinStrip"));
         m_toolOptions->setAttribute(Qt::WA_StyledBackground);
         m_toolOptions->setStyleSheet(QStringLiteral(
-            "#pinStrip{background:#18181b;border:none;border-radius:8px;}") + optionsQss);
+            "#pinStrip{background:#18191d;border:none;border-radius:8px;}") + optionsQss);
     } else {
         m_toolOptions = new QWidget(this);
         m_toolOptions->setStyleSheet(optionsQss);
@@ -350,7 +498,7 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
     if (m_desktopPreview) {                       // Hold-to-refresh: keep the frame over the live desktop.
         if (!m_sel.isNull()) {
             p.setRenderHint(QPainter::Antialiasing);
-            p.setPen(QPen(Bar::accent, 1));
+            p.setPen(QPen(Bar::accent, 2));
             p.setBrush(QBrush(Qt::NoBrush));
             if (m_roundEnabled && m_roundRadius > 0 && !m_embedded) p.drawPath(selectionPath(m_sel));
             else p.drawRect(QRectF(m_sel).adjusted(0.5, 0.5, -0.5, -0.5));
@@ -377,7 +525,7 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         mask.addRect(QRectF(rect()));
         mask.addPath(selectionPath(hole));
         p.fillPath(mask, QColor(0, 0, 0, 120));
-        p.setPen(QPen(Bar::accent, 1));
+        p.setPen(QPen(Bar::accent, 2));
         p.setBrush(QBrush(Qt::NoBrush));
         if (m_roundEnabled && m_roundRadius > 0 && !m_embedded) {
             p.setRenderHint(QPainter::Antialiasing);
@@ -408,8 +556,8 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         if (!qFuzzyIsNull(ann.rot)) p.setTransform(annTransform(ann), true);
         const QRect box = annotationRect(ann);
         if (ann.tool == ATool::Text) {
-            // Reference text frame: one hairline white rect at the bounds, nothing dashed.
-            QPen frame(Qt::white, 0);
+            // Reference text frame: one hairline accent rect at the bounds, nothing dashed.
+            QPen frame(Bar::accent, 0);
             p.setPen(frame);
             p.setBrush(Qt::NoBrush);
             p.drawRect(QRectF(box).adjusted(0, 0, 0.5, 0.5));
@@ -632,7 +780,7 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
         const QRect dirty = annotationRect(m_ann);
         updateAnnotation(pos, e->modifiers());
         update(dirty.united(annotationRect(m_ann)).adjusted(-24, -24, 24, 24));
-        m_sizeTip->hide();                      // Drawing shows no floating text.
+        m_sizeBar->hide();                      // Drawing shows no floating text.
         return;
     }
     if (m_itemDrag != H_None) {                  // Move or resize the selected annotation.
@@ -931,7 +1079,7 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
                    && m_inspector->isVisible() && !m_inspector->colorText().isEmpty()) {
             if (!copyTextToClipboard(m_inspector->colorText()))
                 showOutputError(tr("复制失败，剪贴板可能被占用，请重试"));
-            else m_sizeTip->hide();
+            else m_sizeBar->hide();
         }
         break;
     case Qt::Key_Z:
@@ -1219,7 +1367,7 @@ void CaptureOverlay::updateInspector()
             m_inspector->move(inspectorPosition(local, m_inspector->size(), bounds));
             m_inspector->show();
             m_inspector->raise();
-            m_sizeTip->raise();
+            m_sizeBar->raise();
             return;
         }
     }
@@ -1240,16 +1388,16 @@ void CaptureOverlay::resetSelection()
     stopItemDrag();
     if (m_colorDialog) m_colorDialog->close();
     m_lockAspect = false;
-    if (m_customLock) {
-        const QSignalBlocker block(m_customLock);
-        m_customLock->setChecked(false);
+    if (m_sizeLockButton) {
+        const QSignalBlocker block(m_sizeLockButton);
+        m_sizeLockButton->setChecked(false);
     }
     m_mode = Selecting;                         // m_hover is kept: the next mouse move refreshes it.
     m_sel = QRect();
     m_drag = H_None;
     m_tools->hide();
     m_toolOptions->hide();
-    m_sizeTip->hide();
+    m_sizeBar->hide();
     setCursor(Qt::CrossCursor);
     updateInspector();
     update();
@@ -1371,17 +1519,27 @@ QRect CaptureOverlay::resizeBy(Handle h, const QPoint &pos)
 
 void CaptureOverlay::updateTip()
 {
-    if (m_pinEdit) { m_sizeTip->hide(); return; }   // Size label is capture chrome.
+    if (m_pinEdit) { m_sizeBar->hide(); return; }   // Size strip is capture chrome.
     const QRect r = !m_hover.isNull() ? m_hover : m_sel;
-    if (r.isNull()) { m_sizeTip->hide(); return; }
+    if (r.isNull()) { m_sizeBar->hide(); return; }
     const QSize shown = sizeInUnit(r, m_sizeUnit);
-    QString text = QStringLiteral("%1 × %2 %3").arg(shown.width()).arg(shown.height())
-                       .arg(m_sizeUnit == SizeUnit::Dp ? QStringLiteral("dp") : QStringLiteral("px"));
-    if (m_lockAspect && r == m_sel) text += tr(" · 锁定比例");
-    m_sizeTip->setText(text);
-    m_sizeTip->adjustSize();
-    m_sizeTip->move(r.topLeft() - QPoint(0, m_sizeTip->height() + 4));
-    m_sizeTip->show();
+    m_sizeTip->setText(QStringLiteral("%1 × %2").arg(shown.width()).arg(shown.height()));
+    if (m_sizeUnitButton)
+        m_sizeUnitButton->setText(m_sizeUnit == SizeUnit::Dp ? QStringLiteral("dip") : QStringLiteral("px"));
+    if (m_sizeLockButton) {
+        const QSignalBlocker block(m_sizeLockButton);
+        m_sizeLockButton->setChecked(m_lockAspect);
+    }
+    m_sizeBar->adjustSize();
+    const int gap = 6;
+    int x = r.center().x() - m_sizeBar->width() / 2;
+    x = qBound(0, x, qMax(0, width() - m_sizeBar->width()));
+    const bool fullScreen = (r == rect());
+    int y = fullScreen ? r.top() + gap : r.top() - m_sizeBar->height() - gap;
+    if (y < 0) y = r.top() + gap;
+    m_sizeBar->move(x, y);
+    m_sizeBar->show();
+    m_sizeBar->raise();
     if (m_customSizePopup && m_customSizePopup->isVisible() && !m_sel.isNull() && !m_updatingCustom) {
         QWidget *focus = QApplication::focusWidget();
         if (!focus || !m_customSizePopup->isAncestorOf(focus))
@@ -1393,10 +1551,10 @@ void CaptureOverlay::buildToolLayout()
 {
     if (m_tools->layout()) return;
     auto *lay = new QHBoxLayout(m_tools);
-    lay->setContentsMargins(6, 5, 6, 6);         // 42px bar around 31px buttons.
+    lay->setContentsMargins(12, 7, 12, 7);        // 42px bar around 28px buttons.
     lay->setSpacing(4);
     for (int i = 0; i < m_toolButtons.size(); ++i) {
-        if (i == 8 || i == 10) lay->addWidget(barSeparator(true));   // Tools | undo, redo | outputs.
+        if (i == 9 || i == 11) lay->addWidget(barSeparator(true));   // Tools | undo, redo | outputs.
         static_cast<QToolButton *>(m_toolButtons[i])->setFixedSize(Bar::button, Bar::button);
         lay->addWidget(m_toolButtons[i]);
     }
@@ -1494,65 +1652,25 @@ QPainterPath CaptureOverlay::selectionPath(const QRect &r) const
 void CaptureOverlay::applyRoundSettings(bool persist)
 {
     if (m_embedded) return;
-    if (m_roundButton) {
-        const QSignalBlocker lock(m_roundButton);
-        m_roundButton->setChecked(m_roundEnabled);
+    const bool rounded = m_roundEnabled;
+    if (m_sizeCornerButton) {
+        const QSignalBlocker lock(m_sizeCornerButton);
+        m_sizeCornerButton->setChecked(rounded);
+        m_sizeCornerButton->setIcon(barIcon(rounded ? Icon::CornerRounded : Icon::CornerSquare));
     }
-    if (m_radiusSlider) {
-        const QSignalBlocker lock(m_radiusSlider);
-        m_radiusSlider->setValue(m_roundRadius);
+    if (m_sizeRadiusSpin) {
+        const QSignalBlocker lock(m_sizeRadiusSpin);
+        m_sizeRadiusSpin->setValue(m_roundRadius);
+        if (auto *box = m_sizeRadiusSpin->parentWidget()) box->setVisible(rounded);
     }
-    if (m_radiusValue) m_radiusValue->setText(QString::number(m_roundRadius));
+    if (m_sizeRadiusDivider) m_sizeRadiusDivider->setVisible(rounded);
+    if (m_sizeBar && m_sizeBar->isVisible()) m_sizeBar->adjustSize();
     if (persist) {
         NamiSettings settings;
         settings.setValue(QStringLiteral("Capture/roundEnabled"), m_roundEnabled);
         settings.setValue(QStringLiteral("Capture/roundRadius"), m_roundRadius);
     }
     update();
-}
-
-void CaptureOverlay::showRadiusPopup()
-{
-    if (m_radiusPopup) { m_radiusPopup->close(); return; }
-    auto *popup = new QDialog(this, Qt::Popup | Qt::FramelessWindowHint);
-    m_radiusPopup = popup;
-    popup->setObjectName(QStringLiteral("roundRadiusPanel"));
-    popup->setAttribute(Qt::WA_DeleteOnClose);
-    popup->setStyleSheet(QStringLiteral("QDialog{background:#18181b;border:1px solid #27272a;}"
-                                        "QLabel{color:#fcfcfc;font-size:12px;}"));
-    auto *row = new QHBoxLayout(popup);
-    row->setContentsMargins(8, 6, 8, 6);
-    row->setSpacing(6);
-    auto *label = new QLabel(tr("圆角半径"), popup);
-    m_radiusSlider = new QSlider(Qt::Horizontal, popup);
-    m_radiusSlider->setObjectName(QStringLiteral("roundRadiusSlider"));
-    m_radiusSlider->setAccessibleName(tr("圆角半径"));
-    m_radiusSlider->setRange(0, 60);
-    m_radiusSlider->setPageStep(1);
-    m_radiusSlider->setFixedSize(128, 22);
-    m_radiusSlider->setFocusPolicy(Qt::NoFocus);
-    m_radiusSlider->setStyleSheet(darkSliderQss);
-    m_radiusValue = new QLabel(QString::number(m_roundRadius), popup);
-    m_radiusValue->setObjectName(QStringLiteral("roundRadiusValue"));
-    m_radiusValue->setFixedWidth(24);
-    m_radiusValue->setAlignment(Qt::AlignCenter);
-    row->addWidget(label);
-    row->addWidget(m_radiusSlider);
-    row->addWidget(m_radiusValue);
-    connect(m_radiusSlider, &QSlider::valueChanged, this, [this](int value) {
-        m_roundRadius = value;
-        if (value > 0) m_roundEnabled = true;   // Match the reference: a non-zero radius enables the button.
-        applyRoundSettings(true);
-    });
-    connect(popup, &QDialog::finished, this, [this] { if (isVisible()) setFocus(); });
-    popup->show();
-    popup->adjustSize();
-    const QPoint below = m_roundButton->mapToGlobal(QPoint(0, m_roundButton->height()));
-    const QScreen *screen = QGuiApplication::screenAt(below);
-    const QRect available = (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry();
-    const int y = below.y() + popup->height() <= available.bottom() + 1 ? below.y()
-        : qMax(available.top(), m_roundButton->mapToGlobal(QPoint()).y() - popup->height());
-    popup->move(qBound(available.left(), below.x(), available.right() + 1 - popup->width()), y);
 }
 
 QRect CaptureOverlay::nativeFromGlobal(const QRect &global) const
@@ -1605,7 +1723,7 @@ void CaptureOverlay::setSizeUnit(SizeUnit unit, bool persist)
     if (persist) {
         NamiSettings settings;
         settings.setValue(QStringLiteral("Capture/sizeUnit"),
-                          unit == SizeUnit::Dp ? QStringLiteral("dp") : QStringLiteral("px"));
+                          unit == SizeUnit::Dp ? QStringLiteral("dip") : QStringLiteral("px"));
     }
     updateTip();
 }
@@ -1619,8 +1737,6 @@ void CaptureOverlay::updateCustomSizeInputs()
     m_customY->setValue(shown.y());
     m_customWidth->setValue(qMax(1, shown.width()));
     m_customHeight->setValue(qMax(1, shown.height()));
-    if (m_customUnit) m_customUnit->setCurrentIndex(m_sizeUnit == SizeUnit::Dp ? 1 : 0);
-    if (m_customLock) m_customLock->setChecked(m_lockAspect);
     m_updatingCustom = false;
 }
 
@@ -1641,13 +1757,13 @@ static void applyDarkWindowChrome(QWidget *window)
     DwmSetWindowAttribute(hwnd, 36 /* DWMWA_TEXT_COLOR */, &titleText, sizeof(titleText));
     DwmSetWindowAttribute(hwnd, 34 /* DWMWA_BORDER_COLOR */, &borderColor, sizeof(borderColor));
     QPalette dark = window->palette();
-    dark.setColor(QPalette::Window, QColor(24, 24, 27));
-    dark.setColor(QPalette::Base, QColor(6, 6, 7));
-    dark.setColor(QPalette::WindowText, QColor(252, 252, 252));
-    dark.setColor(QPalette::Text, QColor(252, 252, 252));
-    dark.setColor(QPalette::ButtonText, QColor(252, 252, 252));
-    dark.setColor(QPalette::Mid, QColor(63, 63, 70));
-    dark.setColor(QPalette::Dark, QColor(39, 39, 42));
+    dark.setColor(QPalette::Window, Bar::surface);
+    dark.setColor(QPalette::Base, Bar::content);
+    dark.setColor(QPalette::WindowText, Bar::ink);
+    dark.setColor(QPalette::Text, Bar::ink);
+    dark.setColor(QPalette::ButtonText, Bar::ink);
+    dark.setColor(QPalette::Mid, Bar::divider);
+    dark.setColor(QPalette::Dark, Bar::divider);
     window->setPalette(dark);
 }
 
@@ -1671,111 +1787,126 @@ void CaptureOverlay::showCustomSizePopup()
     popup->setModal(false);
     popup->setAttribute(Qt::WA_DeleteOnClose, false);
     popup->setStyleSheet(QStringLiteral(
-        "QDialog{background:#18181b;}"
-        "QLabel{color:#a1a1aa;background:transparent;font-size:12px;}"
-        "QLabel#customSection{color:#fcfcfc;font-weight:600;}"
-        "QLabel#customHint{color:#a1a1aa;font-size:12px;}"
-        "QFrame#customCard{background:#060607;border:none;border-radius:12px;}"
-        "QSpinBox{color:#fcfcfc;background:#101013;border:1px solid #27272a;border-radius:8px;"
-        "padding:0 8px;min-height:30px;font-size:12px;selection-background-color:#0485f7;}"
-        "QSpinBox:hover{background:#151518;} QSpinBox:focus{border-color:#0485f7;}"
-        "QComboBox{color:#fcfcfc;background:#101013;border:1px solid #27272a;border-radius:8px;"
-        "padding:0 8px;min-height:30px;font-size:12px;}"
-        "QComboBox:hover{background:#151518;} QComboBox:focus{border-color:#0485f7;}"
+        "QLabel{color:#9c9da1;background:transparent;font-size:13px;}"
+        "QLabel#customSection{color:#9c9da1;font-weight:400;}"
+        "QLabel#customHint{color:#9c9da1;font-size:12px;}"
+        "QFrame#customDivider{background:#2b2d33;border:none;}"
+        "QFrame#customField{background:#111216;border:1px solid #2b2d33;border-radius:8px;}"
+        "QFrame#customField:hover{background:#222326;}"
+        "QLabel#customFieldLabel{color:#9c9da1;background:transparent;font-size:13px;}"
+        "QSpinBox{color:#f4f5f8;background:transparent;border:none;padding:0;min-height:30px;"
+        "font-size:14px;selection-background-color:#5e6ad2;}"
+        "QSpinBox:hover,QSpinBox:focus{background:transparent;border:none;}"
+        "QComboBox{color:#f4f5f8;background:#111216;border:1px solid #2b2d33;border-radius:8px;"
+        "padding:0 8px;min-height:30px;font-size:13px;}"
+        "QComboBox:hover{background:#222326;} QComboBox:focus{border-color:#5e6ad2;}"
         "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
         "QComboBox::down-arrow{image:url(:/icons/chevron_down_light.png);width:10px;height:10px;}"
-        "QComboBox QAbstractItemView{color:#fcfcfc;background:#18181b;border:1px solid #27272a;"
-        "border-radius:8px;padding:4px;outline:0;selection-background-color:#0485f7;"
+        "QComboBox QAbstractItemView{color:#f4f5f8;background:#18191d;border:1px solid #2b2d33;"
+        "border-radius:8px;padding:4px;outline:0;selection-background-color:#5e6ad2;"
         "selection-color:#ffffff;}"
         "QComboBox QAbstractItemView::item{min-height:26px;padding-left:10px;padding-right:8px;}"
         "QScrollBar:vertical{background:transparent;width:8px;margin:0;}"
-        "QScrollBar::handle:vertical{background:#3f3f46;border-radius:4px;min-height:20px;}"
+        "QScrollBar::handle:vertical{background:#35373e;border-radius:4px;min-height:20px;}"
         "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
-        "QCheckBox{color:#a1a1aa;background:transparent;font-size:12px;spacing:7px;}"
+        "QCheckBox{color:#f4f5f8;background:transparent;font-size:13px;spacing:7px;}"
         "QCheckBox::indicator{width:16px;height:16px;border:1px solid #3c3c3c;border-radius:4px;"
-        "background:#101013;}"
-        "QCheckBox::indicator:hover{border-color:#52525b;}"
-        "QCheckBox::indicator:checked{background:#0485f7;border-color:#0485f7;"
+        "background:#111216;}"
+        "QCheckBox::indicator:hover{border-color:#73757f;}"
+        "QCheckBox::indicator:checked{background:#5e6ad2;border-color:#5e6ad2;"
         "image:url(:/icons/check_light.png);}"
-        "QPushButton{color:#fcfcfc;background:#26262a;border:none;border-radius:8px;"
-        "padding:0 12px;min-height:30px;font-size:12px;}"
-        "QPushButton:hover{background:#303034;} QPushButton:pressed{background:#27272a;}"));
-
-    // Keep the native title bar draggable but match the dark card palette.
-    applyDarkWindowChrome(popup);
+        "QPushButton{color:#f4f5f8;background:#18191d;border:1px solid #2b2d33;border-radius:6px;"
+        "padding:0 8px;min-height:30px;font-size:13px;text-align:center;}"
+        "QPushButton#customPresetSave{text-align:center;}"
+        "QPushButton:hover{background:#222326;} QPushButton:pressed{background:#2b2d33;}"));
 
     auto *layout = new QVBoxLayout(popup);
-    layout->setContentsMargins(14, 14, 14, 14);
+    layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(10);
 
-    auto makeSpin = [popup](const QString &name, int minimum, int maximum, int width) {
-        auto *spin = new QSpinBox(popup);
+    auto makeField = [this, popup](const QString &name, int minimum, int maximum,
+                                   QPointer<QSpinBox> &out) {
+        auto *field = new QFrame(popup);
+        field->setObjectName(QStringLiteral("customField"));
+        field->setFixedSize(100, 34);
+        auto *row = new QHBoxLayout(field);
+        row->setContentsMargins(2, 0, 2, 0);
+        row->setSpacing(0);
+        auto *spin = new QSpinBox(field);
         spin->setObjectName(name);
         spin->setRange(minimum, maximum);
-        spin->setAlignment(Qt::AlignRight);
+        spin->setAlignment(Qt::AlignCenter);
         spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
-        spin->setFixedWidth(width);
-        return spin;
+        spin->setFrame(false);
+        spin->setFixedHeight(30);
+        spin->installEventFilter(this);
+        for (QWidget *child : spin->findChildren<QWidget *>()) child->installEventFilter(this);
+        row->addWidget(spin, 1, Qt::AlignVCenter);
+        auto *steps = new QWidget(field);
+        auto *stepLayout = new QVBoxLayout(steps);
+        stepLayout->setContentsMargins(0, 0, 0, 0);
+        stepLayout->setSpacing(0);
+        const auto makeStep = [steps, spin](const QString &objectName, Icon icon, auto step) {
+            auto *button = new QToolButton(steps);
+            button->setObjectName(objectName);
+            button->setIcon(makeIcon(icon, 9, true));
+            button->setIconSize(QSize(9, 9));
+            button->setFixedSize(16, 15);
+            button->setAutoRaise(true);
+            button->setFocusPolicy(Qt::NoFocus);
+            button->setCursor(Qt::PointingHandCursor);
+            button->setStyleSheet(QStringLiteral(
+                "QToolButton{background:transparent;border:none;padding:0;}"
+                "QToolButton:hover{background:#222326;border-radius:2px;}"));
+            QObject::connect(button, &QToolButton::clicked, spin, step);
+            return button;
+        };
+        stepLayout->addWidget(makeStep(QStringLiteral("customStepUp"), Icon::ChevronUp, &QSpinBox::stepUp));
+        stepLayout->addWidget(makeStep(QStringLiteral("customStepDown"), Icon::ChevronDown, &QSpinBox::stepDown));
+        row->addWidget(steps, 0, Qt::AlignVCenter);
+        out = spin;
+        return field;
     };
-    m_customX = makeSpin(QStringLiteral("customX"), -999999, 999999, 84);
+    auto makeLetter = [popup](const QString &name, const QString &text) {
+        auto *label = new QLabel(text, popup);
+        label->setObjectName(name);
+        label->setAlignment(Qt::AlignCenter);
+        label->setFixedWidth(12);
+        label->setStyleSheet(QStringLiteral(
+            "QLabel{color:#9c9da1;background:transparent;font-size:12px;}"));
+        return label;
+    };
+    QFrame *xField = makeField(QStringLiteral("customX"), -999999, 999999, m_customX);
+    QFrame *yField = makeField(QStringLiteral("customY"), -999999, 999999, m_customY);
+    QFrame *wField = makeField(QStringLiteral("customWidth"), 4, 99999, m_customWidth);
+    QFrame *hField = makeField(QStringLiteral("customHeight"), 4, 99999, m_customHeight);
+    QLabel *xLetter = makeLetter(QStringLiteral("customXLetter"), QStringLiteral("X"));
+    QLabel *yLetter = makeLetter(QStringLiteral("customYLetter"), QStringLiteral("Y"));
+    QLabel *wLetter = makeLetter(QStringLiteral("customWidthLetter"), QStringLiteral("W"));
+    QLabel *hLetter = makeLetter(QStringLiteral("customHeightLetter"), QStringLiteral("H"));
     m_customX->setAccessibleName(tr("区域横向位置"));
-    m_customX->setPrefix(QStringLiteral("X  "));
-    m_customY = makeSpin(QStringLiteral("customY"), -999999, 999999, 84);
     m_customY->setAccessibleName(tr("区域纵向位置"));
-    m_customY->setPrefix(QStringLiteral("Y  "));
-    m_customWidth = makeSpin(QStringLiteral("customWidth"), 4, 99999, 70);
     m_customWidth->setAccessibleName(tr("区域宽度"));
-    m_customHeight = makeSpin(QStringLiteral("customHeight"), 4, 99999, 70);
     m_customHeight->setAccessibleName(tr("区域高度"));
-    m_customUnit = new QComboBox(popup);
-    m_customUnit->setObjectName(QStringLiteral("customUnit"));
-    m_customUnit->setAccessibleName(tr("尺寸单位"));
-    m_customUnit->addItems({QStringLiteral("px"), QStringLiteral("dp")});
-    m_customUnit->setFixedWidth(58);
-    m_customLock = new QCheckBox(tr("锁定长宽比"), popup);
-    m_customLock->setObjectName(QStringLiteral("customLockAspect"));
-    m_customLock->setAccessibleName(tr("锁定长宽比"));
-
-    auto *card = new QFrame(popup);
-    card->setObjectName(QStringLiteral("customCard"));
-    auto *cardLayout = new QVBoxLayout(card);
-    cardLayout->setContentsMargins(12, 12, 12, 12);
-    cardLayout->setSpacing(10);
-
     auto *positionRow = new QHBoxLayout;
     positionRow->setSpacing(8);
-    auto *positionLabel = new QLabel(tr("位置"), card);
+    auto *positionLabel = new QLabel(tr("位置"), popup);
     positionLabel->setObjectName(QStringLiteral("customSection"));
     positionRow->addWidget(positionLabel);
-    positionRow->addWidget(m_customX);
-    positionRow->addWidget(m_customY);
-    positionRow->addStretch();
-    cardLayout->addLayout(positionRow);
+    positionRow->addWidget(xLetter);
+    positionRow->addWidget(xField);
+    positionRow->addWidget(yLetter);
+    positionRow->addWidget(yField);
 
     auto *sizeRow = new QHBoxLayout;
     sizeRow->setSpacing(8);
-    auto *sizeLabel = new QLabel(tr("大小"), card);
+    auto *sizeLabel = new QLabel(tr("大小"), popup);
     sizeLabel->setObjectName(QStringLiteral("customSection"));
-    auto *times = new QLabel(QStringLiteral("×"), card);
-    times->setAlignment(Qt::AlignCenter);
     sizeRow->addWidget(sizeLabel);
-    sizeRow->addWidget(m_customWidth);
-    sizeRow->addWidget(times);
-    sizeRow->addWidget(m_customHeight);
-    sizeRow->addWidget(m_customUnit);
-    sizeRow->addStretch();
-    cardLayout->addLayout(sizeRow);
-
-    auto *hintRow = new QHBoxLayout;
-    hintRow->setSpacing(8);
-    auto *hint = new QLabel(tr("dp = px ÷ 屏幕缩放比"), card);
-    hint->setObjectName(QStringLiteral("customHint"));
-    auto *hintSpacer = new QSpacerItem(38, 0);
-    hintRow->addSpacerItem(hintSpacer);
-    hintRow->addWidget(hint);
-    hintRow->addStretch();
-    hintRow->addWidget(m_customLock);
-    cardLayout->addLayout(hintRow);
+    sizeRow->addWidget(wLetter);
+    sizeRow->addWidget(wField);
+    sizeRow->addWidget(hLetter);
+    sizeRow->addWidget(hField);
 
     auto *presetRow = new QHBoxLayout;
     presetRow->setSpacing(8);
@@ -1786,22 +1917,28 @@ void CaptureOverlay::showCustomSizePopup()
     positionLabel->setFixedWidth(sectionWidth);
     sizeLabel->setFixedWidth(sectionWidth);
     presetLabel->setFixedWidth(sectionWidth);
-    hintSpacer->changeSize(sectionWidth + 8, 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
-    m_presetCombo = new QComboBox(popup);
+    m_presetCombo = new CenteredCombo(popup);
     m_presetCombo->setObjectName(QStringLiteral("customPreset"));
     m_presetCombo->setAccessibleName(tr("常用尺寸和已保存区域"));
-    m_presetCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    m_presetCombo->setMinimumWidth(190);
+    m_presetCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    m_presetCombo->setFixedSize(160, 32);
+    m_presetCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_presetCombo->setMinimumContentsLength(8);
     m_presetCombo->setMaxVisibleItems(16);
     auto *savePreset = new QPushButton(tr("保存当前"), popup);
     savePreset->setObjectName(QStringLiteral("customPresetSave"));
     savePreset->setToolTip(tr("保存当前区域为预设"));
-    savePreset->setFixedHeight(30);
+    savePreset->setFixedSize(80, 32);
     presetRow->addWidget(presetLabel);
     presetRow->addWidget(m_presetCombo, 1);
     presetRow->addWidget(savePreset);
 
-    layout->addWidget(card);
+    auto *divider = new QFrame(popup);
+    divider->setObjectName(QStringLiteral("customDivider"));
+    divider->setFixedHeight(1);
+    layout->addWidget(divider);
+    layout->addLayout(positionRow);
+    layout->addLayout(sizeRow);
     layout->addLayout(presetRow);
 
     connect(m_customX, QOverload<int>::of(&QSpinBox::valueChanged), this, [this] {
@@ -1826,21 +1963,8 @@ void CaptureOverlay::showCustomSizePopup()
         }
         customFieldsChanged();
     });
-    connect(m_customLock, &QCheckBox::toggled, this, [this](bool locked) {
-        m_lockAspect = locked;
-        if (locked && m_customWidth && m_customHeight && m_customHeight->value() > 0)
-            m_aspect = qreal(m_customWidth->value()) / m_customHeight->value();
-        updateTip();
-    });
-    connect(m_customUnit, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
-        if (m_updatingCustom) return;
-        const SizeUnit next = index == 1 ? SizeUnit::Dp : SizeUnit::Px;
-        if (next == m_sizeUnit) return;
-        setSizeUnit(next, true);
-        updateCustomSizeInputs();
-    });
     connect(m_presetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
-        if (!m_updatingCustom && index > 0) applyCustomPreset(index);
+        if (!m_updatingCustom && index >= 0) applyCustomPreset(index);
     });
     connect(savePreset, &QPushButton::clicked, this, &CaptureOverlay::saveCurrentPreset);
     connect(popup, &QDialog::finished, this, [this] {
@@ -1850,13 +1974,23 @@ void CaptureOverlay::showCustomSizePopup()
     loadSizePresets();
     refreshPresetCombo();
     updateCustomSizeInputs();
+    styleDialog(popup);
+    if (auto *surface = popup->findChild<QWidget *>(QStringLiteral("dialogSurface"))) {
+        surface->setStyleSheet(QStringLiteral(
+            "QWidget#dialogSurface{background:#18191d;border:1px solid #2b2d33;border-radius:8px;}"
+            "QWidget#dialogContent{background:transparent;border:none;}"));
+        if (auto *column = surface->layout()) {
+            column->setContentsMargins(16, 4, 16, 16);
+            column->setSpacing(4);
+        }
+    }
     popup->show();
     popup->adjustSize();
-    const QPoint below = m_sizeTip->mapToGlobal(QPoint(0, m_sizeTip->height()));
+    const QPoint below = m_sizeBar->mapToGlobal(QPoint(0, m_sizeBar->height()));
     const QScreen *screen = QGuiApplication::screenAt(below);
     const QRect available = (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry();
     const int y = below.y() + popup->height() <= available.bottom() + 1 ? below.y()
-        : qMax(available.top(), m_sizeTip->mapToGlobal(QPoint()).y() - popup->height());
+        : qMax(available.top(), m_sizeBar->mapToGlobal(QPoint()).y() - popup->height());
     popup->move(qBound(available.left(), below.x(), available.right() + 1 - popup->width()), y);
 }
 
@@ -1874,7 +2008,7 @@ void CaptureOverlay::customFieldsChanged()
     if (m_lockAspect && m_sel.height() > 0) m_aspect = qreal(m_sel.width()) / m_sel.height();
     if (m_presetCombo) {
         const QSignalBlocker block(m_presetCombo);
-        m_presetCombo->setCurrentIndex(0);
+        m_presetCombo->setCurrentIndex(-1);
     }
     m_mode = Adjusting;
     m_hover = {};
@@ -1888,7 +2022,7 @@ void CaptureOverlay::customFieldsChanged()
 
 void CaptureOverlay::applyCustomPreset(int index)
 {
-    if (index <= 0 || index >= (m_presetCombo ? m_presetCombo->count() : 0) || m_sel.isNull())
+    if (index < 0 || index >= (m_presetCombo ? m_presetCombo->count() : 0) || m_sel.isNull())
         return;
     const QVariant data = m_presetCombo->itemData(index);
     QRect global;
@@ -1950,7 +2084,6 @@ void CaptureOverlay::refreshPresetCombo(const QString &selected)
     if (!m_presetCombo) return;
     m_updatingCustom = true;
     m_presetCombo->clear();
-    m_presetCombo->addItem(tr("选择预设…"));
     for (const QSize &size : kCommonSizePresets) {
         m_presetCombo->addItem(QStringLiteral("%1 × %2 px").arg(size.width()).arg(size.height()),
                                size);
@@ -1960,14 +2093,14 @@ void CaptureOverlay::refreshPresetCombo(const QString &selected)
         if (auto *model = qobject_cast<QStandardItemModel *>(m_presetCombo->model())) {
             if (auto *item = model->item(m_presetCombo->count() - 1)) {
                 item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
-                item->setForeground(QColor(0x71, 0x71, 0x7a));
+                item->setForeground(Bar::dim);
             }
         }
         for (const SizePreset &preset : m_sizePresets)
             m_presetCombo->addItem(preset.name, preset.global);
     }
-    const int at = selected.isEmpty() ? 0 : m_presetCombo->findText(selected);
-    m_presetCombo->setCurrentIndex(at > 0 ? at : 0);
+    const int at = selected.isEmpty() ? -1 : m_presetCombo->findText(selected);
+    m_presetCombo->setCurrentIndex(at);
     m_updatingCustom = false;
 }
 
@@ -1984,14 +2117,14 @@ void CaptureOverlay::saveCurrentPreset()
     dialog.setInputMode(QInputDialog::TextInput);
     dialog.setWindowFlag(Qt::WindowStaysOnTopHint, true);
     dialog.setStyleSheet(QStringLiteral(
-        "QDialog{background:#18181b;}"
-        "QLabel{color:#fcfcfc;font-size:12px;}"
-        "QLineEdit{color:#fcfcfc;background:#101013;border:1px solid #27272a;border-radius:8px;"
-        "padding:0 8px;min-height:30px;font-size:12px;selection-background-color:#0485f7;}"
-        "QLineEdit:focus{border-color:#0485f7;}"
-        "QPushButton{color:#fcfcfc;background:#26262a;border:none;border-radius:8px;"
-        "padding:0 12px;min-height:30px;font-size:12px;}"
-        "QPushButton:hover{background:#303034;}"));
+        "QDialog{background:#18191d;}"
+        "QLabel{color:#f4f5f8;font-size:14px;}"
+        "QLineEdit{color:#f4f5f8;background:#111216;border:1px solid #2b2d33;border-radius:8px;"
+        "padding:0 8px;min-height:30px;font-size:14px;selection-background-color:#5e6ad2;}"
+        "QLineEdit:focus{border-color:#5e6ad2;}"
+        "QPushButton{color:#f4f5f8;background:#222326;border:none;border-radius:8px;"
+        "padding:0 12px;min-height:30px;font-size:14px;text-align:center;}"
+        "QPushButton:hover{background:#2b2d33;}"));
     applyDarkWindowChrome(&dialog);
     if (dialog.exec() == QDialog::Accepted) saveSizePreset(dialog.textValue());
 }
@@ -2046,10 +2179,9 @@ void CaptureOverlay::beginDesktopPreview()
     }
     cancelDetection();
     if (m_detector) m_detector->stop();
-    if (m_radiusPopup) m_radiusPopup->close();
     if (m_sizePopup) m_sizePopup->close();
     m_hover = QRect();
-    m_sizeTip->hide();
+    m_sizeBar->hide();
     m_inspector->hide();
     m_toolOptions->hide();
     if (m_refreshAnimation) m_refreshAnimation->start();
@@ -2068,12 +2200,11 @@ void CaptureOverlay::refreshScreenshot()
     }
     cancelDetection();
     if (m_detector) m_detector->stop();
-    if (m_radiusPopup) m_radiusPopup->close();
     if (m_sizePopup) m_sizePopup->close();
     if (m_colorDialog) m_colorDialog->close();
     m_toolOptions->hide();
     m_inspector->hide();
-    m_sizeTip->hide();
+    m_sizeBar->hide();
     const bool customVisible = m_customSizePopup && m_customSizePopup->isVisible();
     if (customVisible) m_customSizePopup->hide();
 
@@ -2368,7 +2499,7 @@ void CaptureOverlay::showOutputError(const QString &message)
 {
     m_sizeTip->setText(message);
     tipPosition(m_sel.center());
-    m_sizeTip->show();
+    m_sizeBar->show();
     activateWindow();
     setFocus();
 }

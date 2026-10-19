@@ -585,28 +585,34 @@ void LongCapture::buildUi()
     m_bar->setAttribute(Qt::WA_ShowWithoutActivating);
     m_bar->installEventFilter(this);
     m_bar->setStyleSheet(QStringLiteral(
-        "QToolButton{color:#fcfcfc;background:transparent;border:none;border-radius:4px;padding:5px;}"
-        "QToolButton:hover{background-color:#26262a;}"
-        "QToolButton:pressed{background-color:#27272a;}"
+        "QToolButton{color:#f4f5f8;background:transparent;border:none;border-radius:4px;padding:5px;text-align:center;}"
+        "QToolButton:hover{background-color:#222326;}"
+        "QToolButton:pressed{background-color:#2b2d33;}"
         "QToolButton:checked{background:transparent;}"
-        "QToolButton:checked:hover{background-color:#26262a;}"
-        "QFrame#barSeparator{background-color:#27272a;margin:0px 6px;border:none;}"
-        "QLabel{color:#a1a1aa;font-size:12px;background:transparent;padding:0px 4px;}"
-        "QComboBox{color:#fcfcfc;background:#060607;border:none;border-radius:12px;"
-        "padding:1px 4px 1px 12px;font-size:12px;}"
-        "QComboBox:hover{background:#0c0c0e;}"
+        "QToolButton:checked:hover{background-color:#222326;}"
+        "QFrame#barSeparator{background-color:#2b2d33;margin:0px 6px;border:none;}"
+        "QLabel{color:#9c9da1;font-size:12px;background:transparent;padding:0px 4px;}"
+        "QComboBox{color:#f4f5f8;background:#0c0d10;border:none;border-radius:12px;"
+        "padding:1px 4px 1px 12px;font-size:13px;}"
+        "QComboBox:hover{background:#222326;}"
         "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
         "QComboBox::down-arrow{image:none;width:0px;height:0px;}"
-        "QComboBox QAbstractItemView{outline:0px;color:#fcfcfc;background:#18181b;border:1px solid #27272a;"
-        "padding:4px;selection-background-color:#0485f7;selection-color:#fcfcfc;}"));
+        "QComboBox QAbstractItemView{outline:0px;color:#f4f5f8;background:#18191d;border:1px solid #2b2d33;"
+        "padding:4px;selection-background-color:#5e6ad2;selection-color:#ffffff;}"));
     auto *lay = new QHBoxLayout(m_bar);
-    lay->setContentsMargins(7, 6, 7, 7);             // 42px surface inside a 1px rim.
+    lay->setContentsMargins(12, 7, 12, 7);           // 42px surface around compact controls.
     lay->setSpacing(4);
     m_grip = new QWidget;
     m_grip->setFixedSize(16, Bar::button);
     m_grip->setCursor(Qt::SizeAllCursor);
     m_grip->installEventFilter(this);
     m_label = new QLabel;
+    m_feedback = new QLabel(nullptr,Qt::Tool|Qt::FramelessWindowHint|Qt::WindowStaysOnTopHint|Qt::WindowDoesNotAcceptFocus|Qt::WindowTransparentForInput);
+    m_feedback->setObjectName(QStringLiteral("longCaptureFeedback"));
+    m_feedback->setAttribute(Qt::WA_TranslucentBackground);m_feedback->setAttribute(Qt::WA_ShowWithoutActivating);
+    m_feedback->setStyleSheet(QStringLiteral("QLabel{background:#18191d;color:#9c9da1;border:1px solid #2b2d33;border-radius:8px;padding:8px 16px;font-size:12px;}"));
+    m_feedbackAffinity=SetWindowDisplayAffinity(reinterpret_cast<HWND>(m_feedback->winId()),WDA_EXCLUDEFROMCAPTURE);
+
     m_axis = new QWidget;
     m_axis->setFixedSize(Bar::button, Bar::button);
     m_axis->setToolTip(tr("移动截图区域"));
@@ -632,10 +638,10 @@ void LongCapture::buildUi()
     m_cropPanel->installEventFilter(this);
     m_cropPanel->setStyleSheet(QStringLiteral(
         "QToolButton{background:transparent;border:none;border-radius:4px;padding:5px;}"
-        "QToolButton:hover{background-color:#26262a;}"
-        "QToolButton:pressed{background-color:#27272a;}"
-        "QFrame#barSeparator{background-color:#27272a;margin:0px 6px;border:none;}"
-        "QCheckBox{color:#fcfcfc;font-size:12px;background:transparent;spacing:6px;}"));
+        "QToolButton:hover{background-color:#222326;}"
+        "QToolButton:pressed{background-color:#2b2d33;}"
+        "QFrame#barSeparator{background-color:#2b2d33;margin:0px 6px;border:none;}"
+        "QCheckBox{color:#f4f5f8;font-size:13px;background:transparent;spacing:6px;}"));
     auto *cropLay = new QHBoxLayout(m_cropPanel);
     cropLay->setContentsMargins(8, 4, 8, 4);
     cropLay->setSpacing(4);
@@ -735,6 +741,7 @@ void LongCapture::setUiVisible(bool v)
     // The mask's hole is fully transparent over the region, so it never needs to step aside.
     apply(m_bar, m_barAffinity, m_hidBar);
     apply(m_preview, m_previewAffinity, m_hidPreview);
+    apply(m_feedback, m_feedbackAffinity, m_hidFeedback);
     const bool panelAside = m_hidCropPanel;
     apply(m_cropPanel, false, m_hidCropPanel);
     if (panelAside && !m_hidCropPanel) refreshCropPanel();   // Hover may have ended during the grab.
@@ -762,10 +769,28 @@ void LongCapture::updateButtons()
     if (m_autoUp) m_autoUp->setEnabled(m_autoScroll <= 0);
     if (m_auto) m_auto->setEnabled(m_autoScroll >= 0);
     if (m_cropPanel && m_cropPanel->isVisible()) placeCropPanel();
+    updateFeedback();
+}
+
+void LongCapture::updateFeedback()
+{
+    if(!m_feedback)return;
+    if(m_suspended||m_done||(!m_alignmentLost&&!m_autoScroll)){m_feedback->hide();return;}
+    m_feedback->setText(m_alignmentLost?tr("图片匹配失败，请返回最后成功位置后继续滚动。")
+        :m_vertical?(m_autoScroll>0?tr("自动向下滚动"):tr("自动向上滚动"))
+                   :(m_autoScroll>0?tr("自动向右滚动"):tr("自动向左滚动")));
+    m_feedback->adjustSize();
+    const QRect available=screenFor(m_region)->availableGeometry();
+    const int x=m_region.center().x()-m_feedback->width()/2;
+    const int y=m_alignmentLost?m_region.bottom()-m_feedback->height()-16:m_bar->geometry().bottom()+12;
+    m_feedback->move(qBound(available.left(),x,qMax(available.left(),available.right()+1-m_feedback->width())),
+                     qBound(available.top(),y,qMax(available.top(),available.bottom()+1-m_feedback->height())));
+    m_feedback->show();
 }
 
 void LongCapture::updatePreview()
 {
+    updateFeedback();
     const int total = logicalLength();
     if (m_done || total <= 0 || m_width <= 0) return;
     if (!m_preview) m_preview = new LongPreview;
@@ -1070,7 +1095,7 @@ void LongCapture::suspend()
     m_suspended = true;
     setAutoScroll(0);
     m_cropHover = m_panelHover = false;
-    for (QWidget *w : {m_mask, m_bar, static_cast<QWidget *>(m_preview), m_cropPanel}) if (w) w->hide();
+    for (QWidget *w : {m_mask, m_bar, static_cast<QWidget *>(m_preview), m_cropPanel, static_cast<QWidget *>(m_feedback)}) if (w) w->hide();
 }
 
 void LongCapture::resume()
@@ -1101,7 +1126,7 @@ void LongCapture::saveCapture()
     // The dialog is not topmost; the session steps aside and stops capturing while it is open.
     m_paused = true;
     setAutoScroll(0);
-    for (QWidget *w : {m_mask, m_bar, static_cast<QWidget *>(m_preview), m_cropPanel}) if (w) w->hide();
+    for (QWidget *w : {m_mask, m_bar, static_cast<QWidget *>(m_preview), m_cropPanel, static_cast<QWidget *>(m_feedback)}) if (w) w->hide();
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     const QString path = QFileDialog::getSaveFileName(
         nullptr, tr("保存图片"), dir + QStringLiteral("/longshot.png"),
@@ -1160,6 +1185,8 @@ void LongCapture::openTextCard(bool translate, bool barcode)
 
 void LongCapture::cleanupUi()
 {
+    if(m_feedback){m_feedback->hide();m_feedback->deleteLater();m_feedback=nullptr;}
+
     if (m_ocrDialog) m_ocrDialog->close();
     if (m_notice) m_notice->close();
     if (m_cropTimer) m_cropTimer->stop();

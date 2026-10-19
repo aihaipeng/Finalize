@@ -33,6 +33,7 @@ public:
     explicit PinWindow(const QPixmap &pix, const QRect &displayRect);
     ~PinWindow() override;
     static int testPlacement();
+    static int testThemeUi(const QString &previewPath);
     QMenu *createContextMenu();
     // The window keeps a transparent band around the image for its painted shadow.
     static constexpr int kShadowMargin = kPinShadowMargin;

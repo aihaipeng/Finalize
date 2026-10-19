@@ -1,9 +1,11 @@
+#include "shared/dialog_chrome.h"
 #include "history/history_dialog.h"
 #include "platform/output.h"
 #include "shared/settings.h"
 #include "shared/widgets.h"
 
 #include <QAbstractItemView>
+#include <QApplication>
 #include <QCheckBox>
 #include <QColor>
 #include <QCoreApplication>
@@ -35,24 +37,29 @@ HistoryDialog::HistoryDialog(QWidget *parent)
     resize(920, 620);
     setMinimumSize(640, 420);
     setStyleSheet(QStringLiteral(
-        "QDialog { background:#18181b; }"
-        "QListWidget { background:#101013; border:1px solid #27272a; border-radius:8px;"
-        " padding:6px; color:#fcfcfc; }"
-        "QListWidget::item { border-radius:6px; padding:4px; }"
-        "QListWidget::item:selected { background:#264f78; }"
-        "QCheckBox, QLabel { color:#fcfcfc; }"
-        "QPushButton { background:#27272a; color:#fcfcfc; border:1px solid #3a3a40;"
-        " border-radius:6px; padding:6px 12px; }"
-        "QPushButton:hover { background:#3a3a40; }"
-        "QPushButton:disabled { color:#71717a; }"));
+        "QDialog { background:#18191d; }"
+        "QListWidget { background:#111216; border:1px solid #2b2d33; border-radius:8px;"
+        " padding:6px; color:#f4f5f8; }"
+        "QListWidget::item { background:#18191d; border:1px solid #2b2d33; border-radius:6px; padding:4px; }"
+        "QListWidget::item:selected { background:#32345b; border-color:#5e6ad2; }"
+        "QCheckBox, QLabel { color:#f4f5f8; }"
+        "QPushButton { background:#18191d; color:#f4f5f8; border:1px solid #2b2d33;"
+        " border-radius:6px; padding:6px 12px; font-size:14px; text-align:center; }"
+        "QPushButton:hover { background:#222326; }"
+        "QPushButton:disabled { color:#73757f; }"));
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(18, 16, 18, 16);
     layout->setSpacing(10);
 
+    auto *header = new QHBoxLayout;
+    auto *brand=new QLabel(QStringLiteral("N"),this);brand->setStyleSheet(QStringLiteral("color:#5e6ad2;font-size:14px;font-weight:600;"));
+    header->addWidget(brand);header->addWidget(new QLabel(tr("截图历史"),this));header->addStretch();
+    auto *headerClose=new QToolButton(this);headerClose->setIcon(cardIcon(Icon::CardClose));headerClose->setFixedSize(28,28);
+    connect(headerClose,&QToolButton::clicked,this,&QDialog::reject);header->addWidget(headerClose);layout->addLayout(header);
     auto *top = new QHBoxLayout;
     auto *title = new QLabel(tr("截图历史"), this);
-    title->setStyleSheet(QStringLiteral("font-size:16px; font-weight:600;"));
+    title->setStyleSheet(QStringLiteral("font-size:20px; font-weight:600;"));
     top->addWidget(title);
     top->addSpacing(16);
     m_enabled = new QCheckBox(tr("记录截图历史（仅保存在本机）"), this);
@@ -68,14 +75,21 @@ HistoryDialog::HistoryDialog(QWidget *parent)
     m_list->setMovement(QListView::Static);
     m_list->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_list->setIconSize(QSize(176, 110));
-    m_list->setGridSize(QSize(200, 150));
+    m_list->setGridSize(QSize(208, 192));
     m_list->setSpacing(6);
     m_list->setUniformItemSizes(true);
+    m_empty = new QLabel(tr("截图历史为空\n开启记录后，新截图将显示在这里。"), m_list->viewport());
+    m_empty->setObjectName(QStringLiteral("historyEmpty"));
+    m_empty->setAlignment(Qt::AlignCenter);
+    m_empty->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_empty->setStyleSheet(QStringLiteral("color:#9c9da1;font-size:14px;"));
+    auto *emptyLayout = new QVBoxLayout(m_list->viewport());
+    emptyLayout->addWidget(m_empty);
     layout->addWidget(m_list, 1);
 
     auto *bottom = new QHBoxLayout;
     m_status = new QLabel(this);
-    m_status->setStyleSheet(QStringLiteral("color:#8b8b94;"));
+    m_status->setStyleSheet(QStringLiteral("color:#9c9da1;font-size:12px;"));
     bottom->addWidget(m_status);
     bottom->addStretch();
 
@@ -85,8 +99,11 @@ HistoryDialog::HistoryDialog(QWidget *parent)
     m_delete = new QPushButton(makeIcon(Icon::Cancel, 16, true), tr("删除"), this);
     m_clear = new QPushButton(tr("清空"), this);
     auto *close = new QPushButton(tr("关闭"), this);
-    for (QPushButton *button : {m_pin, m_copy, m_save, m_delete, m_clear, close})
+    for (QPushButton *button : {m_pin, m_copy, m_save, m_delete, m_clear, close}) {
+        button->setFixedHeight(32);
+        button->setMinimumWidth(72);
         bottom->addWidget(button);
+    }
     layout->addLayout(bottom);
 
     connect(m_enabled, &QCheckBox::toggled, this, [this](bool enabled) {
@@ -102,6 +119,7 @@ HistoryDialog::HistoryDialog(QWidget *parent)
     connect(m_clear, &QPushButton::clicked, this, &HistoryDialog::clearAll);
     connect(close, &QPushButton::clicked, this, &QDialog::close);
 
+    styleDialog(this, false);
     refresh();
 }
 
@@ -127,9 +145,9 @@ void HistoryDialog::refresh()
         item->setData(Qt::UserRole, entry.id);
         item->setText(entry.created.toLocalTime().toString(QStringLiteral("MM-dd HH:mm"))
                       + QLatin1Char('\n')
-                      + QStringLiteral("%1 × %2").arg(entry.width).arg(entry.height));
+                      + tr("%1 × %2 · %3").arg(entry.width).arg(entry.height).arg(QLocale().formattedDataSize(entry.bytes)));
         item->setTextAlignment(Qt::AlignHCenter);
-        item->setSizeHint(QSize(196, 146));
+        item->setSizeHint(QSize(196, 180));
         item->setToolTip(entry.created.toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
                          + QLatin1Char('\n')
                          + tr("%1 × %2 · %3").arg(entry.width).arg(entry.height)
@@ -145,6 +163,7 @@ void HistoryDialog::refresh()
     m_status->setText(entries.isEmpty()
             ? tr("暂无历史截图")
             : tr("%1 项 · %2").arg(entries.size()).arg(QLocale().formattedDataSize(bytes)));
+    m_empty->setVisible(entries.isEmpty());
     updateActions();
 }
 
@@ -226,10 +245,12 @@ void HistoryDialog::removeSelected()
     for (QListWidgetItem *item : m_list->selectedItems())
         ids.append(item->data(Qt::UserRole).toLongLong());
     if (ids.isEmpty()) return;
-    if (QMessageBox::question(this, tr("删除历史"),
-                              tr("确定删除选中的 %1 项历史记录？应用副本会被删除，用户保存的图片不受影响。")
-                                      .arg(ids.size()))
-            != QMessageBox::Yes)
+    QMessageBox confirm(QMessageBox::Warning, tr("删除历史"), tr("删除所选截图？"),
+                        QMessageBox::Yes | QMessageBox::No, this);
+    confirm.setInformativeText(tr("将从本机历史中删除所选的 %1 张截图。此操作无法撤销。")
+                                   .arg(ids.size()));
+    confirm.setDefaultButton(QMessageBox::No);
+    if (confirm.exec() != QMessageBox::Yes)
         return;
     for (const qint64 id : ids) HistoryStore::remove(id);
     refresh();
@@ -246,7 +267,7 @@ void HistoryDialog::clearAll()
     refresh();
 }
 
-int HistoryDialog::testUi()
+int HistoryDialog::testUi(const QString &previewPath)
 {
     bool pass = true;
     const auto check = [&pass](bool condition, const char *message) {
@@ -279,6 +300,32 @@ int HistoryDialog::testUi()
         check(enabled != nullptr && enabled->isChecked(), "dialog reflects the enabled switch");
         check(dialog.windowTitle() == QCoreApplication::translate("HistoryDialog", "截图历史"),
               "dialog title is translated");
+        if (!previewPath.isEmpty()) {
+            for (int i = 0; i < 7; ++i) HistoryStore::record(image);
+            HistoryStore::waitForPending();
+            dialog.refresh();
+            list->setCurrentRow(0);
+            dialog.show();
+            QApplication::processEvents();
+            check(list->count() == 8 && !dialog.m_empty->isVisible(), "populated history hides the empty hint");
+            check(list->visualItemRect(list->item(0)).top() == list->visualItemRect(list->item(3)).top()
+                      && list->visualItemRect(list->item(7)).bottom() < list->viewport()->height(),
+                  "eight history items form four columns and remain visible without scrolling");
+            check(dialog.grab().save(previewPath + QStringLiteral("-history.png")), "save the populated history preview");
+            { const QSignalBlocker blocker(enabled);enabled->setChecked(false); }
+            check(dialog.grab().save(previewPath+QStringLiteral("-38-history-off.png")),"save history with recording disabled");
+            { const QSignalBlocker blocker(enabled);enabled->setChecked(true); }
+            QMessageBox confirm(QMessageBox::Warning,tr("删除历史"),tr("删除所选截图？"),QMessageBox::Yes|QMessageBox::No,&dialog);
+            confirm.setInformativeText(tr("将从本机历史中删除所选的 %1 张截图。此操作无法撤销。").arg(2));
+            confirm.setDefaultButton(QMessageBox::No);
+            confirm.show();QApplication::processEvents();
+            check(confirm.grab().save(previewPath+QStringLiteral("-39-history-confirm.png")),"save the delete confirmation without deleting data");confirm.reject();
+            HistoryStore::clear();
+            dialog.refresh();
+            QApplication::processEvents();
+            check(dialog.m_empty->isVisible(), "empty history explains how to record new captures");
+            check(dialog.grab().save(previewPath + QStringLiteral("-history-empty.png")), "save the empty history preview");
+        }
     }
 
     HistoryStore::clear();

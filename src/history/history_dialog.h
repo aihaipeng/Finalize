@@ -18,7 +18,7 @@ public:
     explicit HistoryDialog(QWidget *parent = nullptr);
 
     void setRecordingEnabled(bool enabled);
-    static int testUi();
+    static int testUi(const QString &previewPath = {});
 
 signals:
     void pinRequested(const QImage &image);
@@ -36,7 +36,7 @@ private:
 
     QCheckBox *m_enabled = nullptr;
     QListWidget *m_list = nullptr;
-    QLabel *m_status = nullptr;
+    QLabel *m_status = nullptr, *m_empty = nullptr;
     QPushButton *m_pin = nullptr;
     QPushButton *m_copy = nullptr;
     QPushButton *m_save = nullptr;
