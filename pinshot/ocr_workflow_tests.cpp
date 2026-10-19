@@ -296,11 +296,23 @@ int CaptureOverlay::testOcr(const QString &previewPath)
         text->setTextCursor(pick);
     }
     const QVector<int> lit=zoomView->highlighted();
+    const QList<QTextEdit::ExtraSelection> textMarks=text->extraSelections();
     const int helloFirst=QStringLiteral("截图文字识别").size();
-    check(lit==QVector<int>({helloFirst,helloFirst+1,helloFirst+2,helloFirst+3,helloFirst+4}),
-          "selecting text in the OCR pane highlights exactly those characters on the capture");
-    text->moveCursor(QTextCursor::End);
-    check(zoomView->highlighted().isEmpty(),"clearing the text selection clears the capture highlight");
+    check(lit==QVector<int>({helloFirst,helloFirst+1,helloFirst+2,helloFirst+3,helloFirst+4})
+              && !textMarks.isEmpty()
+              && textMarks.first().format.background().color()==QColor(0x26,0x4f,0x78),
+          "selecting text in the OCR pane highlights exactly those characters with a text selection");
+    auto *title = dialog->findChild<QLabel *>(QStringLiteral("ocrTitle"));
+    const bool selectedBefore = text->textCursor().hasSelection();
+    if (title) {
+        const QPoint at = title->rect().center();
+        QMouseEvent outside(QEvent::MouseButtonPress,QPointF(at),QPointF(title->mapToGlobal(at)),
+                            Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+        QApplication::sendEvent(title,&outside);
+    }
+    check(selectedBefore && title && !text->textCursor().hasSelection()
+              && text->extraSelections().isEmpty() && zoomView->highlighted().isEmpty(),
+          "clicking outside the OCR text clears the selection and capture highlight");
     const auto viewMouse=[&](QEvent::Type type,int glyph,Qt::MouseButtons buttons) {
         const QPoint at=zoomView->mapFromScene(zoomView->glyphPolygon(glyph).boundingRect().center());
         QMouseEvent event(type,QPointF(at),QPointF(zoomView->viewport()->mapToGlobal(at)),
@@ -324,13 +336,26 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     QApplication::sendEvent(zoomView,&copyKey);
     check(dragged && QApplication::clipboard()->text()==QStringLiteral("World123") && status->text()==QStringLiteral("已复制选中文字"),
           "dragging across capture text selects it without panning and Ctrl+C copies it");
+    const bool lineMarked=!text->extraSelections().isEmpty()
+        && text->extraSelections().first().cursor.selectedText()==wantedLine;
+    check(lineMarked,"selecting capture text highlights the whole matching line in the OCR pane");
+    const QPoint textAt=text->viewport()->rect().center();
+    QMouseEvent textPress(QEvent::MouseButtonPress,QPointF(textAt),QPointF(text->viewport()->mapToGlobal(textAt)),
+                          Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+    QApplication::sendEvent(text->viewport(),&textPress);
+    QMouseEvent textRelease(QEvent::MouseButtonRelease,QPointF(textAt),QPointF(text->viewport()->mapToGlobal(textAt)),
+                            Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+    QApplication::sendEvent(text->viewport(),&textRelease);
+    check(lineMarked && text->extraSelections().isEmpty() && zoomView->selectedText().isEmpty(),
+          "clicking the OCR text drops the capture selection and its line highlight");
     viewMouse(QEvent::MouseButtonPress,0,Qt::LeftButton);
     viewMouse(QEvent::MouseMove,glyphTotal-1,Qt::LeftButton);
     viewMouse(QEvent::MouseButtonRelease,glyphTotal-1,Qt::NoButton);
     check(zoomView->selectedText()==expectedText,"a selection across rows keeps the recognized line breaks");
     viewMouse(QEvent::MouseButtonPress,3,Qt::LeftButton);
     viewMouse(QEvent::MouseButtonRelease,3,Qt::NoButton);
-    check(zoomView->selectedText().isEmpty(),"a click on text without dragging drops the capture selection");
+    check(zoomView->selectedText().isEmpty() && text->extraSelections().isEmpty(),
+          "a click on text without dragging clears the capture selection and linked OCR line");
     {
         const QPoint at=zoomView->mapFromScene(zoomView->glyphPolygon(helloFirst+2).boundingRect().center());
         QMouseEvent twice(QEvent::MouseButtonDblClick,QPointF(at),QPointF(zoomView->viewport()->mapToGlobal(at)),
@@ -339,6 +364,8 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     }
     check(zoomView->selectedText()==wantedLine && zoomView->fitted(),"double-clicking capture text selects its whole line instead of refitting");
     zoomView->selectRange(-1,-1);
+    check(text->extraSelections().isEmpty(),
+          "clearing the capture selection clears the linked OCR line highlight");
     if (!previewPath.isEmpty()) {
         QTextCursor pick(text->document());
         pick.setPosition(text->toPlainText().indexOf(wantedLine));

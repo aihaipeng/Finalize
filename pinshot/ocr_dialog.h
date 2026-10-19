@@ -44,8 +44,9 @@ public:
     void setTextLines(const QVector<OcrLine> &lines);
     QString selectedText() const;
     void selectRange(int anchor, int lead);   // Glyph indices; -1 clears.
+    void clearSelection();                    // Drops the glyph selection without reporting it.
     QVector<int> selectedLines() const;       // OCR line indices touched by the glyph selection.
-    // Marks the glyphs whose characters the text pane has selected (yellow, under the blue selection).
+    // Marks the glyphs whose characters the text pane has selected (amber, under the blue selection).
     void highlightText(const QString &selection);
     void highlightLines(const QVector<int> &lines);
     // Barcode mode: mark every decoded symbol and emphasize the selected one.
@@ -129,6 +130,7 @@ public:
     static int testTranslate();
     static int testBarcode(const QString &previewPath);
 protected:
+    bool event(QEvent *event) override;
     bool eventFilter(QObject *object,QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void showEvent(QShowEvent *event) override;
@@ -157,15 +159,16 @@ private:
     void showLoading(bool loading, const QString &text = {});
     void applyLayout(bool force = false);
     int layoutClass() const;
-    void linkFromSourceSelection();
-    void linkFromTranslationSelection();
-    void linkFromImageSelection();
+    void linkFromOcrTextSelection();
+    void linkFromOcrImageSelection();
+    void clearPaneSelection(QPlainTextEdit *pane);
+    void clearSelectionHighlights();
     void clearLinkHighlights();
     void applyHighlights(QPlainTextEdit *pane);
     void setLinkMarks(QPlainTextEdit *pane, const QVector<int> &blocks,
                       QList<QTextEdit::ExtraSelection> &marks);
-    QVector<int> selectedBlocks(QPlainTextEdit *pane) const;
-    bool translationLinkReady() const;
+    void setSelectionMark(QPlainTextEdit *pane, const QTextCursor &selection,
+                          QList<QTextEdit::ExtraSelection> &marks);
     QList<QTextCursor> matches() const;
     void showFind(bool replace, QPlainTextEdit *target = nullptr);
     void hideFind();
@@ -207,9 +210,7 @@ private:
     QWidget *m_mask = nullptr;                // Haze over a translation the edited original no longer matches.
     QString m_translatedSource;               // Original text the shown translation was requested for.
     QStringList m_ocrLineTexts;               // Recognized lines, in image-line order.
-    QVector<int> m_translationSourceBlocks;   // Translated line -> source pane block.
-    QVector<int> m_translationOcrLines;       // Translated line -> OCR line, -1 when unknown.
-    QList<QTextEdit::ExtraSelection> m_sourceLinkMarks, m_resultLinkMarks, m_findMarks;
+    QList<QTextEdit::ExtraSelection> m_resultLinkMarks, m_findMarks;
     // Card-drawn window frame: edge resize, drag from any empty spot, maximize to the work area.
     Qt::Edges m_resizing;
     bool m_dragging = false, m_maximized = false;
