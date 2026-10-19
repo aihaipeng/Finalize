@@ -48,6 +48,8 @@
 #include <QShortcut>
 #include <QKeySequence>
 #include <QTextDocument>
+#include <QTextBlock>
+#include <QSet>
 #include <QFutureWatcher>
 #include <QtConcurrent>
 #include <QComboBox>
@@ -223,8 +225,24 @@ int OcrImageView::glyphAt(const QPoint &viewPos, bool nearest) const {
 }
 
 void OcrImageView::selectRange(int anchor, int lead) {
+    const bool changed = m_anchor != anchor || m_lead != lead;
     m_anchor = anchor; m_lead = lead;
     viewport()->update();
+    if (changed && selectionChanged) selectionChanged();
+}
+
+QVector<int> OcrImageView::selectedLines() const {
+    QVector<int> lines;
+    if (m_anchor < 0 || m_lead < 0 || m_glyphs.isEmpty()) return lines;
+    const int first = qMin(m_anchor,m_lead);
+    const int last = qMin(qMax(m_anchor,m_lead),int(m_glyphs.size())-1);
+    int previous = -1;
+    for (int i = first; i <= last; ++i) {
+        if (m_glyphs[i].line == previous) continue;
+        previous = m_glyphs[i].line;
+        lines.append(previous);
+    }
+    return lines;
 }
 
 QString OcrImageView::selectedText() const {
@@ -265,6 +283,17 @@ void OcrImageView::highlightText(const QString &selection) {
                 if (glyphOf.contains(source[k])) marked.insert(glyphOf.value(source[k]));
         m_highlighted = QVector<int>(marked.begin(),marked.end());
         std::sort(m_highlighted.begin(),m_highlighted.end());
+    }
+    viewport()->update();
+}
+
+void OcrImageView::highlightLines(const QVector<int> &lines) {
+    QSet<int> wanted;
+    for (int line : lines) wanted.insert(line);
+    m_highlighted.clear();
+    if (!wanted.isEmpty()) {
+        for (int i = 0; i < m_glyphs.size(); ++i)
+            if (wanted.contains(m_glyphs[i].line)) m_highlighted.append(i);
     }
     viewport()->update();
 }
@@ -697,6 +726,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     imageView->copied = [this](bool ok) {
         m_status->setText(ok ? QStringLiteral("已复制选中文字") : QStringLiteral("复制失败，剪贴板可能被占用，请重试"));
     };
+    imageView->selectionChanged = [this] { linkFromImageSelection(); };
     for (QWidget *widget : {static_cast<QWidget *>(copyImage),static_cast<QWidget *>(zoomIn),
                             static_cast<QWidget *>(zoomOut),static_cast<QWidget *>(zoomLevel),static_cast<QWidget *>(fit)})
         imageActions->addWidget(widget);
@@ -891,14 +921,15 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         QFont sourceFont = font;
         sourceFont.setPointSizeF(qMax(10.5,font.pointSizeF()-1.5));
         m_sourcePane->setFont(sourceFont);
-        // Selecting the recognized original mirrors the OCR card and marks the same glyphs on the capture.
-        connect(m_sourcePane,&QPlainTextEdit::selectionChanged,this,[this] {
-            const QTextCursor cursor = m_sourcePane->textCursor();
-            m_imageView->highlightText(cursor.hasSelection() ? cursor.selectedText() : QString());
-        });
+        // Selecting the recognized original mirrors the OCR card, marks the same glyphs on
+        // the capture, and lights the matching translation line.
+        connect(m_sourcePane,&QPlainTextEdit::selectionChanged,this,&OcrDialog::linkFromSourceSelection);
         // Editing the original never calls the engine by itself: the stale translation is hazed
         // over with one button, and only a click (or Ctrl+Enter) translates again.
-        connect(m_sourcePane,&QPlainTextEdit::textChanged,this,&OcrDialog::updateMask);
+        connect(m_sourcePane,&QPlainTextEdit::textChanged,this,[this] {
+            clearLinkHighlights();
+            updateMask();
+        });
         auto *now = new QShortcut(QKeySequence(Qt::CTRL|Qt::Key_Return),m_sourcePane,nullptr,nullptr,Qt::WidgetShortcut);
         connect(now,&QShortcut::activated,this,[this] { translateLines(); });
         sourceBox = m_sourcePane;
@@ -909,12 +940,17 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
                                         : m_translate ? QStringLiteral("译文") : QStringLiteral("OCR 识别文本"));
     m_text->setReadOnly(true);
     m_findTarget = m_text;
-    // Selecting recognized text marks the same characters on the capture.
-    if (!m_translate && !m_barcode)
+    // Selecting recognized text marks the same characters on the capture. In the
+    // translation card every pane selects the matching lines in the other two.
+    if (m_translate) {
+        connect(m_text,&QPlainTextEdit::selectionChanged,this,&OcrDialog::linkFromTranslationSelection);
+        connect(m_text,&QPlainTextEdit::textChanged,this,&OcrDialog::clearLinkHighlights);
+    } else if (!m_barcode) {
         connect(m_text,&QPlainTextEdit::selectionChanged,this,[this] {
             const QTextCursor cursor = m_text->textCursor();
             m_imageView->highlightText(cursor.hasSelection() ? cursor.selectedText() : QString());
         });
+    }
     if (m_translate) font.setPointSizeF(font.pointSizeF()+1);   // The translation is what the card is for.
     m_text->setFont(font);
     m_busy = new QLabel(QStringLiteral("· · ·"));
@@ -1410,10 +1446,16 @@ void OcrDialog::translateResult(const OcrResult &result)
 {
     // Recognized text goes into the editable source pane; typing there re-translates.
     QString joined;
+    m_ocrLineTexts.clear();
     for (const OcrLine &line : result.lines) {
         if (!joined.isEmpty()) joined += QLatin1Char('\n');
         joined += line.text;
+        m_ocrLineTexts.append(line.text);
     }
+    m_translationSourceBlocks.clear();
+    m_translationOcrLines.clear();
+    m_translatedSource.clear();
+    clearLinkHighlights();
     {   const QSignalBlocker blocker(m_sourcePane);
         m_sourcePane->setPlainText(joined);
         m_sourcePane->document()->setModified(false);   // Recognized text is not a user edit.
@@ -1428,7 +1470,28 @@ void OcrDialog::translateLines()
     const bool initialLoad = m_loadingPage && !m_loadingPage->isHidden();
     if (!m_gateway) m_gateway = new TranslateGateway(this);   // Child: aborted with the card.
     m_gateway->abort();          // A new choice supersedes the running request.
-    const QStringList lines = m_sourcePane->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    // Keep the source block numbers so a translated line can light its OCR line
+    // and its source line later. Empty lines are not sent to the gateway.
+    const QStringList blocks = m_sourcePane->toPlainText().split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    QStringList lines;
+    QVector<int> sourceBlocks, ocrLines;
+    const QString sourceText = m_sourcePane->toPlainText();
+    const bool untouched = sourceText == m_ocrLineTexts.join(QLatin1Char('\n'));
+    for (int block = 0; block < blocks.size(); ++block) {
+        if (blocks[block].isEmpty()) continue;
+        lines.append(blocks[block]);
+        sourceBlocks.append(block);
+        int ocr = -1;
+        if (untouched) ocr = block;
+        else if (block < m_ocrLineTexts.size() && blocks[block] == m_ocrLineTexts[block]) ocr = block;
+        else if (!m_ocrLineTexts.isEmpty()) {
+            // An edited line can still map back when its text occurs once.
+            const int at = m_ocrLineTexts.indexOf(blocks[block]);
+            if (at >= 0 && m_ocrLineTexts.indexOf(blocks[block], at + 1) < 0) ocr = at;
+        }
+        ocrLines.append(ocr);
+    }
+    clearLinkHighlights();
     if (lines.isEmpty()) {
         showLoading(false);
         m_text->clear();
@@ -1437,6 +1500,8 @@ void OcrDialog::translateLines()
         m_status->clear();
         m_busy->hide();
         m_translatedSource = m_sourcePane->toPlainText();
+        m_translationSourceBlocks.clear();
+        m_translationOcrLines.clear();
         setActionsEnabled(true);
         applyLayout(true);
         return;
@@ -1457,7 +1522,7 @@ void OcrDialog::translateLines()
     const auto provider = TranslateGateway::Provider(m_provider->currentData().toInt());
     // Auto walks the engines inside the gateway: one engine failing never reaches the card.
     m_gateway->translate(lines, m_source->currentData().toString(), m_target->currentData().toString(),
-                         provider, [this, provider, requested](const TranslateResult &t) {
+                         provider, [this, provider, requested, sourceBlocks, ocrLines](const TranslateResult &t) {
         if (m_closed || t.code == TranslateResult::Error::Cancelled) return;
         m_busy->hide();
         showLoading(false);
@@ -1483,6 +1548,8 @@ void OcrDialog::translateLines()
         m_text->setReadOnly(false);
         m_raw = t.lines.join(QLatin1Char('\n'));
         m_text->setPlainText(m_raw);
+        m_translationSourceBlocks = sourceBlocks;
+        m_translationOcrLines = ocrLines;
         m_autoFormat->setChecked(true);
         // Automatic pickers name what this run actually used: "语言检测 (韩语)", "翻译引擎 (Edge)".
         bool known = false;
@@ -1498,6 +1565,143 @@ void OcrDialog::translateLines()
         if (!m_sourcePane->hasFocus()) m_text->setFocus();
         applyLayout(true);
     });
+}
+
+bool OcrDialog::translationLinkReady() const
+{
+    // Line mapping is only valid while the shown translation still belongs to the
+    // source text and the user has not rewritten the translation itself.
+    return m_translate && m_sourcePane && m_text && !m_translatedSource.isEmpty()
+        && m_sourcePane->toPlainText() == m_translatedSource
+        && !m_text->document()->isModified()
+        && !m_translationSourceBlocks.isEmpty();
+}
+
+QVector<int> OcrDialog::selectedBlocks(QPlainTextEdit *pane) const
+{
+    QVector<int> blocks;
+    if (!pane) return blocks;
+    const QTextCursor cursor = pane->textCursor();
+    if (!cursor.hasSelection()) return blocks;
+    const int start = cursor.selectionStart(), end = cursor.selectionEnd();
+    if (end <= start) return blocks;
+    const int first = pane->document()->findBlock(start).blockNumber();
+    const int last = pane->document()->findBlock(end - 1).blockNumber();
+    for (int block = first; block <= last; ++block) blocks.append(block);
+    return blocks;
+}
+
+void OcrDialog::applyHighlights(QPlainTextEdit *pane)
+{
+    if (!pane) return;
+    QList<QTextEdit::ExtraSelection> marks;
+    const auto add = [&marks](const QList<QTextEdit::ExtraSelection> &from) {
+        for (const QTextEdit::ExtraSelection &mark : from) marks.append(mark);
+    };
+    if (pane == m_findTarget) add(m_findMarks);
+    if (pane == m_sourcePane) add(m_sourceLinkMarks);
+    else if (pane == m_text) add(m_resultLinkMarks);
+    pane->setExtraSelections(marks);
+}
+
+void OcrDialog::setLinkMarks(QPlainTextEdit *pane, const QVector<int> &blocks,
+                             QList<QTextEdit::ExtraSelection> &marks)
+{
+    marks.clear();
+    if (pane) {
+        for (int number : blocks) {
+            const QTextBlock block = pane->document()->findBlockByNumber(number);
+            if (!block.isValid() || block.length() <= 1) continue;
+            QTextCursor cursor(block);
+            cursor.setPosition(block.position() + block.length() - 1, QTextCursor::KeepAnchor);
+            QTextEdit::ExtraSelection mark;
+            mark.cursor = cursor;
+            mark.format.setBackground(QColor(0xff,0xc4,0x00,80));
+            marks.append(mark);
+        }
+    }
+    applyHighlights(pane);
+}
+
+void OcrDialog::clearLinkHighlights()
+{
+    m_sourceLinkMarks.clear();
+    m_resultLinkMarks.clear();
+    if (m_sourcePane) applyHighlights(m_sourcePane);
+    if (m_text) applyHighlights(m_text);
+    if (m_imageView) m_imageView->highlightLines({});
+}
+
+void OcrDialog::linkFromSourceSelection()
+{
+    if (!m_translate || !m_sourcePane || !m_imageView) return;
+    const QTextCursor cursor = m_sourcePane->textCursor();
+    const QVector<int> selected = selectedBlocks(m_sourcePane);
+    if (selected.isEmpty() || !cursor.hasSelection()) {
+        clearLinkHighlights();
+        return;
+    }
+    // Keep the exact-character mirror used by the OCR card, then light the
+    // translation line(s) fed by the selected source line(s).
+    m_imageView->highlightText(cursor.selectedText());
+    QVector<int> translated;
+    if (translationLinkReady()) {
+        for (int line = 0; line < m_translationSourceBlocks.size(); ++line)
+            if (selected.contains(m_translationSourceBlocks[line])) translated.append(line);
+    }
+    setLinkMarks(m_text, translated, m_resultLinkMarks);
+}
+
+void OcrDialog::linkFromTranslationSelection()
+{
+    if (!m_translate || !m_text || !m_sourcePane || !m_imageView) return;
+    const QVector<int> selected = selectedBlocks(m_text);
+    if (selected.isEmpty() || !translationLinkReady()) {
+        clearLinkHighlights();
+        return;
+    }
+    QVector<int> sourceBlocks, ocrLines;
+    // shortcut: line-level mapping only; upgrade if providers expose word alignment.
+    for (int line : selected) {
+        const int source = m_translationSourceBlocks.value(line, -1);
+        if (source < 0) continue;
+        if (!sourceBlocks.contains(source)) sourceBlocks.append(source);
+        const int ocr = m_translationOcrLines.value(line, -1);
+        if (ocr >= 0 && !ocrLines.contains(ocr)) ocrLines.append(ocr);
+    }
+    m_resultLinkMarks.clear();   // The translation pane already shows its own selection.
+    applyHighlights(m_text);
+    setLinkMarks(m_sourcePane, sourceBlocks, m_sourceLinkMarks);
+    m_imageView->highlightLines(ocrLines);
+}
+
+void OcrDialog::linkFromImageSelection()
+{
+    if (!m_translate || !m_imageView || !m_sourcePane || !m_text) return;
+    const QVector<int> lines = m_imageView->selectedLines();
+    if (lines.isEmpty() || !translationLinkReady()) {
+        clearLinkHighlights();
+        return;
+    }
+    const QStringList sourceLines = m_sourcePane->toPlainText().split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    const bool untouched = m_sourcePane->toPlainText() == m_ocrLineTexts.join(QLatin1Char('\n'));
+    QVector<int> sourceBlocks, translated;
+    for (int line : lines) {
+        int source = -1;
+        if (untouched) source = line;
+        else if (line >= 0 && line < m_ocrLineTexts.size()) {
+            const int at = sourceLines.indexOf(m_ocrLineTexts[line]);
+            // Only an unambiguous line match can stand in for an edited source.
+            if (at >= 0 && sourceLines.indexOf(m_ocrLineTexts[line], at + 1) < 0) source = at;
+        }
+        if (source < 0) continue;
+        if (!sourceBlocks.contains(source)) sourceBlocks.append(source);
+        for (int i = 0; i < m_translationSourceBlocks.size(); ++i)
+            if (m_translationSourceBlocks[i] == source && !translated.contains(i)) translated.append(i);
+    }
+    setLinkMarks(m_sourcePane, sourceBlocks, m_sourceLinkMarks);
+    setLinkMarks(m_text, translated, m_resultLinkMarks);
+    m_imageView->highlightLines(lines);
 }
 
 void OcrDialog::populateLanguages(const QString &source, const QString &target)
@@ -1633,14 +1837,14 @@ QList<QTextCursor> OcrDialog::matches() const {
 void OcrDialog::highlightMatches(bool reveal) {
     const QList<QTextCursor> found = matches();
     m_match = found.isEmpty() ? -1 : qBound(0,m_match,int(found.size())-1);
-    QList<QTextEdit::ExtraSelection> marks;
+    m_findMarks.clear();
     for (int i=0;i<found.size();++i) {
         QTextEdit::ExtraSelection mark;
         mark.cursor = found[i];
         mark.format.setBackground(i==m_match ? QColor(0xff,0x9f,0x1a) : QColor(0xff,0xe5,0x4c));
-        marks.append(mark);
+        m_findMarks.append(mark);
     }
-    m_findTarget->setExtraSelections(marks);
+    applyHighlights(m_findTarget);
     m_findCount->setText(found.isEmpty() ? (m_findEdit->text().isEmpty() ? QString() : QStringLiteral("无结果"))
                                          : QStringLiteral("%1/%2").arg(m_match+1).arg(found.size()));
     if (reveal && m_match>=0) {
@@ -1654,9 +1858,13 @@ void OcrDialog::highlightMatches(bool reveal) {
 void OcrDialog::showFind(bool replace, QPlainTextEdit *target) {
     if (!target) target = m_text;
     if (target != m_findTarget) {
-        // Move the strip into the pane being searched; marks never linger in the other one.
-        m_findTarget->setExtraSelections({});
+        // Move the strip into the pane being searched; find marks never linger in the
+        // other one, and line-link marks stay where they are.
+        QPlainTextEdit *previous = m_findTarget;
+        m_findMarks.clear();
         m_findTarget = target;
+        applyHighlights(previous);
+        applyHighlights(m_findTarget);
         if (m_resultLayout) (target==m_sourcePane ? m_sourceLayout : m_resultLayout)->insertWidget(0,m_find);
     }
     const QString selected = target->textCursor().selectedText();
@@ -1671,7 +1879,8 @@ void OcrDialog::showFind(bool replace, QPlainTextEdit *target) {
 
 void OcrDialog::hideFind() {
     m_find->hide();
-    m_findTarget->setExtraSelections({});
+    m_findMarks.clear();
+    applyHighlights(m_findTarget);
     m_findTarget->setFocus();
 }
 

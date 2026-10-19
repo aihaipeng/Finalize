@@ -370,18 +370,44 @@ int OcrDialog::testTranslate()
                      qPrintable(dialog.m_imageView->selectedText()));
         return 1;
     }
+    // A capture selection lights the source and translation lines it feeds.
+    const bool imageLinks = !sourceText->extraSelections().isEmpty()
+        && !pane->extraSelections().isEmpty();
     dialog.m_imageView->selectRange(-1, -1);
-    // Selecting recognized text in the source pane marks the matching glyphs on the image.
+    const bool imageLinksCleared = sourceText->extraSelections().isEmpty()
+        && pane->extraSelections().isEmpty();
+    // Selecting recognized text in the source pane marks the matching glyphs on the image
+    // and the translation line fed by it.
     const int foxAt = sourceText->toPlainText().indexOf(QStringLiteral("fox"), 0, Qt::CaseInsensitive);
     QTextCursor sourceCursor = sourceText->textCursor();
     sourceCursor.setPosition(qMax(0,foxAt));
     sourceCursor.setPosition(qMax(0,foxAt) + 3, QTextCursor::KeepAnchor);
     sourceText->setTextCursor(sourceCursor);
-    const bool sourceHighlights = foxAt >= 0 && !dialog.m_imageView->highlighted().isEmpty();
+    const bool sourceHighlights = foxAt >= 0 && !dialog.m_imageView->highlighted().isEmpty()
+        && !pane->extraSelections().isEmpty();
     sourceText->moveCursor(QTextCursor::End);
-    if (!sourceHighlights || !dialog.m_imageView->highlighted().isEmpty()) {
+    const bool sourceCleared = dialog.m_imageView->highlighted().isEmpty()
+        && pane->extraSelections().isEmpty();
+    if (!sourceHighlights || !sourceCleared) {
         restore();
-        std::fprintf(stderr, "FAIL: translate source selection did not mirror onto the capture\n");
+        std::fprintf(stderr, "FAIL: translate source selection did not mirror onto the capture and translation\n");
+        return 1;
+    }
+    // Selecting a translated line lights its source line and the same OCR line on the image.
+    QTextCursor translatedCursor = pane->textCursor();
+    translatedCursor.movePosition(QTextCursor::Start);
+    translatedCursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    pane->setTextCursor(translatedCursor);
+    if (!preview.isEmpty()) dialog.grab().save(preview + QStringLiteral("-links.png"));
+    const bool translationLinks = !sourceText->extraSelections().isEmpty()
+        && !dialog.m_imageView->highlighted().isEmpty();
+    pane->moveCursor(QTextCursor::End);
+    const bool translationCleared = sourceText->extraSelections().isEmpty()
+        && dialog.m_imageView->highlighted().isEmpty();
+    if (!(imageLinks && imageLinksCleared && translationLinks && translationCleared)) {
+        restore();
+        std::fprintf(stderr, "FAIL: three-way text link image=%d cleared=%d translation=%d cleared=%d\n",
+                     imageLinks, imageLinksCleared, translationLinks, translationCleared);
         return 1;
     }
     const QString languagePrefix = dialog.m_rows ? QStringLiteral("语言 (") : QStringLiteral("语言检测 (");
@@ -411,6 +437,16 @@ int OcrDialog::testTranslate()
             QApplication::processEvents(QEventLoop::AllEvents, 100);
         edited = !pane->toPlainText().isEmpty() && pane->toPlainText() != before && sourceText->hasFocus()
             && !mask->isVisible() && dialog.m_source->displayText() == languagePrefix + QStringLiteral("日语)");
+        if (edited) {
+            // The replacement Japanese source no longer matches the English capture:
+            // translation/source still link, but the image must not claim a wrong line.
+            QTextCursor translatedLine = pane->textCursor();
+            translatedLine.movePosition(QTextCursor::Start);
+            translatedLine.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+            pane->setTextCursor(translatedLine);
+            edited = !sourceText->extraSelections().isEmpty() && dialog.m_imageView->highlighted().isEmpty();
+            pane->moveCursor(QTextCursor::End);
+        }
     }
     if (!preview.isEmpty()) dialog.grab().save(preview + QStringLiteral("-edited.png"));
     restore();
