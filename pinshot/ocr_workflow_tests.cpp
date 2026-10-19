@@ -27,7 +27,6 @@
 #include <QtMath>
 #include <QToolButton>
 #include <QComboBox>
-#include <QRegularExpression>
 #include <QClipboard>
 #include <QMessageBox>
 #include <QTimer>
@@ -241,7 +240,11 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     check(!text->isReadOnly() && text->toPlainText()==expectedText,"OCR recognizes the composed screenshot including annotations and allows editing");
     auto *copy=dialog->findChild<QToolButton *>(QStringLiteral("ocrCopy"));
     auto *back=dialog->findChild<QToolButton *>(QStringLiteral("ocrBack"));
+    auto *headerPin=dialog->findChild<QToolButton *>(QStringLiteral("ocrPin"));
+    auto *format=dialog->findChild<QToolButton *>(QStringLiteral("ocrFormat"));
+    auto *search=dialog->findChild<QToolButton *>(QStringLiteral("ocrSearch"));
     auto *status=dialog->findChild<QLabel *>(QStringLiteral("ocrStatus"));
+    auto *textBar=dialog->findChild<QWidget *>(QStringLiteral("ocrTextBar"));
     auto *zoomView=static_cast<OcrImageView *>(dialog->findChild<QGraphicsView *>());
     auto *zoomLevel=dialog->findChild<QLabel *>(QStringLiteral("ocrZoomLevel"));
     auto *zoomFit=dialog->findChild<QToolButton *>(QStringLiteral("ocrFit"));
@@ -259,13 +262,20 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     check(dialog->findChild<QLabel *>(QStringLiteral("ocrCharacterCount"))->text()==QString::number(text->toPlainText().toUcs4().size()),
           "the text block counts the characters it holds");
     const int textBottom=text->mapTo(dialog,QPoint()).y()+text->height();
+    const bool actionsAtRight = textBar && format && search
+        && format->parentWidget()==textBar && search->parentWidget()==textBar
+        && retry->parentWidget()==textBar && copy->parentWidget()==textBar
+        && format->mapTo(textBar,QPoint()).x()>copy->mapTo(textBar,QPoint()).x()+copy->width()
+        && search->mapTo(textBar,QPoint()).x()>format->mapTo(textBar,QPoint()).x()
+        && retry->mapTo(textBar,QPoint()).x()>search->mapTo(textBar,QPoint()).x()
+        && retry->mapTo(textBar,QPoint()).x()+retry->width()==textBar->width();
     check(retry->text().isEmpty() && copy->text().isEmpty() && !retry->icon().isNull() && !copy->icon().isNull()
-              && copy->mapTo(dialog,QPoint()).x()+copy->width()<=retry->mapTo(dialog,QPoint()).x()
               && retry->mapTo(dialog,QPoint()).y()>=textBottom && copy->mapTo(dialog,QPoint()).y()>=textBottom
-              && !back
-              && status->alignment().testFlag(Qt::AlignRight) && status->mapTo(dialog,QPoint()).y()>=textBottom
-              && QRegularExpression(QStringLiteral("^\\d+\\.\\d{2}秒 · 平均置信度\\d+%$")).match(status->text()).hasMatch(),
-          "text actions and bottom-right timing run along the bottom edge of the text block");
+              && back && headerPin && back->parentWidget()==headerPin->parentWidget()
+              && back->mapTo(dialog,QPoint()).x()<headerPin->mapTo(dialog,QPoint()).x()
+              && actionsAtRight && status->text().isEmpty() && status->mapTo(dialog,QPoint()).y()>=textBottom
+              && text->toolTip().isEmpty(),
+          "back sits left of pin; the three text actions sit at the right of the bottom row without timing, confidence or tooltip");
     if (!previewPath.isEmpty()) check(dialog->grab().save(previewPath+QStringLiteral("-comparison.png")),"save comparison window preview");
     check(text->font().pointSizeF()>=12 && dialog->font().pointSizeF()>=10.5 && copy->size()==QSize(28,28)
               && retry->size()==copy->size() && copy->iconSize()==QSize(16,16),
@@ -354,7 +364,8 @@ int CaptureOverlay::testOcr(const QString &previewPath)
               && contrast(QColor("#858585"),QColor("#ffffff"))>=3
               && contrast(QColor("#2080f0"),QColor("#ffffff"))>=3,
           "OCR text, metadata, accent buttons, control outlines and focus cues meet their contrast budgets");
-    const QList<QWidget *> tabOrder{dialog->findChild<QToolButton *>(QStringLiteral("ocrPin")),
+    const QList<QWidget *> tabOrder{back,
+        dialog->findChild<QToolButton *>(QStringLiteral("ocrPin")),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrMinimize")),dialog->findChild<QToolButton *>(QStringLiteral("ocrMaximize")),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrClose")),dialog->findChild<QGraphicsView *>(),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrCopyImage")),dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomIn")),
@@ -568,6 +579,14 @@ int CaptureOverlay::testOcr(const QString &previewPath)
         engine.busy.store(false);
         QApplication::processEvents();
     }
+    button->click();
+    dialog=overlay.m_ocrDialog;
+    back=dialog->findChild<QToolButton *>(QStringLiteral("ocrBack"));
+    back->click();
+    QApplication::processEvents();
+    QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+    check(overlay.isVisible() && overlay.m_sel==selection && !overlay.m_ocrDialog,
+          "back from OCR restores the live capture selection and toolbars");
     button->click();
     dialog=overlay.m_ocrDialog;
     dialog->findChild<QToolButton *>(QStringLiteral("ocrClose"))->click();

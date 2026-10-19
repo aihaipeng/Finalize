@@ -80,6 +80,8 @@ private:
     void toggleToolbar(bool enabled);
     void updateToolbarPosition();
     void openTranslate();   // The card takes the pin's place; the pin returns when it closes.
+    void openBarcode();
+    void openTextCard(bool barcode);
     // Reopens the pinned pixels inside the pin itself: the shared annotation
     // engine runs as a child canvas; tool is a CaptureOverlay::ATool value.
     void armPinTool(int tool);

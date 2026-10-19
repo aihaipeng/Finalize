@@ -141,13 +141,17 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         auto *translate = barButton(Icon::Translate, QStringLiteral("翻译：识别并翻译为中文"));
         translate->setAccessibleName(QStringLiteral("翻译"));
         if (!ocrMissing.isEmpty()) { translate->setEnabled(false); translate->setToolTip(ocrMissing); }
+        auto *barcode = barButton(Icon::Barcode, QStringLiteral("识别二维码/条形码"));
+        barcode->setObjectName(QStringLiteral("barcodeButton"));
+        barcode->setAccessibleName(QStringLiteral("识别二维码/条形码"));
         connect(save, &QToolButton::clicked, this, &CaptureOverlay::saveCapture);
         connect(copy, &QToolButton::clicked, this, &CaptureOverlay::copyCapture);
         connect(pin, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
         connect(scroll, &QToolButton::clicked, this, &CaptureOverlay::longCapture);
         connect(ocr, &QToolButton::clicked, this, &CaptureOverlay::ocrCapture);
         connect(translate, &QToolButton::clicked, this, &CaptureOverlay::translateCapture);
-        outputButtons = {scroll, ocr, translate, pin, save, copy};
+        connect(barcode, &QToolButton::clicked, this, &CaptureOverlay::barcodeCapture);
+        outputButtons = {scroll, ocr, translate, barcode, pin, save, copy};
     }
     // Instant annotation tools: draw inside the committed selection; every capture
     // action composes them in. One shape button covers rect / ellipse; per-tool
@@ -1401,14 +1405,17 @@ void CaptureOverlay::ocrCapture() { openTextCard(false); }
 
 void CaptureOverlay::translateCapture() { openTextCard(true); }
 
-void CaptureOverlay::openTextCard(bool translate)
+void CaptureOverlay::barcodeCapture() { openTextCard(false,true); }
+
+void CaptureOverlay::openTextCard(bool translate, bool barcode)
 {
     stopItemDrag();
     commitTextEdit();
     const QImage image = cropped().toImage();
     if (image.isNull()) {
-        showOutputError(translate ? QStringLiteral("翻译失败，请先选择有效截图区域")
-                                  : QStringLiteral("识别失败，请先选择有效截图区域"));
+        showOutputError(barcode ? QStringLiteral("识别失败，请先选择有效截图区域")
+                                : translate ? QStringLiteral("翻译失败，请先选择有效截图区域")
+                                            : QStringLiteral("识别失败，请先选择有效截图区域"));
         return;
     }
     const QRect captureRect=globalScreenRect(m_sel.normalized());
@@ -1416,10 +1423,23 @@ void CaptureOverlay::openTextCard(bool translate)
     if (m_colorDialog) m_colorDialog->close();
     m_tools->hide(); m_toolOptions->hide(); m_inspector->hide();
     hide();
-    auto *dialog = translate ? showTranslate(image,this,captureRect) : showOcr(image,this,captureRect);
+    auto *dialog = barcode ? showBarcode(image,this,captureRect)
+                           : translate ? showTranslate(image,this,captureRect) : showOcr(image,this,captureRect);
+    if (!dialog) {
+        show(); showToolBars(); update();
+        return;
+    }
     m_ocrDialog=dialog;
-    // The card has no way back into the capture: closing it ends the capture.
-    connect(dialog,&QDialog::finished,this,[this] { QTimer::singleShot(0,this,&QWidget::close); });
+    connect(dialog,&QDialog::finished,this,[this,dialog] {
+        if (dialog->returnedToSource()) {
+            // Back restores the live selection and its toolbars instead of ending the capture.
+            m_ocrDialog=nullptr;
+            show(); raise(); activateWindow();
+            showToolBars(); update();
+            return;
+        }
+        QTimer::singleShot(0,this,&QWidget::close);
+    });
 }
 
 void CaptureOverlay::undoAnnotation()

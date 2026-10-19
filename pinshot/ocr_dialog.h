@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ocr_engine.h"
+#include "barcode_engine.h"
 #include "widgets.h"
 #include "output.h"
 #include <QObject>
@@ -44,7 +45,11 @@ public:
     void selectRange(int anchor, int lead);   // Glyph indices; -1 clears.
     // Marks the glyphs whose characters the text pane has selected (yellow, under the blue selection).
     void highlightText(const QString &selection);
+    // Barcode mode: mark every decoded symbol and emphasize the selected one.
+    void setBarcodeRegions(const QVector<QPolygonF> &regions, int selected);
     const QVector<int> &highlighted() const { return m_highlighted; }
+    int barcodeRegionCount() const { return int(m_barcodeRegions.size()); }
+    int barcodeSelected() const { return m_barcodeSelected; }
     int glyphCount() const { return int(m_glyphs.size()); }
     QPolygonF glyphPolygon(int index) const { return m_glyphs.value(index).polygon; }
     std::function<void(bool)> copied;     // Copy result of the selected text.
@@ -68,6 +73,8 @@ private:
     QString m_textData;                   // Lines joined by '\n'; glyph textIndex points into it.
     QVector<Glyph> m_glyphs;
     QVector<int> m_highlighted;
+    QVector<QPolygonF> m_barcodeRegions;
+    int m_barcodeSelected = -1;
     int m_anchor = -1, m_lead = -1, m_press = -1;
     bool m_selecting = false;
 };
@@ -103,15 +110,20 @@ class OcrDialog : public QDialog
 public:
     // translate mode: recognized lines go through the aggregating translation
     // gateway and the pane shows the translated text instead of the raw OCR.
-    explicit OcrDialog(const QImage &image, const QRect &captureRect = {}, bool translate = false);
+    explicit OcrDialog(const QImage &image, const QRect &captureRect = {}, bool translate = false,
+                       bool barcode = false);
     ~OcrDialog() override;
     static QRect screenCentered(const QRect &screen, const QSize &size);
     static QSize loadingSize();
     static QSize preferredSize(const QRect &available, bool translate);
     static QString formatText(const QString &text, TextFormat kind);
+    bool returnedToSource() const { return m_returnedToSource; }
+    int barcodeRegionCount() const { return m_imageView ? m_imageView->barcodeRegionCount() : 0; }
+    int barcodeSelected() const { return m_imageView ? m_imageView->barcodeSelected() : -1; }
     void start();
     static int testLifetime();
     static int testTranslate();
+    static int testBarcode(const QString &previewPath);
 protected:
     bool eventFilter(QObject *object,QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
@@ -129,6 +141,9 @@ private:
     void updateMaximizeButton();
     void translateResult(const OcrResult &result);
     void translateLines();
+    void startBarcode();
+    void finishBarcode(const BarcodeResult &result);
+    void showBarcodeItem(int index);
     void populateLanguages(const QString &source, const QString &target);
     void saveTranslateChoice() const;
     void setDisplay(int mode);
@@ -160,6 +175,9 @@ private:
     QLineEdit *m_findEdit = nullptr, *m_replaceEdit = nullptr;
     OcrCancel m_cancel;
     QFutureWatcher<OcrResult> m_watcher;
+    QFutureWatcher<BarcodeResult> m_barcodeWatcher;
+    BarcodeCancel m_barcodeCancel;
+    QVector<BarcodeItem> m_barcodeItems;
     QString m_previous, m_raw;
     QAction *m_autoFormat = nullptr;
     TranslateGateway *m_gateway = nullptr;
@@ -170,6 +188,9 @@ private:
     PickerCombo *m_provider = nullptr, *m_source = nullptr, *m_target = nullptr;
     QToolButton *m_view = nullptr;            // Display mode: image + texts / texts / translation only.
     QToolButton *m_again = nullptr;           // Re-translate the current original without recognizing again.
+    QToolButton *m_open = nullptr;            // Barcode link action, shown only for URL payloads.
+    QComboBox *m_barcodePicker = nullptr;     // One entry per decoded symbol; hidden for a single code.
+    QLabel *m_barcodeLabel = nullptr;         // Format name or "N codes" above the payload.
     QWidget *m_mask = nullptr;                // Haze over a translation the edited original no longer matches.
     QString m_translatedSource;               // Original text the shown translation was requested for.
     // Card-drawn window frame: edge resize, drag from any empty spot, maximize to the work area.
@@ -180,8 +201,10 @@ private:
     QWidget *m_header = nullptr;
     int m_match = -1, m_mode = 0, m_layoutClass = -1;
     bool m_applyingLayout = false;
-    bool m_previousModified = false, m_rows = false, m_closed = false, m_translate = false;
+    bool m_returnedToSource = false;
+    bool m_previousModified = false, m_rows = false, m_closed = false, m_translate = false, m_barcode = false;
 };
 
 OcrDialog *showOcr(const QImage &image, QWidget *source, const QRect &captureRect);
 OcrDialog *showTranslate(const QImage &image, QWidget *source, const QRect &captureRect);
+OcrDialog *showBarcode(const QImage &image, QWidget *source, const QRect &captureRect);

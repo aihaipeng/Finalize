@@ -922,6 +922,10 @@ void PinWindow::toggleToolbar(bool enabled)
             connect(translateBtn, &QToolButton::clicked, this, &PinWindow::openTranslate);
             lay->addWidget(translateBtn);
 
+            auto *barcodeBtn = iconButton(Icon::Barcode, QStringLiteral("识别二维码/条形码"));
+            connect(barcodeBtn, &QToolButton::clicked, this, &PinWindow::openBarcode);
+            lay->addWidget(barcodeBtn);
+
             m_backBtn = iconButton(Icon::Back, QStringLiteral("返回长截图"));
             m_backBtn->setFocusPolicy(Qt::NoFocus);
             connect(m_backBtn, &QToolButton::clicked, this, [this] {
@@ -949,10 +953,15 @@ void PinWindow::toggleToolbar(bool enabled)
     }
 }
 
-void PinWindow::openTranslate()
+void PinWindow::openTranslate() { openTextCard(false); }
+
+void PinWindow::openBarcode() { openTextCard(true); }
+
+void PinWindow::openTextCard(bool barcode)
 {
     const QRect pin = imageGeometry();
-    OcrDialog *card = showTranslate(annotatedPix().toImage(), nullptr, pin);
+    OcrDialog *card = barcode ? showBarcode(annotatedPix().toImage(), nullptr, pin)
+                              : showTranslate(annotatedPix().toImage(), nullptr, pin);
     if (!card) return;
     // The card opens at the screen centre; the pin and its bars step aside until it closes.
 
@@ -1090,6 +1099,9 @@ QMenu *PinWindow::createContextMenu()
 
     QAction *translate = m->addAction(QStringLiteral("翻译"));
     connect(translate, &QAction::triggered, this, &PinWindow::openTranslate);
+
+    QAction *barcode = m->addAction(QStringLiteral("识别二维码/条形码"));
+    connect(barcode, &QAction::triggered, this, &PinWindow::openBarcode);
 
     m->addSeparator();
 

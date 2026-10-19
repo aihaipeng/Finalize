@@ -118,6 +118,8 @@ int PinWindow::testPlacement()
     for (QAction *candidate : actions)
         if (candidate->menu() && candidate->menu()->title() == QStringLiteral("图像处理")) sub = candidate->menu();
     check(actions.at(1)->text() == QStringLiteral("翻译"), "translate row sits below text selection");
+    check(actions.at(2)->text() == QStringLiteral("识别二维码/条形码"),
+          "barcode row sits below translate");
     check(sub != nullptr, "submenu is 图像处理");
 
     // The translate row dispatches to a translate-mode card. The engine slot
@@ -493,8 +495,8 @@ int PinWindow::testPlacement()
     const auto barButtons = editPin.m_toolbar->findChildren<QToolButton *>();
     int shownButtons = 0;
     for (QToolButton *b : barButtons) shownButtons += !b->isHidden();
-    check(shownButtons == 15 && editPin.m_backBtn->isHidden(),
-          "pin toolbar shows eight tools, undo/redo, four actions and done; no back button");
+    check(shownButtons == 16 && editPin.m_backBtn->isHidden(),
+          "pin toolbar shows eight tools, undo/redo, five actions and done; no back button");
     {
         // Edited long captures get a back button just before done; back closes the pin and reports it.
         PinWindow longEdit(flat, QRect(300, 200, 240, 160));
@@ -523,12 +525,15 @@ int PinWindow::testPlacement()
     }
     QToolButton *shapeBtn = nullptr;
     QToolButton *translateBtn = nullptr;
+    QToolButton *barcodeBtn = nullptr;
     for (QToolButton *b : barButtons) {
         if (b->toolTip() == QStringLiteral("形状：矩形/椭圆")) shapeBtn = b;
         if (b->toolTip() == QStringLiteral("翻译：识别并翻译为中文")) translateBtn = b;
+        if (b->toolTip() == QStringLiteral("识别二维码/条形码")) barcodeBtn = b;
     }
     check(shapeBtn != nullptr && shapeBtn->isCheckable(), "the shape tool sits on the pin toolbar");
     check(translateBtn != nullptr, "the translate tool sits on the pin toolbar");
+    check(barcodeBtn != nullptr, "the barcode tool sits on the pin toolbar");
     {
         // Translating takes the pin's place: pin and bar hide, the card centres on it,
         // and closing the card brings both back where they were.
@@ -553,6 +558,29 @@ int PinWindow::testPlacement()
         QApplication::processEvents();
         check(host.isVisible() && host.m_toolbar->isVisible() && host.imageGeometry() == hostRect,
               "closing the translate card brings the pin and its toolbar back in place");
+        QThreadPool::globalInstance()->waitForDone();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        host.toggleToolbar(false);
+    }
+    {
+        // Barcode recognition uses the same pin-taking card flow as translation.
+        PinWindow host(flat, QRect(500, 300, 240, 160));
+        host.setAttribute(Qt::WA_DeleteOnClose, false);
+        host.show();
+        host.toggleToolbar(true);
+        QApplication::processEvents();
+        host.openBarcode();
+        QApplication::processEvents();
+        OcrDialog *card = nullptr;
+        for (QWidget *w : QApplication::topLevelWidgets())
+            if (auto *d = qobject_cast<OcrDialog *>(w); d && d->isVisible()
+                    && d->windowTitle() == QStringLiteral("Finalize 二维码/条形码")) card = d;
+        check(card && !host.isVisible() && !host.m_toolbar->isVisible(),
+              "barcode opens its card and hides the pin and its toolbar");
+        if (card) card->reject();
+        QApplication::processEvents();
+        check(host.isVisible() && host.m_toolbar->isVisible(),
+              "closing the barcode card restores the pin and its toolbar");
         QThreadPool::globalInstance()->waitForDone();
         QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         host.toggleToolbar(false);

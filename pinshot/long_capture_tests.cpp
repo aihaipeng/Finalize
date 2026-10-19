@@ -379,8 +379,9 @@ int LongCapture::testOutput()
     const QString translateTip = session.m_ocrMissing.isEmpty() ? QStringLiteral("翻译：识别并翻译为中文") : session.m_ocrMissing;
     check(tips == QStringList{QStringLiteral("自动向上滚动截图"), QStringLiteral("自动向下滚动截图"),
                               QStringLiteral("裁剪"), QStringLiteral("编辑"), ocrTip, translateTip,
+                              QStringLiteral("识别二维码/条形码"),
                               QStringLiteral("贴图"), QStringLiteral("保存"), QStringLiteral("关闭"), QStringLiteral("复制并关闭")},
-          "long-capture bar lists both auto-scroll directions, crop, edit, OCR, translate, pin, save, close and copy-and-close in order");
+          "long-capture bar lists both auto-scroll directions, crop, edit, OCR, translate, barcode, pin, save, close and copy-and-close in order");
     const QPoint cursorBeforeAuto = QCursor::pos();
     session.m_auto->click();
     check(session.m_autoScroll == 1 && session.m_auto->isChecked() && !session.m_autoUp->isChecked()
@@ -404,13 +405,14 @@ int LongCapture::testOutput()
           "bar starts with the selection size and vertical direction");
     bool allDisabled = true;
     for (QToolButton *b : session.m_gated) allDisabled = allDisabled && !b->isEnabled();
-    check(allDisabled, "edit, OCR, translate, pin and copy wait for a captured image");
+    check(allDisabled, "edit, OCR, translate, barcode, pin and copy wait for a captured image");
     QImage frame(400, 300, QImage::Format_RGB32);
     frame.fill(Qt::white);
     session.addFrame(frame);
     session.updateButtons();
     session.updateLabel();
-    check(session.m_gated.at(0)->isEnabled() && session.m_gated.at(3)->isEnabled() && session.m_gated.at(4)->isEnabled()
+    check(session.m_gated.at(0)->isEnabled() && session.m_gated.at(3)->isEnabled()
+              && session.m_gated.at(4)->isEnabled() && session.m_gated.at(5)->isEnabled()
               && (session.m_ocrMissing.isEmpty()
                       ? session.m_gated.at(1)->isEnabled() && session.m_gated.at(2)->isEnabled()
                       : !session.m_gated.at(1)->isEnabled() && !session.m_gated.at(2)->isEnabled())
@@ -489,6 +491,17 @@ int LongCapture::testOutput()
                       && alive->suspended() && !alive->m_bar->isVisible(),
                   translate ? "long capture translate opens the same translate card and pauses the session"
                             : "long capture OCR opens the same OCR card and pauses the session");
+            alive->m_ocrDialog->findChild<QToolButton *>(QStringLiteral("ocrBack"))->click();
+            QElapsedTimer backWait;
+            backWait.start();
+            while (alive && alive->m_ocrDialog && backWait.elapsed() < 2000) QApplication::processEvents();
+            check(alive && !alive->m_ocrDialog && !alive->suspended() && alive->m_bar->isVisible(),
+                  translate ? "back from translate resumes the long capture session"
+                            : "back from OCR resumes the long capture session");
+            (translate ? card->m_translate : card->m_ocr)->click();
+            QApplication::processEvents();
+            check(alive && alive->m_ocrDialog && alive->m_ocrDialog->isVisible(),
+                  "the long capture card can be opened again after back");
             alive->m_ocrDialog->close();
             QElapsedTimer wait;
             wait.start();
@@ -496,6 +509,36 @@ int LongCapture::testOutput()
             check(!alive, translate ? "closing the translate card ends the long capture"
                                     : "closing the OCR card ends the long capture");
         }
+    }
+    {
+        // Barcode recognition follows the same suspend/back/close lifecycle, without OCR assets.
+        auto *card = new LongCapture(QRect(screen.left() + 100, screen.top() + 100, 400, 300));
+        card->buildUi();
+        QImage page(400, 300, QImage::Format_RGB32);
+        page.fill(Qt::white);
+        card->addFrame(page);
+        card->updateButtons();
+        QPointer<LongCapture> alive(card);
+        card->m_barcode->click();
+        check(alive && alive->m_ocrDialog && alive->m_ocrDialog->isVisible()
+                  && alive->m_ocrDialog->windowTitle() == QStringLiteral("Finalize 二维码/条形码")
+                  && alive->suspended() && !alive->m_bar->isVisible(),
+              "long capture barcode opens its card and pauses the session");
+        alive->m_ocrDialog->findChild<QToolButton *>(QStringLiteral("ocrBack"))->click();
+        QElapsedTimer backWait;
+        backWait.start();
+        while (alive && alive->m_ocrDialog && backWait.elapsed() < 2000) QApplication::processEvents();
+        check(alive && !alive->m_ocrDialog && !alive->suspended() && alive->m_bar->isVisible(),
+              "back from barcode resumes the long capture session");
+        card->m_barcode->click();
+        QApplication::processEvents();
+        check(alive && alive->m_ocrDialog && alive->m_ocrDialog->isVisible(),
+              "the long capture barcode card can be reopened after back");
+        alive->m_ocrDialog->close();
+        QElapsedTimer wait;
+        wait.start();
+        while (alive && wait.elapsed() < 2000) QApplication::processEvents();
+        check(!alive, "closing the barcode card ends the long capture");
     }
     {
         // Auto scroll no longer stops when the pointer leaves: the wheel goes to the page under the selection.

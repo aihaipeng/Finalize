@@ -666,6 +666,8 @@ void LongCapture::buildUi()
     auto *edit = barButton(Icon::Pen, QStringLiteral("编辑"));
     m_ocr = barButton(Icon::Ocr, QStringLiteral("文字识别 (OCR)：截图与文本对照"));
     m_translate = barButton(Icon::Translate, QStringLiteral("翻译：识别并翻译为中文"));
+    m_barcode = barButton(Icon::Barcode, QStringLiteral("识别二维码/条形码"));
+    m_barcode->setObjectName(QStringLiteral("barcodeButton"));
     m_ocrMissing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
     if (!m_ocrMissing.isEmpty()) m_ocr->setToolTip(m_ocrMissing);
     if (!m_ocrMissing.isEmpty()) m_translate->setToolTip(m_ocrMissing);
@@ -673,14 +675,14 @@ void LongCapture::buildUi()
     auto *save = barButton(Icon::Save, QStringLiteral("保存"));
     auto *close = barButton(Icon::Cancel, QStringLiteral("关闭"));
     auto *copy = barButton(Icon::Copy, QStringLiteral("复制并关闭"));
-    m_gated = {edit, m_ocr, m_translate, pin, copy};
+    m_gated = {edit, m_ocr, m_translate, m_barcode, pin, copy};
     m_save = save;
     lay->addWidget(m_grip);
     lay->addWidget(m_label);
     lay->addWidget(m_axis);
     lay->addWidget(barSeparator(true));
     lay->addWidget(m_dir);
-    for (QToolButton *b : {m_autoUp, m_auto, m_crop, edit, m_ocr, m_translate, pin, save, close, copy}) {
+    for (QToolButton *b : {m_autoUp, m_auto, m_crop, edit, m_ocr, m_translate, m_barcode, pin, save, close, copy}) {
         b->setFocusPolicy(Qt::NoFocus);
         lay->addWidget(b);
     }
@@ -690,6 +692,7 @@ void LongCapture::buildUi()
     connect(edit, &QToolButton::clicked, this, [this] { finish(true); });
     connect(m_ocr, &QToolButton::clicked, this, [this] { openTextCard(false); });
     connect(m_translate, &QToolButton::clicked, this, [this] { openTextCard(true); });
+    connect(m_barcode, &QToolButton::clicked, this, [this] { openTextCard(false,true); });
     connect(pin, &QToolButton::clicked, this, [this] { finish(false); });
     connect(save, &QToolButton::clicked, this, &LongCapture::saveCapture);
     connect(close, &QToolButton::clicked, this, &LongCapture::cancel);
@@ -1111,23 +1114,31 @@ void LongCapture::copyCapture()
     cancel();
 }
 
-void LongCapture::openTextCard(bool translate)
+void LongCapture::openTextCard(bool translate, bool barcode)
 {
     const QImage img = exportImage();
     if (img.isNull()) {
         fail(QStringLiteral("导出失败，请释放内存后重试"));
         return;
     }
-    // The card replaces the session; closing it ends the capture like a normal text card does.
+    // The card replaces the session; back resumes it, while closing ends the capture.
     suspend();
-    auto *dialog = translate ? showTranslate(img, m_bar, m_region) : showOcr(img, m_bar, m_region);
+    auto *dialog = barcode ? showBarcode(img, m_bar, m_region)
+                           : translate ? showTranslate(img, m_bar, m_region) : showOcr(img, m_bar, m_region);
     m_ocrDialog = dialog;
     if (!dialog) {
         resume();
-        fail(QStringLiteral("无法打开识别窗口"));
+        fail(barcode ? QStringLiteral("无法打开二维码识别窗口") : QStringLiteral("无法打开识别窗口"));
         return;
     }
-    connect(dialog, &QDialog::finished, this, [this] { QTimer::singleShot(0, this, &LongCapture::cancel); });
+    connect(dialog, &QDialog::finished, this, [this,dialog] {
+        m_ocrDialog=nullptr;   // The card deletes itself; cancel must not close it a second time.
+        if (dialog->returnedToSource()) {
+            resume();
+            return;
+        }
+        QTimer::singleShot(0, this, &LongCapture::cancel);
+    });
 }
 
 void LongCapture::cleanupUi()
@@ -1137,7 +1148,8 @@ void LongCapture::cleanupUi()
     if (m_cropTimer) m_cropTimer->stop();
     for (QWidget **w : {&m_mask, &m_bar, &m_cropPanel}) if (*w) { (*w)->hide(); (*w)->deleteLater(); *w = nullptr; }
     if (m_preview) { m_preview->hide(); m_preview->deleteLater(); m_preview = nullptr; }
-    m_label = nullptr; m_dir = nullptr; m_auto = m_autoUp = nullptr; m_save = nullptr; m_ocr = m_translate = nullptr;
+    m_label = nullptr; m_dir = nullptr; m_auto = m_autoUp = nullptr; m_save = nullptr;
+    m_ocr = m_translate = m_barcode = nullptr;
     m_crop = m_cropStart = m_cropEnd = nullptr; m_autoCropBox = nullptr;
     m_grip = m_axis = nullptr;
     m_gated.clear();

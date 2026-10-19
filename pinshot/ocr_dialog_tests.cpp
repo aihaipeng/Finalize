@@ -286,30 +286,42 @@ int OcrDialog::testTranslate()
     auto *source = dialog.findChild<QComboBox *>(QStringLiteral("translateSource"));
     auto *target = dialog.findChild<QComboBox *>(QStringLiteral("translateTarget"));
     auto *again = dialog.findChild<QToolButton *>(QStringLiteral("ocrRetry"));
+    auto *translateAgain = dialog.findChild<QToolButton *>(QStringLiteral("translateAgain"));
+    auto *viewButton = dialog.findChild<QToolButton *>(QStringLiteral("translateView"));
     auto *status = dialog.findChild<QLabel *>(QStringLiteral("ocrStatus"));
+    auto *resultBar = dialog.findChild<QWidget *>(QStringLiteral("translateResultBar"));
+    auto *translateToolbar = dialog.findChild<QWidget *>(QStringLiteral("translateToolbar"));
     const auto settle = [&] {
         QElapsedTimer wait;
         wait.start();
         while ((!again->isEnabled() || pane->toPlainText().isEmpty()) && wait.elapsed() < 60000)
             QApplication::processEvents(QEventLoop::AllEvents, 200);
     };
-    const bool lists = provider && source && target && again && provider->count() == 8
+    const bool lists = provider && source && target && again && translateAgain && viewButton && resultBar && translateToolbar
+        && provider->count() == 8
         && provider->itemData(0).toInt() == int(TranslateGateway::Provider::Auto) && provider->currentIndex() == 0
         && source->itemData(0).toString().isEmpty() && target->currentData().toString() == QStringLiteral("zh")
-        && again->isEnabled()
-        && again->parentWidget() == source->parentWidget();   // Pickers and card actions share the top toolbar.
+        && again->isEnabled() && status->text().isEmpty()
+        && again->parentWidget() == resultBar && translateAgain->parentWidget() == resultBar
+        && viewButton->parentWidget() == resultBar
+        && viewButton->mapTo(resultBar,QPoint()).x() < translateAgain->mapTo(resultBar,QPoint()).x()
+        && translateAgain->mapTo(resultBar,QPoint()).x() < again->mapTo(resultBar,QPoint()).x()
+        && again->mapTo(resultBar,QPoint()).x()+again->width() == resultBar->width()
+        && !translateToolbar->isAncestorOf(again) && !translateToolbar->isAncestorOf(translateAgain)
+        && !translateToolbar->isAncestorOf(viewButton);   // Pickers stay up top; card actions replace the service label.
     bool switched = false, reran = false, retargeted = false;
     if (lists) {
         provider->setCurrentIndex(provider->findData(int(TranslateGateway::Provider::Transmart)));
         settle();
-        switched = !pane->toPlainText().isEmpty() && status->text().contains(QStringLiteral("腾讯交互翻译"));
+        switched = !pane->toPlainText().isEmpty()
+            && provider->currentData().toInt() == int(TranslateGateway::Provider::Transmart);
         // Transmart lacks Dutch: the target list follows the engine matrix.
         retargeted = target->findData(QStringLiteral("nl")) < 0;
         // Refresh recognizes again and translates with the engine still chosen.
         again->click();
         settle();
         const QString enginePrefix = dialog.m_rows ? QStringLiteral("引擎 (") : QStringLiteral("翻译引擎 (");
-        reran = !pane->toPlainText().isEmpty() && status->text().contains(QStringLiteral("腾讯交互翻译"))
+        reran = !pane->toPlainText().isEmpty()
             && !QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot")).contains(QStringLiteral("Translate/provider"))
             && dialog.m_provider->displayText() == enginePrefix + QStringLiteral("腾讯交互翻译)");
         provider->setCurrentIndex(0);   // Back to Auto: the picker names the engine that answered.
@@ -359,6 +371,19 @@ int OcrDialog::testTranslate()
         return 1;
     }
     dialog.m_imageView->selectRange(-1, -1);
+    // Selecting recognized text in the source pane marks the matching glyphs on the image.
+    const int foxAt = sourceText->toPlainText().indexOf(QStringLiteral("fox"), 0, Qt::CaseInsensitive);
+    QTextCursor sourceCursor = sourceText->textCursor();
+    sourceCursor.setPosition(qMax(0,foxAt));
+    sourceCursor.setPosition(qMax(0,foxAt) + 3, QTextCursor::KeepAnchor);
+    sourceText->setTextCursor(sourceCursor);
+    const bool sourceHighlights = foxAt >= 0 && !dialog.m_imageView->highlighted().isEmpty();
+    sourceText->moveCursor(QTextCursor::End);
+    if (!sourceHighlights || !dialog.m_imageView->highlighted().isEmpty()) {
+        restore();
+        std::fprintf(stderr, "FAIL: translate source selection did not mirror onto the capture\n");
+        return 1;
+    }
     const QString languagePrefix = dialog.m_rows ? QStringLiteral("语言 (") : QStringLiteral("语言检测 (");
     const bool named = dialog.m_source->displayText() == languagePrefix + QStringLiteral("英语)");
     bool edited = false, hazed = false, quiet = false;
@@ -396,14 +421,18 @@ int OcrDialog::testTranslate()
     }
     std::puts("PASS: editable source pane, detected language named, edits haze the translation until 重新翻译");
 
-    // Part 5: no layout/back/search/format buttons; width picks three columns / stacked
-    // reading panes / texts only; display modes; find scoped to the pane it runs in;
-    // failures read as plain advice, never the raw engine error.
+    // Part 5: back stays in the header, no layout/search/format buttons; width picks three
+    // columns / stacked reading panes / texts only; display modes; find scoped to the pane
+    // it runs in; failures read as plain advice, never the raw engine error.
     auto *view = dialog.findChild<QToolButton *>(QStringLiteral("translateView"));
+    auto *translateBack = dialog.findChild<QToolButton *>(QStringLiteral("ocrBack"));
+    auto *translatePin = dialog.findChild<QToolButton *>(QStringLiteral("ocrPin"));
     auto *imagePanel = dialog.findChild<QWidget *>(QStringLiteral("ocrImagePanel"));
     auto *sourceBlock = dialog.findChild<QWidget *>(QStringLiteral("translateSourceBlock"));
     auto *resultBlock = dialog.findChild<QWidget *>(QStringLiteral("translateResultBlock"));
-    const bool trimmed = !dialog.findChild<QToolButton *>(QStringLiteral("ocrBack"))
+    const bool trimmed = translateBack && translatePin
+        && translateBack->parentWidget()==translatePin->parentWidget()
+        && translateBack->mapTo(&dialog,QPoint()).x()<translatePin->mapTo(&dialog,QPoint()).x()
         && !dialog.findChild<QToolButton *>(QStringLiteral("ocrLayout"))
         && !dialog.findChild<QSplitter *>(QStringLiteral("translateSplit"))
         && !dialog.findChild<QToolButton *>(QStringLiteral("ocrSearch"))

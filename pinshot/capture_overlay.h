@@ -70,6 +70,7 @@ public:
     // re-annotating an existing image) and optionally arms a drawing tool.
     void presetSelection(const QRect &localSel, ATool tool = ATool::None);
     static int testOcr(const QString &previewPath);
+    static int testBarcode(const QString &previewPath);
     static int testSelection();
     static int testColorPicker(const QString &previewPath);
     static int testMosaic(const QString &previewPath);
@@ -262,6 +263,7 @@ private:
 private slots:
     void ocrCapture();
     void translateCapture();
+    void barcodeCapture();
     void saveCapture();
     bool saveCaptureTo(const QString &path);
     void copyCapture();
@@ -269,7 +271,7 @@ private slots:
     void pinCapture();
     void longCapture();
 private:
-    void openTextCard(bool translate);
+    void openTextCard(bool translate, bool barcode = false);
     enum Mode { Selecting, Adjusting };
     QPixmap m_shot;
     QPointer<OcrDialog> m_ocrDialog;

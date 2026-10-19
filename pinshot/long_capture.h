@@ -112,7 +112,7 @@ private:
     // Save/copy/OCR end the session without creating a pinned image.
     void saveCapture();
     void copyCapture();
-    void openTextCard(bool translate);               // Same OCR/translate card as a normal capture.
+    void openTextCard(bool translate, bool barcode = false);   // Same text/barcode card as a normal capture.
     void cleanupUi();
 private:
     QRect m_region;
@@ -137,7 +137,7 @@ private:
     QComboBox *m_dir = nullptr;
     QToolButton *m_auto = nullptr, *m_autoUp = nullptr, *m_save = nullptr;
     QList<QToolButton *> m_gated;                    // Edit, OCR, translate, pin, copy: bounded image length only.
-    QToolButton *m_ocr = nullptr, *m_translate = nullptr;
+    QToolButton *m_ocr = nullptr, *m_translate = nullptr, *m_barcode = nullptr;
     QString m_ocrMissing;
     bool m_barMoved = false;                         // The user dragged the bar away from its anchor.
     LongPreview *m_preview = nullptr;
