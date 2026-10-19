@@ -55,25 +55,16 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     };
     OcrEngine::testAlgorithms();
     const QRect primary(0,0,1920,1040);
-    const QRect target(240,160,640,190);
-    check(OcrDialog::placement(target,primary).topLeft()==target.topLeft(),
-          "OCR card starts at the capture origin instead of the virtual-desktop center");
+    const QSize sampleCard(1100,650);
+    const QRect primaryCard = OcrDialog::screenCentered(primary,sampleCard);
+    check(primaryCard.center()==primary.center() && primary.contains(primaryCard),
+          "OCR/translation cards centre on the screen diagonal intersection");
     for (const QPoint offset : {QPoint(-1920,0),QPoint(1920,-1080)}) {
-        const QRect available = primary.translated(offset);
-        check(OcrDialog::placement(target.translated(offset),available)==OcrDialog::placement(target,primary).translated(offset)
-                  && available.contains(OcrDialog::placement(QRect(available.bottomRight(),QSize(2,2)),available)),
-              "OCR placement retains the selected secondary screen and clamps edge captures inside its work area");
+        const QRect screen = primary.translated(offset);
+        const QRect card = OcrDialog::screenCentered(screen,sampleCard);
+        check(card.center()==screen.center() && screen.contains(card),
+              "screen centring follows the selected secondary monitor");
     }
-    for (const QRect pin : {target,QRect(1500,300,400,300),QRect(0,0,500,300)}) {
-        const QRect card = OcrDialog::beside(pin,primary);
-        check(primary.contains(card) && !card.intersects(pin),
-              "OCR card opened from a pin sits beside the pin inside the work area");
-    }
-    const QRect bigPin(600,200,700,500);
-    const QRect crowded = OcrDialog::beside(bigPin,primary), plain = OcrDialog::placement(bigPin,primary);
-    const auto covered = [&](const QRect &r) { const QRect h = r.intersected(bigPin); return h.width()*h.height(); };
-    check(primary.contains(crowded) && covered(crowded) < covered(plain),
-          "OCR card covers a large pin less than the plain origin placement when no clear spot exists");
     const QString missing = OcrEngine::assetError(QCoreApplication::applicationDirPath());
     if (!missing.isEmpty()) {
         QImage image(640,180,QImage::Format_RGB32); image.fill(Qt::white);
@@ -196,13 +187,8 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     QPointer<OcrDialog> dialog = overlay.m_ocrDialog;
     check(dialog && dialog->findChild<QSplitter *>(QStringLiteral("ocrSplit"))->count()==2,
           "OCR opens a two-pane screenshot and text comparison");
-    check(dialog->findChild<QSplitter *>(QStringLiteral("ocrSplit"))->orientation()==Qt::Vertical
-              && OcrDialog::prefersRows(QSize(800,100),QSize(1000,650)) && !OcrDialog::prefersRows(QSize(300,300),QSize(1000,650))
-              && !OcrDialog::prefersRows(QSize(100,600),QSize(1000,650)),
-          "wide strips open stacked while square and tall captures open side by side");
-    dialog->findChild<QToolButton *>(QStringLiteral("ocrLayout"))->click();
-    check(dialog->findChild<QSplitter *>(QStringLiteral("ocrSplit"))->orientation()==Qt::Horizontal,
-          "the layout button switches the comparison back to side by side");
+    check(!dialog->findChild<QToolButton *>(QStringLiteral("ocrLayout")),
+          "the comparison has no manual layout switch");
     QApplication::processEvents();
     check(!overlay.isVisible() && !overlay.m_tools->isVisible() && !overlay.m_toolOptions->isVisible()
               && !overlay.m_inspector->isVisible() && dialog->windowModality()==Qt::NonModal && !QApplication::activeModalWidget(),
@@ -210,9 +196,10 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     const QRect captureRect=overlay.globalScreenRect(selection);
     const QScreen *captureScreen=QGuiApplication::screenAt(captureRect.center());
     check(captureScreen && dialog->screen()==captureScreen
-              && dialog->geometry()==OcrDialog::placement(captureRect,captureScreen->availableGeometry())
+              && dialog->size()==OcrDialog::loadingSize()
+              && dialog->geometry()==OcrDialog::screenCentered(captureScreen->geometry(),dialog->size())
               && dialog->windowTitle()==QStringLiteral("Finalize OCR"),
-          "Finalize OCR opens at the selected capture on its own screen");
+          "Finalize OCR opens its compact loading card at the selected screen centre");
     const HWND cardHwnd=reinterpret_cast<HWND>(dialog->winId());
     check(GetWindow(cardHwnd,GW_OWNER)==nullptr && !(GetWindowLongPtrW(cardHwnd,GWL_EXSTYLE)&WS_EX_TOOLWINDOW),
           "OCR is an independent taskbar window rather than a tool owned by a hidden capture overlay");
@@ -239,6 +226,18 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     };
     wait();
     const QString expectedText=QStringLiteral("截图文字识别\nHelloWorld123\nOCR2026");
+    const QSize finalExpected=OcrDialog::preferredSize(captureScreen->availableGeometry(),false);
+    check(dialog->size()==finalExpected
+              && dialog->geometry()==OcrDialog::screenCentered(captureScreen->geometry(),dialog->size()),
+          "finished OCR expands at the same screen centre");
+    auto *ocrImage=dialog->findChild<QWidget *>(QStringLiteral("ocrImagePanel"));
+    auto *ocrText=dialog->findChild<QWidget *>(QStringLiteral("ocrTextPanel"));
+    check(dialog->findChild<QSplitter *>(QStringLiteral("ocrSplit"))->orientation()
+              == (finalExpected.width()<1050 ? Qt::Vertical : Qt::Horizontal)
+              && (dialog->findChild<QSplitter *>(QStringLiteral("ocrSplit"))->orientation()==Qt::Horizontal
+                  ? ocrText->width()>ocrImage->width()
+                  : ocrText->height()>ocrImage->height()),
+          "card width, not capture shape, picks the OCR split and gives reading more room");
     check(!text->isReadOnly() && text->toPlainText()==expectedText,"OCR recognizes the composed screenshot including annotations and allows editing");
     auto *copy=dialog->findChild<QToolButton *>(QStringLiteral("ocrCopy"));
     auto *back=dialog->findChild<QToolButton *>(QStringLiteral("ocrBack"));
@@ -360,7 +359,7 @@ int CaptureOverlay::testOcr(const QString &previewPath)
         dialog->findChild<QToolButton *>(QStringLiteral("ocrClose")),dialog->findChild<QGraphicsView *>(),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrCopyImage")),dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomIn")),
         dialog->findChild<QToolButton *>(QStringLiteral("ocrZoomOut")),dialog->findChild<QToolButton *>(QStringLiteral("ocrFit")),
-        text,copy,dialog->findChild<QToolButton *>(QStringLiteral("ocrLayout")),
+        text,copy,
         dialog->findChild<QToolButton *>(QStringLiteral("ocrFormat")),dialog->findChild<QToolButton *>(QStringLiteral("ocrSearch")),retry};
     tabOrder.first()->setFocus();
     for (int i=1;i<tabOrder.size();++i) {
@@ -520,8 +519,9 @@ int CaptureOverlay::testOcr(const QString &previewPath)
         const QRect anchor(area.topLeft()+QPoint(30,30),QSize(100,80));
         OcrDialog positioned(image,anchor);
         positioned.show();
-        check(positioned.screen()==screen && positioned.geometry()==OcrDialog::placement(anchor,area),
-              "actual OCR windows select each connected monitor from the capture anchor rather than the parent overlay");
+        check(positioned.screen()==screen
+                  && positioned.geometry()==OcrDialog::screenCentered(screen->geometry(),positioned.size()),
+              "actual OCR windows select each monitor from the capture anchor and centre there");
         positioned.reject();
         QApplication::processEvents();
     }
@@ -549,6 +549,25 @@ int CaptureOverlay::testOcr(const QString &previewPath)
               && blocked.findChild<QToolButton *>(QStringLiteral("ocrRetry"))->isEnabled(),
           "a second request does not queue another job while the process-wide slot is occupied");
     blocked.reject(); engine.busy.store(false);
+    if (!previewPath.isEmpty()) {
+        engine.busy.store(true);
+        OcrDialog longCard(image);
+        longCard.show();
+        QApplication::processEvents();
+        QString longText;
+        for (int i=0;i<80;++i) longText += QStringLiteral("第 %1 行：这是一段用于测量结果框高度的长文本。\n").arg(i);
+        auto *longEdit=longCard.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"));
+        longEdit->setPlainText(longText);
+        longCard.applyLayout(true);
+        QApplication::processEvents();
+        const QSize longExpected=OcrDialog::preferredSize(longCard.screen()->availableGeometry(),false);
+        check(longCard.size()==longExpected && longEdit->height()>300,
+              "long OCR output stays in the fixed card and scrolls");
+        check(longCard.grab().save(previewPath+QStringLiteral("-long.png")),"save long OCR preview");
+        longCard.reject();
+        engine.busy.store(false);
+        QApplication::processEvents();
+    }
     button->click();
     dialog=overlay.m_ocrDialog;
     dialog->findChild<QToolButton *>(QStringLiteral("ocrClose"))->click();

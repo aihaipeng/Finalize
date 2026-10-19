@@ -8,10 +8,12 @@
 #include <QPoint>
 #include <QRect>
 #include <QResizeEvent>
+#include <QShowEvent>
 #include <QWidget>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QLabel>
+#include <QFont>
 #include <QGraphicsView>
 #include <QtMath>
 #include <QToolButton>
@@ -92,6 +94,7 @@ private:
 enum class TextFormat { Auto, JoinLines, RemoveSpaces, FullWidth, HalfWidth };
 
 class CaptureOverlay;
+class OcrLoadingBar;
 
 class OcrDialog : public QDialog
 {
@@ -102,17 +105,17 @@ public:
     // gateway and the pane shows the translated text instead of the raw OCR.
     explicit OcrDialog(const QImage &image, const QRect &captureRect = {}, bool translate = false);
     ~OcrDialog() override;
-    static QRect placement(const QRect &capture, const QRect &available);
-    static QRect beside(const QRect &avoid, const QRect &available);
-    static QRect centered(const QRect &anchor, const QRect &available);
-    static bool prefersRows(const QSize &image, const QSize &card);
+    static QRect screenCentered(const QRect &screen, const QSize &size);
+    static QSize loadingSize();
+    static QSize preferredSize(const QRect &available, bool translate);
     static QString formatText(const QString &text, TextFormat kind);
     void start();
-    void setStacked(bool rows);
     static int testLifetime();
     static int testTranslate();
 protected:
     bool eventFilter(QObject *object,QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+    void showEvent(QShowEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -129,10 +132,12 @@ private:
     void populateLanguages(const QString &source, const QString &target);
     void saveTranslateChoice() const;
     void setDisplay(int mode);
-    void syncLayoutButton();
     void syncPickers();
     void updateMask();
     void setActionsEnabled(bool enabled);
+    void showLoading(bool loading, const QString &text = {});
+    void applyLayout(bool force = false);
+    int layoutClass() const;
     QList<QTextCursor> matches() const;
     void showFind(bool replace, QPlainTextEdit *target = nullptr);
     void hideFind();
@@ -143,11 +148,15 @@ private:
     QImage m_image;
     QPlainTextEdit *m_text = nullptr;
     QLabel *m_status = nullptr, *m_findCount = nullptr, *m_busy = nullptr;
-    QToolButton *m_retry = nullptr, *m_copy = nullptr, *m_maximize = nullptr, *m_layout = nullptr,
+    QToolButton *m_retry = nullptr, *m_copy = nullptr, *m_maximize = nullptr,
                 *m_format = nullptr, *m_replaceToggle = nullptr;
-    QSplitter *m_split = nullptr;
+    QSplitter *m_split = nullptr, *m_textSplit = nullptr;
     OcrImageView *m_imageView = nullptr;
     QWidget *m_imagePanel = nullptr, *m_find = nullptr, *m_replaceRow = nullptr;
+    QWidget *m_content = nullptr, *m_toolbar = nullptr, *m_loadingPage = nullptr;
+    OcrLoadingBar *m_loadingBar = nullptr;
+    QRect m_screenRect;
+    QSize m_finalSize;
     QLineEdit *m_findEdit = nullptr, *m_replaceEdit = nullptr;
     OcrCancel m_cancel;
     QFutureWatcher<OcrResult> m_watcher;
@@ -161,7 +170,6 @@ private:
     PickerCombo *m_provider = nullptr, *m_source = nullptr, *m_target = nullptr;
     QToolButton *m_view = nullptr;            // Display mode: image + texts / texts / translation only.
     QToolButton *m_again = nullptr;           // Re-translate the current original without recognizing again.
-    QSplitter *m_texts = nullptr;             // Original above (or left of) the translation.
     QWidget *m_mask = nullptr;                // Haze over a translation the edited original no longer matches.
     QString m_translatedSource;               // Original text the shown translation was requested for.
     // Card-drawn window frame: edge resize, drag from any empty spot, maximize to the work area.
@@ -170,8 +178,9 @@ private:
     QPoint m_pressGlobal, m_dragOffset;
     QRect m_pressGeometry, m_restoreGeometry;
     QWidget *m_header = nullptr;
-    int m_match = -1, m_mode = 0;
-    bool m_previousModified = false, m_rows = false, m_closed = false, m_translate = false, m_textRows = true;
+    int m_match = -1, m_mode = 0, m_layoutClass = -1;
+    bool m_applyingLayout = false;
+    bool m_previousModified = false, m_rows = false, m_closed = false, m_translate = false;
 };
 
 OcrDialog *showOcr(const QImage &image, QWidget *source, const QRect &captureRect);

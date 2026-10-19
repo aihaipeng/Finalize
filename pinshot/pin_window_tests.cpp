@@ -545,8 +545,10 @@ int PinWindow::testPlacement()
             if (auto *d = qobject_cast<OcrDialog *>(w); d && d->isVisible()) card = d;
         check(card && !host.isVisible() && !host.m_toolbar->isVisible(),
               "translating hides the pin and its toolbar while the card is open");
-        check(card && (card->geometry().center() - hostRect.center()).manhattanLength() <= 2,
-              "the translate card is centred where the pin was");
+        const QScreen *cardScreen = card ? card->screen() : QGuiApplication::primaryScreen();
+        check(card && card->geometry()==OcrDialog::screenCentered(cardScreen->geometry(),card->size())
+                  && card->geometry().center()==cardScreen->geometry().center(),
+              "the translate loading card opens at the screen centre");
         if (card) card->reject();
         QApplication::processEvents();
         check(host.isVisible() && host.m_toolbar->isVisible() && host.imageGeometry() == hostRect,

@@ -954,9 +954,8 @@ void PinWindow::openTranslate()
     const QRect pin = imageGeometry();
     OcrDialog *card = showTranslate(annotatedPix().toImage(), nullptr, pin);
     if (!card) return;
-    const QScreen *screen = QGuiApplication::screenAt(pin.center());
-    card->setGeometry(OcrDialog::centered(pin, (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry()));
-    // The pin and its floating bars step aside until the card closes, however it closes.
+    // The card opens at the screen centre; the pin and its bars step aside until it closes.
+
     QList<QPointer<QWidget>> hidden;
     for (QWidget *w : {static_cast<QWidget *>(this), m_toolbar, m_selToolbar,
                        m_canvas ? m_canvas->optionsStrip() : nullptr})

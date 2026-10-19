@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QSettings>
 #include <QPlainTextEdit>
+#include <QScrollBar>
 #include <QPushButton>
 #include <QTextDocument>
 #include <QThreadPool>
@@ -58,8 +59,44 @@ int OcrDialog::testLifetime()
         && formatText(QStringLiteral("a b\tc\nd e"), TextFormat::RemoveSpaces) == QStringLiteral("abc\nde")
         && formatText(QStringLiteral("你好,世界!3.14"), TextFormat::FullWidth) == QStringLiteral("你好，世界！3.14")
         && formatText(QStringLiteral("你好，世界！。"), TextFormat::HalfWidth) == QStringLiteral("你好,世界!.");
-    const bool layouts = prefersRows(QSize(1600, 100), QSize(1000, 650))
-        && !prefersRows(QSize(100, 800), QSize(1000, 650)) && !prefersRows(QSize(400, 400), QSize(1000, 650));
+    const bool layouts = OcrDialog::preferredSize(QRect(0,0,1920,1040),false)==QSize(1100,650)
+        && OcrDialog::preferredSize(QRect(0,0,2560,1400),true)==QSize(1700,760)
+        && OcrDialog::preferredSize(QRect(0,0,1280,720),true)==QSize(1100,650)
+        && OcrDialog::preferredSize(QRect(0,0,1366,728),true)==QSize(1334,650)
+        && OcrDialog::preferredSize(QRect(0,0,932,720),true)==QSize(900,650)
+        && OcrDialog::preferredSize(QRect(0,0,931,720),true)==QSize(680,650)
+        && OcrDialog::preferredSize(QRect(0,0,800,600),true)==QSize(680,568)
+        && OcrDialog::preferredSize(QRect(0,0,1082,720),false)==QSize(1050,650)
+        && OcrDialog::preferredSize(QRect(0,0,1081,720),false)==QSize(660,650)
+        && OcrDialog::preferredSize(QRect(0,0,800,600),false)==QSize(660,568);
+    const QImage portrait(240,480,QImage::Format_RGB32);
+    OcrEngine::instance().busy.store(true);
+    OcrDialog portraitOcr(portrait,{},false);
+    portraitOcr.show();
+    QApplication::processEvents();
+    portraitOcr.showLoading(false);
+    QApplication::processEvents();
+    const QRect portraitArea = portraitOcr.screen()->availableGeometry();
+    const QSize portraitPreferred = OcrDialog::preferredSize(portraitArea,false);
+    const bool wideOcr = portraitPreferred.width() >= 1050;
+    const QList<int> portraitSizes = portraitOcr.m_split->sizes();
+    const bool paneWidths = portraitOcr.width()==portraitPreferred.width()
+        && portraitOcr.m_split->orientation()==(wideOcr?Qt::Horizontal:Qt::Vertical)
+        && portraitSizes.size()==2 && portraitSizes.value(1)>portraitSizes.value(0);
+    const int portraitHeight = portraitOcr.height();
+    portraitOcr.resize(800,portraitHeight);
+    QApplication::processEvents();
+    const QList<int> narrowSizes = portraitOcr.m_split->sizes();
+    const bool narrowLayout = portraitOcr.m_split->orientation()==Qt::Vertical
+        && narrowSizes.size()==2 && narrowSizes.value(1)>narrowSizes.value(0)
+        && portraitOcr.height()==portraitHeight;
+    portraitOcr.resize(portraitPreferred.width(),portraitHeight);
+    QApplication::processEvents();
+    const bool ocrResponsive = narrowLayout && portraitOcr.m_split->orientation()==(wideOcr?Qt::Horizontal:Qt::Vertical)
+        && portraitOcr.height()==portraitHeight;
+    portraitOcr.close();
+    OcrEngine::instance().busy.store(false);
+    QThreadPool::globalInstance()->waitForDone();
     OcrDialog finder(image);
     finder.show();
     QApplication::processEvents();
@@ -102,14 +139,76 @@ int OcrDialog::testLifetime()
     bool noClickFocus = true;
     for (auto *button : finder.findChildren<QToolButton *>())
         noClickFocus = noClickFocus && !(button->focusPolicy() & Qt::ClickFocus);
+    const bool noLayout = !finder.findChild<QToolButton *>(QStringLiteral("ocrLayout"));
+    auto *ocrImage = finder.findChild<QWidget *>(QStringLiteral("ocrImagePanel"));
+    auto *ocrText = finder.findChild<QWidget *>(QStringLiteral("ocrTextPanel"));
+    const bool horizontalOcr = finder.width() >= 1050;
+    const bool tallText = ocrImage->height() > 0
+        && (horizontalOcr ? ocrText->width() > ocrImage->width()
+                          : ocrText->height() > ocrImage->height());
     finder.close();
     QThreadPool::globalInstance()->waitForDone();
-    if (!(formats && layouts && counted && one && all && undo && hidden && chosen && restored && anchored && noClickFocus)) {
-        std::fprintf(stderr, "FAIL: text formats %d, split choice %d, find/replace %d%d%d%d%d, format menu %d%d, wheel anchor %d, click focus %d\n",
-                     formats, layouts, counted, one, all, undo, hidden, chosen, restored, anchored, noClickFocus);
+    // Text quantity no longer changes the card size. Long output stays inside the same
+    // panes and scrolls; translation keeps both reading panes equal.
+    OcrEngine::instance().busy.store(true);
+    const QImage wide(640,140,QImage::Format_RGB32);
+    OcrDialog loadingCard(wide,{},false);
+    loadingCard.show();
+    const QScreen *loadingScreen = loadingCard.screen() ? loadingCard.screen() : QGuiApplication::primaryScreen();
+    const bool loadingState = !loadingCard.m_loadingPage->isHidden() && loadingCard.m_content->isHidden()
+        && loadingCard.size()==OcrDialog::loadingSize()
+        && loadingCard.geometry()==OcrDialog::screenCentered(loadingScreen->geometry(),loadingCard.size());
+    QApplication::processEvents();
+    const QSize loadingFinal = OcrDialog::preferredSize(loadingScreen->availableGeometry(),false);
+    const bool loadingEnds = loadingCard.m_loadingPage->isHidden() && loadingCard.m_content->isVisible()
+        && loadingCard.size()==loadingFinal
+        && loadingCard.geometry()==OcrDialog::screenCentered(loadingScreen->geometry(),loadingCard.size());
+    loadingCard.close();
+    OcrDialog longCard(wide,{},false), shortCard(wide,{},false);
+    OcrDialog translatedA(wide,{},true), translatedB(wide,{},true);
+    for (OcrDialog *card : {&longCard,&shortCard,&translatedA,&translatedB}) card->show();
+    QApplication::processEvents();
+    QString longText;
+    for (int i = 0; i < 80; ++i) longText += QStringLiteral("第 %1 行：这是一段用于测量结果框高度的长文本。\n").arg(i);
+    auto *longEdit = longCard.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"));
+    auto *shortEdit = shortCard.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"));
+    longEdit->setPlainText(longText);
+    shortEdit->setPlainText(QStringLiteral("短"));
+    longCard.applyLayout(true); shortCard.applyLayout(true);
+    QApplication::processEvents();
+    const QSize ocrExpected = OcrDialog::preferredSize(longCard.screen()->availableGeometry(),false);
+    const bool fixedSizes = longCard.size()==shortCard.size()
+        && longCard.size()==ocrExpected
+        && longEdit->height()==shortEdit->height()
+        && longEdit->verticalScrollBar()->isVisible();
+    auto *sourceA = translatedA.findChild<QPlainTextEdit *>(QStringLiteral("translateSourceText"));
+    auto *resultA = translatedA.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"));
+    auto *sourceB = translatedB.findChild<QPlainTextEdit *>(QStringLiteral("translateSourceText"));
+    auto *resultB = translatedB.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"));
+    sourceA->setPlainText(QStringLiteral("Hello"));
+    resultA->setPlainText(longText);
+    sourceB->setPlainText(longText);
+    resultB->setPlainText(QStringLiteral("Hello"));
+    translatedA.applyLayout(true); translatedB.applyLayout(true);
+    QApplication::processEvents();
+    const bool translatedMax = translatedA.size()==translatedB.size()
+        && translatedA.height()==OcrDialog::preferredSize(translatedA.screen()->availableGeometry(),true).height()
+        && translatedA.m_textSplit->sizes().value(0)==translatedA.m_textSplit->sizes().value(1)
+        && translatedB.m_textSplit->sizes().value(0)==translatedB.m_textSplit->sizes().value(1);
+    for (OcrDialog *card : {&longCard,&shortCard,&translatedA,&translatedB}) card->close();
+    OcrEngine::instance().busy.store(false);
+    QThreadPool::globalInstance()->waitForDone();
+    if (!(formats && layouts && paneWidths && counted && one && all && undo && hidden && chosen && restored && anchored
+          && noClickFocus && noLayout && tallText && fixedSizes && translatedMax && loadingState && loadingEnds
+          && ocrResponsive)) {
+        std::fprintf(stderr, "FAIL: widths portraitOcr=%d split=%d sizes=%d,%d finder=%d split=%d sizes=%d,%d; fixed long=%d short=%d max=%d responsive=%d loading=%d/%d; text formats %d, sizes %d, pane widths %d, find/replace %d%d%d%d%d, format menu %d%d, wheel anchor %d, click focus %d, no layout button %d, wide text %d\n",
+                     portraitOcr.width(),portraitOcr.m_split->width(),portraitOcr.m_split->sizes().value(0),portraitOcr.m_split->sizes().value(1),
+                     finder.width(),finder.m_split->width(),finder.m_split->sizes().value(0),finder.m_split->sizes().value(1),
+                     longCard.height(),shortCard.height(),translatedA.height(),ocrResponsive,loadingState,loadingEnds,
+                     formats, layouts, paneWidths, counted, one, all, undo, hidden, chosen, restored, anchored, noClickFocus, noLayout, tallText);
         return 1;
     }
-    std::puts("PASS: text formats, format menu checks, cursor-anchored wheel zoom, split choice and find/replace with undo");
+    std::puts("PASS: text formats, format menu checks, cursor-anchored wheel zoom, width-driven split and find/replace with undo");
     return 0;
 }
 
@@ -209,13 +308,14 @@ int OcrDialog::testTranslate()
         // Refresh recognizes again and translates with the engine still chosen.
         again->click();
         settle();
+        const QString enginePrefix = dialog.m_rows ? QStringLiteral("引擎 (") : QStringLiteral("翻译引擎 (");
         reran = !pane->toPlainText().isEmpty() && status->text().contains(QStringLiteral("腾讯交互翻译"))
             && !QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot")).contains(QStringLiteral("Translate/provider"))
-            && dialog.m_provider->displayText() == QStringLiteral("翻译引擎 (腾讯交互翻译)");
+            && dialog.m_provider->displayText() == enginePrefix + QStringLiteral("腾讯交互翻译)");
         provider->setCurrentIndex(0);   // Back to Auto: the picker names the engine that answered.
         settle();
         const QString shown = dialog.m_provider->displayText();
-        reran = reran && shown.startsWith(QStringLiteral("翻译引擎 (")) && shown != QStringLiteral("翻译引擎 (自动选择)");
+        reran = reran && shown.startsWith(enginePrefix) && shown != enginePrefix + QStringLiteral("自动选择)");
     }
     if (!(lists && switched && retargeted && reran)) {
         restore();
@@ -259,7 +359,8 @@ int OcrDialog::testTranslate()
         return 1;
     }
     dialog.m_imageView->selectRange(-1, -1);
-    const bool named = dialog.m_source->displayText() == QStringLiteral("语言检测 (英语)");
+    const QString languagePrefix = dialog.m_rows ? QStringLiteral("语言 (") : QStringLiteral("语言检测 (");
+    const bool named = dialog.m_source->displayText() == languagePrefix + QStringLiteral("英语)");
     bool edited = false, hazed = false, quiet = false;
     auto *mask = dialog.findChild<QWidget *>(QStringLiteral("retranslateMask"));
     auto *maskButton = dialog.findChild<QPushButton *>(QStringLiteral("retranslateButton"));
@@ -284,7 +385,7 @@ int OcrDialog::testTranslate()
                && wait.elapsed() < 60000)
             QApplication::processEvents(QEventLoop::AllEvents, 100);
         edited = !pane->toPlainText().isEmpty() && pane->toPlainText() != before && sourceText->hasFocus()
-            && !mask->isVisible() && dialog.m_source->displayText() == QStringLiteral("语言检测 (日语)");
+            && !mask->isVisible() && dialog.m_source->displayText() == languagePrefix + QStringLiteral("日语)");
     }
     if (!preview.isEmpty()) dialog.grab().save(preview + QStringLiteral("-edited.png"));
     restore();
@@ -295,35 +396,115 @@ int OcrDialog::testTranslate()
     }
     std::puts("PASS: editable source pane, detected language named, edits haze the translation until 重新翻译");
 
-    // Part 5: no back/search/format buttons; display modes; find scoped to the pane it runs in;
+    // Part 5: no layout/back/search/format buttons; width picks three columns / stacked
+    // reading panes / texts only; display modes; find scoped to the pane it runs in;
     // failures read as plain advice, never the raw engine error.
     auto *view = dialog.findChild<QToolButton *>(QStringLiteral("translateView"));
     auto *imagePanel = dialog.findChild<QWidget *>(QStringLiteral("ocrImagePanel"));
+    auto *sourceBlock = dialog.findChild<QWidget *>(QStringLiteral("translateSourceBlock"));
+    auto *resultBlock = dialog.findChild<QWidget *>(QStringLiteral("translateResultBlock"));
     const bool trimmed = !dialog.findChild<QToolButton *>(QStringLiteral("ocrBack"))
+        && !dialog.findChild<QToolButton *>(QStringLiteral("ocrLayout"))
+        && !dialog.findChild<QSplitter *>(QStringLiteral("translateSplit"))
         && !dialog.findChild<QToolButton *>(QStringLiteral("ocrSearch"))
         && !dialog.findChild<QToolButton *>(QStringLiteral("ocrFormat"))->isVisible();
-    bool modes = view && view->menu() && view->menu()->actions().size() == 3;
+    QApplication::processEvents();
+    const QSize dialogExpected = OcrDialog::preferredSize(dialog.screen()->availableGeometry(),true);
+    const bool wide = dialogExpected.width() >= 1250;
+    const bool imageAllowed = dialogExpected.width() >= 900;
+    const bool tallReadingPanes = dialog.size() == dialogExpected
+        && dialog.geometry()==OcrDialog::screenCentered(dialog.screen()->geometry(),dialog.size())
+        && dialog.m_split->count() == 2 && dialog.m_split->orientation() == Qt::Horizontal
+        && dialog.m_split->widget(0) == imagePanel
+        && dialog.m_split->widget(1) == dialog.m_textSplit
+        && dialog.m_textSplit->count() == 2
+        && dialog.m_textSplit->widget(0) == sourceBlock
+        && dialog.m_textSplit->widget(1) == resultBlock
+        && dialog.m_textSplit->orientation() == (wide ? Qt::Horizontal : Qt::Vertical)
+        && dialog.m_textSplit->sizes().value(0) == dialog.m_textSplit->sizes().value(1)
+        && dialog.m_split->sizes().value(1) > dialog.m_split->sizes().value(0);
+    bool modes = view && view->menu() && view->menu()->actions().size() == 3
+        && dialog.m_split->count() == 2 && dialog.m_split->orientation() == Qt::Horizontal
+        && dialog.m_textSplit->orientation() == (wide ? Qt::Horizontal : Qt::Vertical)
+        && imagePanel->isVisible() == imageAllowed
+        && sourceText->isVisible() && pane->isVisible();
     if (modes) {
         const QList<QAction *> picks = view->menu()->actions();
         picks[1]->trigger();
-        modes = !imagePanel->isVisible() && sourceText->isVisible() && pane->isVisible();
-        // Original-and-translation still splits: original first (top, then left), translation after.
-        auto *split = dialog.findChild<QToolButton *>(QStringLiteral("ocrLayout"));
-        const bool imageRows = dialog.m_rows;
-        modes = modes && split->isVisible() && dialog.m_texts->orientation() == Qt::Vertical;
-        split->click();
-        QApplication::processEvents();
-        modes = modes && dialog.m_texts->orientation() == Qt::Horizontal && dialog.m_rows == imageRows
-            && sourceText->mapTo(&dialog, QPoint()).x() < pane->mapTo(&dialog, QPoint()).x();
-        split->click();
-        modes = modes && dialog.m_texts->orientation() == Qt::Vertical;
+        modes = !imagePanel->isVisible() && sourceText->isVisible() && pane->isVisible()
+            && (wide ? sourceText->mapTo(&dialog,QPoint()).x() < pane->mapTo(&dialog,QPoint()).x()
+                     : sourceText->mapTo(&dialog,QPoint()).y() < pane->mapTo(&dialog,QPoint()).y());
         picks[2]->trigger();
-        modes = modes && !split->isVisible();
         modes = modes && !imagePanel->isVisible() && !sourceText->isVisible() && pane->isVisible()
             && QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot")).value(QStringLiteral("Translate/view")).toInt() == 2;
         picks[0]->trigger();
-        modes = modes && imagePanel->isVisible() && sourceText->isVisible();
+        modes = modes && imagePanel->isVisible() == imageAllowed && sourceText->isVisible()
+            && dialog.m_textSplit->orientation() == (wide ? Qt::Horizontal : Qt::Vertical);
     }
+    // Capture shape no longer picks the layout: every wide card opens the same three columns.
+    QImage tall(120,360,QImage::Format_RGB32);
+    QImage square(240,240,QImage::Format_RGB32);
+    tall.fill(Qt::white);
+    square.fill(Qt::white);
+    OcrDialog tallCard(tall,{},true);
+    OcrDialog squareCard(square,{},true);
+    tallCard.show(); squareCard.show();
+    QApplication::processEvents();
+    tallCard.showLoading(false); squareCard.showLoading(false);
+    QApplication::processEvents();
+    tallCard.applyLayout(true); squareCard.applyLayout(true);
+    QApplication::processEvents();
+    const QSize tallExpected = OcrDialog::preferredSize(tallCard.screen()->availableGeometry(),true);
+    const bool tallWide = tallExpected.width() >= 1250;
+    auto *tallResult = tallCard.findChild<QWidget *>(QStringLiteral("translateResultBlock"));
+    const bool columns = tallCard.size() == tallExpected && squareCard.size() == tallExpected
+        && tallCard.m_split->count() == 2 && squareCard.m_split->count() == 2
+        && tallCard.m_split->orientation() == Qt::Horizontal
+        && squareCard.m_split->orientation() == Qt::Horizontal
+        && tallCard.m_split->widget(0) == tallCard.m_imagePanel
+        && tallCard.m_split->widget(1) == tallCard.m_textSplit
+        && tallCard.m_textSplit->widget(0) == tallCard.m_sourceBox
+        && tallCard.m_textSplit->widget(1) == tallResult
+        && tallCard.m_textSplit->orientation() == (tallWide ? Qt::Horizontal : Qt::Vertical)
+        && tallCard.m_textSplit->sizes().value(0) == tallCard.m_textSplit->sizes().value(1)
+        && tallCard.m_split->sizes().value(1) > tallCard.m_split->sizes().value(0);
+    if (!preview.isEmpty())
+        tallCard.grab().save(preview + QStringLiteral("-three-columns.png"));
+    const int columnHeight = tallCard.height(), columnWidth = tallCard.width();
+    const QList<int> outerBefore = tallCard.m_split->sizes();
+    const QList<int> innerBefore = tallCard.m_textSplit->sizes();
+    QString columnText;
+    for (int i=0;i<80;++i) columnText += QStringLiteral("第 %1 行：这是一段用于测量原文和译文显示区宽度的长文本。\n").arg(i);
+    tallCard.m_sourcePane->setPlainText(columnText);
+    tallCard.m_text->setPlainText(columnText);
+    tallCard.m_translatedSource = columnText;
+    tallCard.updateMask();
+    tallCard.applyLayout(true);
+    QApplication::processEvents();
+    tallCard.m_status->clear();
+    const bool fixedText = tallCard.size()==QSize(columnWidth,columnHeight)
+        && tallCard.m_split->sizes()==outerBefore && tallCard.m_textSplit->sizes()==innerBefore
+        && tallCard.m_text->verticalScrollBar()->isVisible();
+    if (!preview.isEmpty())
+        tallCard.grab().save(preview + QStringLiteral("-three-columns-long.png"));
+    tallCard.resize(1100,columnHeight);
+    QApplication::processEvents();
+    const bool medium = tallCard.width()==1100 && tallCard.m_imagePanel->isVisible()
+        && tallCard.m_textSplit->orientation()==Qt::Vertical
+        && tallCard.m_sourceBox->mapTo(&tallCard,QPoint()).y() < tallCard.m_text->mapTo(&tallCard,QPoint()).y()
+        && tallCard.m_sourceBox->height() > 200;
+    if (!preview.isEmpty())
+        tallCard.grab().save(preview + QStringLiteral("-medium.png"));
+    tallCard.resize(680,columnHeight);
+    QApplication::processEvents();
+    const bool narrow = tallCard.width()==680 && !tallCard.m_imagePanel->isVisible()
+        && tallCard.m_textSplit->orientation()==Qt::Vertical
+        && tallCard.m_sourceBox->isVisible() && tallCard.m_text->isVisible()
+        && tallCard.m_sourceBox->width() > 600;
+    const bool responsiveTranslation = medium && narrow;
+    if (!preview.isEmpty())
+        tallCard.grab().save(preview + QStringLiteral("-narrow.png"));
+    tallCard.close(); squareCard.close();
     dialog.showFind(false, sourceText);
     dialog.m_findEdit->setText(QStringLiteral("明日"));
     const bool scoped = dialog.m_find->parentWidget()->isAncestorOf(sourceText)
@@ -353,13 +534,52 @@ int OcrDialog::testTranslate()
     QNetworkProxy::setApplicationProxy(savedProxy);
     const bool friendly = chosen == QStringLiteral("Edge暂时无法翻译，请稍后重试或切换为其他翻译引擎")
         && automatic == QStringLiteral("翻译服务暂时不可用，请检查网络后重试") && !pane->toPlainText().isEmpty();
+    if (!preview.isEmpty()) {
+        OcrEngine::instance().busy.store(true);
+        OcrDialog longCard(image,{},true);
+        longCard.show();
+        QApplication::processEvents();
+        QString longText;
+        for (int i=0;i<80;++i) longText += QStringLiteral("第 %1 行：这是一段用于测量原文和译文结果框高度的长文本。\n").arg(i);
+        longCard.m_sourcePane->setPlainText(longText);
+        longCard.m_text->setPlainText(longText);
+        longCard.m_translatedSource = longText;
+        longCard.updateMask();
+        longCard.m_status->clear();
+        longCard.applyLayout(true);
+        QApplication::processEvents();
+        const QSize longExpected = OcrDialog::preferredSize(longCard.screen()->availableGeometry(),true);
+        if (longCard.size()!=longExpected || longCard.m_sourcePane->height()<=200) {
+            OcrEngine::instance().busy.store(false);
+            restore();
+            std::fprintf(stderr, "FAIL: long translation changed the fixed card (%dx%d, expected %dx%d, source=%d)\n",
+                         longCard.width(),longCard.height(),longExpected.width(),longExpected.height(),
+                         longCard.m_sourcePane->height());
+            return 1;
+        }
+        longCard.grab().save(preview + QStringLiteral("-long.png"));
+        longCard.reject();
+        OcrEngine::instance().busy.store(false);
+        QThreadPool::globalInstance()->waitForDone();
+        OcrDialog loadingCard(image,{},true);
+        loadingCard.show();
+        loadingCard.grab().save(preview + QStringLiteral("-loading.png"));
+        loadingCard.reject();
+    }
     restore();
     QSettings(QStringLiteral("pinshot"), QStringLiteral("pinshot")).remove(QStringLiteral("Translate/view"));
-    if (!(trimmed && retranslate && modes && scoped && stays && moved && friendly)) {
-        std::fprintf(stderr, "FAIL: trimmed %d retranslate %d modes %d find scoped %d replace stays %d moved %d friendly %d (%s | %s)\n",
-                     trimmed, retranslate != nullptr, modes, scoped, stays, moved, friendly, qPrintable(chosen), qPrintable(automatic));
+    if (!(trimmed && retranslate && modes && tallReadingPanes && columns && scoped && stays && moved && friendly
+          && fixedText && responsiveTranslation)) {
+        std::fprintf(stderr, "FAIL: trimmed %d retranslate %d modes %d tall panes %d (card=%dx%d split=%dx%d sizes=%d,%d) columns %d fixed %d responsive %d (tall=%dx%d outer=%d,%d inner=%d,%d) find scoped %d replace stays %d moved %d friendly %d (%s | %s)\n",
+                     trimmed, retranslate != nullptr, modes, tallReadingPanes,
+                     dialog.width(),dialog.height(),dialog.m_split->width(),dialog.m_split->height(),
+                     dialog.m_split->sizes().value(0),dialog.m_split->sizes().value(1),
+                     columns,fixedText,responsiveTranslation,tallCard.width(),tallCard.height(),
+                     tallCard.m_split->sizes().value(0),tallCard.m_split->sizes().value(1),
+                     tallCard.m_textSplit->sizes().value(0),tallCard.m_textSplit->sizes().value(1),
+                     scoped, stays, moved, friendly, qPrintable(chosen), qPrintable(automatic));
         return 1;
     }
-    std::puts("PASS: trimmed toolbar, display modes with text split, per-pane find/replace, friendly failure advice");
+    std::puts("PASS: width-driven columns, fixed height with scrolling, display modes, per-pane find/replace, friendly failure advice");
     return 0;
 }
