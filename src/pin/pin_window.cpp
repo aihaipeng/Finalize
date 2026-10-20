@@ -36,6 +36,8 @@
 #include <QGuiApplication>
 #include <QSizePolicy>
 #include <QLayout>
+#include <QTimer>
+#include <QToolTip>
 #include <QtConcurrent>
 #include <QFutureWatcher>
 #include <QThread>
@@ -63,6 +65,13 @@ PinWindow::PinWindow(const QPixmap &pix, const QRect &displayRect)
     setCursor(Qt::SizeAllCursor);
     setAccessibleName(tr("贴图"));
     setMouseTracking(true);
+    m_textStatus = new QLabel(this);
+    m_textStatus->setObjectName(QStringLiteral("pinTextStatus"));
+    m_textStatus->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_textStatus->setStyleSheet(QStringLiteral(
+        "QLabel{background:rgba(24,25,29,232);color:#9c9da1;border:1px solid #2b2d33;"
+        "border-radius:6px;padding:4px 8px;font-size:12px;}"));
+    m_textStatus->hide();
     setAttribute(Qt::WA_TranslucentBackground);   // The shadow band is painted, per-pixel alpha.
     setImageGeometry(displayRect);
     toggleTextSelectable(true);   // Text is selectable by default (user requirement).
@@ -518,6 +527,7 @@ void PinWindow::toggleTextSelectable(bool enabled)
     m_selLead = -1;
     m_selecting = false;
     if (m_textSelectable) {
+        m_textOcrError.clear();
         // The I-beam appears only while the pointer is over copyable text;
         // everywhere else the native cursor is kept.
         setCursor(Qt::ArrowCursor);
@@ -525,8 +535,11 @@ void PinWindow::toggleTextSelectable(bool enabled)
             runOcrForTextSelection();
         }
     } else {
+        m_textOcrError.clear();
+        if (m_ocrTipShown) { QToolTip::hideText(); m_ocrTipShown = false; }
         setCursor(Qt::SizeAllCursor);
     }
+    updateTextStatus();
     updateSelToolbar();
     update();
 }
@@ -535,6 +548,8 @@ void PinWindow::runOcrForTextSelection()
 {
     if (m_pix.isNull() || m_ocrRunning) return;
     m_ocrRunning = true;
+    m_textOcrError.clear();
+    updateTextStatus();
     m_ocrCancel = std::make_shared<std::atomic_bool>(false);
 
     const QImage img = m_pix.toImage();
@@ -542,20 +557,62 @@ void PinWindow::runOcrForTextSelection()
     m_ocrImgSize = QSizeF(img.size());
     const auto cancel = m_ocrCancel;
     const int generation = m_ocrGen;
+    QTimer::singleShot(300, this, [this, generation] {
+        if (!m_ocrRunning || generation != m_ocrGen || !m_textSelectable
+            || !m_textOcrError.isEmpty() || !isVisible()) return;
+        QToolTip::showText(mapToGlobal(imageRect().topLeft() + QPoint(8, 8)),
+                           tr("文字识别中…"), this);
+        m_ocrTipShown = true;
+    });
 
     auto watcher = new QFutureWatcher<OcrResult>(this);
     connect(watcher, &QFutureWatcher<OcrResult>::finished, this, [this, watcher, generation] {
         const OcrResult res = watcher->result();
         watcher->deleteLater();
         m_ocrRunning = false;
+        if (m_ocrTipShown) { QToolTip::hideText(); m_ocrTipShown = false; }
         if (generation != m_ocrGen) {
             if (m_textSelectable && m_charBoxes.isEmpty()) runOcrForTextSelection();
+            updateTextStatus();
             return;
         }
-        if (m_ocrCancel && m_ocrCancel->load()) return;
+        if (m_ocrCancel && m_ocrCancel->load()) {
+            updateTextStatus();
+            return;
+        }
 
+        if (!res.error.isEmpty()) {
+            m_textOcrError = res.error;
+            m_textSelectable = false;
+            m_ocrLines.clear();
+            m_charBoxes.clear();
+            m_decoHighlight.clear();
+            m_decoLine.clear();
+            m_selAnchor = m_selLead = -1;
+            setCursor(Qt::SizeAllCursor);
+            updateTextStatus();
+            updateSelToolbar();
+            update();
+            return;
+        }
+        if (res.lines.isEmpty()) {
+            m_textSelectable = false;
+            m_ocrLines.clear();
+            m_charBoxes.clear();
+            m_decoHighlight.clear();
+            m_decoLine.clear();
+            m_selAnchor = m_selLead = -1;
+            setCursor(Qt::SizeAllCursor);
+            updateTextStatus();
+            updateSelToolbar();
+            update();
+            return;
+        }
+
+        m_textOcrError.clear();
         m_ocrLines = res.lines;
         rebuildCharBoxes();
+        updateTextStatus();
         // Boxes were rebuilt; the hover handler decides the cursor from now on.
         update();
     });
@@ -565,9 +622,28 @@ void PinWindow::runOcrForTextSelection()
     }));
 }
 
+void PinWindow::updateTextStatus()
+{
+    if (!m_textStatus) return;
+    QString text;
+    if (!m_textOcrError.isEmpty()) text = tr("识别失败，右键重试");
+    if (text.isEmpty()) {
+        m_textStatus->hide();
+        return;
+    }
+    m_textStatus->setText(text);
+    m_textStatus->adjustSize();
+    const QRect image = imageRect();
+    m_textStatus->move(image.left() + 8, image.top() + 8);
+    m_textStatus->show();
+    m_textStatus->raise();
+}
+
 void PinWindow::rebuildCharBoxes()
 {
     m_charBoxes.clear();
+    m_decoHighlight.clear();
+    m_decoLine.clear();
     // OCR can split one visual row into several segments (a "——" tends to
     // become its own line); cluster segments by vertical overlap so a row
     // keeps a single index and selected text is not cut apart by newlines.
@@ -725,14 +801,15 @@ void PinWindow::ensureSelToolbar()
 {
     if (m_selToolbar) return;
     // Owned by the pin so it stays above the capture; an unparented Tool loses to it.
-    m_selToolbar = new QWidget(this, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    m_selToolbar = new QWidget(this, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint
+                                     | Qt::WindowDoesNotAcceptFocus);
     m_selToolbar->setAccessibleName(tr("选字工具栏"));
     m_selToolbar->setObjectName(QStringLiteral("selToolbar"));
     // Scoped to the window: a bare QWidget selector would frame every child,
     // which is where the stray rounded border around the palette came from.
     m_selToolbar->setStyleSheet(QStringLiteral(
         "#selToolbar { background: #18191d; border: 1px solid #2b2d33; border-radius: 8px; }"
-        "QToolButton { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 0; }"
+        "QToolButton { background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 0; }"
         "QToolButton:hover { background-color: #222326; }"
         "QToolButton:pressed { background-color: #2b2d33; }"
     ));
@@ -767,7 +844,7 @@ void PinWindow::ensureSelToolbar()
     auto *strip = new QWidget(m_selToolbar);
     auto *stripLay = new QHBoxLayout(strip);
     stripLay->setContentsMargins(0, 0, 0, 0);
-    stripLay->setSpacing(6);
+    stripLay->setSpacing(8);
     root->addWidget(strip);
 
     const struct { int type; Icon icon; QString tip; } markups[] = {
@@ -779,9 +856,11 @@ void PinWindow::ensureSelToolbar()
     for (int t = 0; t < 4; ++t) {
         const auto &m = markups[t];
         auto *btn = pinButton(m.icon, m.tip);
+        btn->setCheckable(true);
+        btn->setAutoExclusive(true);
+        btn->setChecked(t == m_decoTool);
         row->addWidget(btn);
-        // Buttons light up only while pressed (user-simplified): no persistent
-        // selection state survives a click or the next selection.
+        // The checked button is the target of the color row and the next selection.
         connect(btn, &QToolButton::clicked, this, [this, t] {
             // Clicking a tool draws on the selection in its remembered color;
             // clicking again when the whole selection already carries that
@@ -801,7 +880,7 @@ void PinWindow::ensureSelToolbar()
     // Palette of the reference's five defaults plus a clear button; clicking a
     // color re-applies the current tool in that color on the selection.
     for (int i = 0; i < int(sizeof kDecoColors / sizeof kDecoColors[0]); ++i) {
-        auto *swatch = colorButton(kDecoColors[i], kDecoColors[i].name(), 24);
+        auto *swatch = colorButton(kDecoColors[i], kDecoColors[i].name(), 28);
         stripLay->addWidget(swatch);
         connect(swatch, &QToolButton::clicked, this, [this, i] {
             m_decoToolColor[m_decoTool] = kDecoColors[i];
@@ -831,6 +910,7 @@ void PinWindow::updateSelToolbar()
     }
     ensureSelToolbar();
     m_selToolbar->adjustSize();
+    applyRoundedMask(m_selToolbar);
     const double scaleX = double(imageRect().width()) / m_ocrImgSize.width();
     const double scaleY = double(imageRect().height()) / m_ocrImgSize.height();
     QRectF sel;
@@ -868,7 +948,7 @@ void PinWindow::toggleToolbar(bool enabled)
             m_toolbar->setObjectName(QStringLiteral("pinToolbar"));
             m_toolbar->setStyleSheet(QStringLiteral(
                 "#pinToolbar { background: #18191d; border: 1px solid #2b2d33; border-radius: 8px; }"
-                "QToolButton { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 0; }"
+                "QToolButton { background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 0; }"
                 "QToolButton:hover { background-color: #222326; }"
                 "QToolButton:pressed { background-color: #2b2d33; }"
                 "QToolButton:checked { background: transparent; }"
@@ -876,7 +956,7 @@ void PinWindow::toggleToolbar(bool enabled)
                 "QFrame#barSeparator { background-color: #2b2d33; margin: 0px 6px; border: none; }"
             ));
             auto *lay = new QHBoxLayout(m_toolbar);
-            lay->setContentsMargins(11, 7, 11, 7);
+            lay->setContentsMargins(12, 7, 12, 7);
             lay->setSpacing(4);
 
             // The full annotation tool set: any tool arms the in-place canvas
@@ -979,6 +1059,7 @@ void PinWindow::toggleToolbar(bool enabled)
         }
         m_backBtn->setVisible(m_canGoBack);
         m_toolbar->adjustSize();
+        applyRoundedMask(m_toolbar);
         updateToolbarPosition();
         m_toolbar->show();
     } else {
@@ -1024,7 +1105,7 @@ void PinWindow::updateToolbarPosition()
         const QRect avail = scr->availableGeometry();
         const int x = qBound(avail.left(), geom.left() + (geom.width() - tSize.width()) / 2,
                              qMax(avail.left(), avail.right() + 1 - tSize.width()));
-        const int y = qMin(geom.bottom() + 6, avail.bottom() - tSize.height());
+        const int y = qMin(geom.bottom() + Bar::gap, avail.bottom() - tSize.height());
         m_toolbar->move(x, y);
     }
     updateSelToolbar();   // The selection toolbar follows window moves and zoom too.
@@ -1076,12 +1157,13 @@ void PinWindow::positionStrip()
     QWidget *strip = m_canvas->optionsStrip();
     if (!strip || !strip->isVisible()) return;
     strip->adjustSize();
+    applyRoundedMask(strip);
     const QRect avail = screen() ? screen()->availableGeometry()
                                  : QGuiApplication::primaryScreen()->availableGeometry();
     // Left-aligned with the pin toolbar, directly below it.
     const int x = qBound(avail.left(), m_toolbar->x(),
                          qMax(avail.left(), avail.right() + 1 - strip->width()));
-    const int y = qMin(m_toolbar->y() + m_toolbar->height() + 2, avail.bottom() + 1 - strip->height());
+    const int y = qMin(m_toolbar->y() + m_toolbar->height() + Bar::gap, avail.bottom() + 1 - strip->height());
     strip->move(x, qMax(avail.top(), y));
     strip->raise();
 }
@@ -1120,7 +1202,11 @@ QMenu *PinWindow::createContextMenu()
     m->setStyleSheet(darkMenuQss);
 
     // Section 1
-    QAction *textSelect = m->addAction(tr("文本可选择"));
+    QString textLabel = tr("文本可选择");
+    if (m_textSelectable && m_ocrRunning) textLabel += tr("（识别中…）");
+    else if (!m_textOcrError.isEmpty()) textLabel += tr("（识别失败）");
+    QAction *textSelect = m->addAction(textLabel);
+    if (!m_textOcrError.isEmpty()) textSelect->setToolTip(m_textOcrError);
     textSelect->setCheckable(true);
     textSelect->setChecked(m_textSelectable);
     connect(textSelect, &QAction::toggled, this, [this](bool checked) { toggleTextSelectable(checked); });
@@ -1151,7 +1237,11 @@ QMenu *PinWindow::createContextMenu()
     connect(flipV, &QAction::triggered, this, [this] { flipVertical(); });
 
     QAction *invert = imgProc->addAction(tr("反色"));
-    connect(invert, &QAction::triggered, this, [this] { invertColors(); });
+    invert->setCheckable(true);
+    invert->setChecked(m_inverted);
+    connect(invert, &QAction::toggled, this, [this](bool on) {
+        if (on != m_inverted) invertColors();
+    });
 
     imgProc->addSeparator();
 
@@ -1327,6 +1417,7 @@ void PinWindow::mouseDoubleClickEvent(QMouseEvent *)  { close(); }
 PinWindow::~PinWindow()
 {
     if (m_ocrCancel) m_ocrCancel->store(true);   // Background text recognition stops with the pin.
+    if (m_ocrTipShown) QToolTip::hideText();
     if (m_selToolbar) {
         m_selToolbar->close();
         delete m_selToolbar;

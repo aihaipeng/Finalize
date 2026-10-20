@@ -12,7 +12,11 @@
 #include <QDateTime>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QCursor>
+#include <QScreen>
 #include <QIcon>
 #include <QLabel>
 #include <QListView>
@@ -34,15 +38,26 @@ HistoryDialog::HistoryDialog(QWidget *parent)
 {
     setWindowTitle(tr("截图历史"));
     setAttribute(Qt::WA_DeleteOnClose);
-    resize(920, 620);
-    setMinimumSize(640, 420);
+    const QScreen *target = QGuiApplication::screenAt(QCursor::pos());
+    if (!target) target = QGuiApplication::primaryScreen();
+    const QSize available = target ? target->availableGeometry().size() - QSize(32, 32)
+                                   : QSize(920, 620);
+    const QSize initial(qMin(920, available.width()), qMin(620, available.height()));
+    resize(initial);
+    setMinimumSize(qMin(640, initial.width()), qMin(420, initial.height()));
     setStyleSheet(QStringLiteral(
         "QDialog { background:#18191d; }"
         "QListWidget { background:#111216; border:1px solid #2b2d33; border-radius:8px;"
         " padding:6px; color:#f4f5f8; }"
         "QListWidget::item { background:#18191d; border:1px solid #2b2d33; border-radius:6px; padding:4px; }"
+        "QListWidget::item:hover { background:#1f2024; border-color:#3a3c42; }"
         "QListWidget::item:selected { background:#32345b; border-color:#5e6ad2; }"
         "QCheckBox, QLabel { color:#f4f5f8; }"
+        "QCheckBox::indicator { width:16px; height:16px; border:1px solid #777980;"
+        " border-radius:4px; background:#111216; }"
+        "QCheckBox::indicator:hover { border-color:#9c9da1; }"
+        "QCheckBox::indicator:checked { background:#5e6ad2; border-color:#5e6ad2;"
+        " image:url(:/icons/check_light.png); }"
         "QPushButton { background:#18191d; color:#f4f5f8; border:1px solid #2b2d33;"
         " border-radius:6px; padding:6px 12px; font-size:14px; text-align:center; }"
         "QPushButton:hover { background:#222326; }"
@@ -52,11 +67,6 @@ HistoryDialog::HistoryDialog(QWidget *parent)
     layout->setContentsMargins(18, 16, 18, 16);
     layout->setSpacing(10);
 
-    auto *header = new QHBoxLayout;
-    auto *brand=new QLabel(QStringLiteral("N"),this);brand->setStyleSheet(QStringLiteral("color:#5e6ad2;font-size:14px;font-weight:600;"));
-    header->addWidget(brand);header->addWidget(new QLabel(tr("截图历史"),this));header->addStretch();
-    auto *headerClose=new QToolButton(this);headerClose->setIcon(cardIcon(Icon::CardClose));headerClose->setFixedSize(28,28);
-    connect(headerClose,&QToolButton::clicked,this,&QDialog::reject);header->addWidget(headerClose);layout->addLayout(header);
     auto *top = new QHBoxLayout;
     auto *title = new QLabel(tr("截图历史"), this);
     title->setStyleSheet(QStringLiteral("font-size:20px; font-weight:600;"));
@@ -67,6 +77,18 @@ HistoryDialog::HistoryDialog(QWidget *parent)
     m_enabled->setChecked(HistoryStore::enabled());
     top->addWidget(m_enabled);
     top->addStretch();
+    auto *headerClose=new QToolButton(this);
+    headerClose->setIcon(cardIcon(Icon::CardClose));
+    headerClose->setFixedSize(28,28);
+    headerClose->setAutoRaise(true);
+    headerClose->setToolTip(tr("关闭"));
+    headerClose->setAccessibleName(tr("关闭"));
+    headerClose->setStyleSheet(QStringLiteral(
+        "QToolButton{background:transparent;border:none;border-radius:6px;}"
+        "QToolButton:hover{background:#222326;}"
+        "QToolButton:focus{border:1px solid #828fff;}"));
+    connect(headerClose,&QToolButton::clicked,this,&QDialog::reject);
+    top->addWidget(headerClose);
     layout->addLayout(top);
 
     m_list = new QListWidget(this);
@@ -96,18 +118,46 @@ HistoryDialog::HistoryDialog(QWidget *parent)
     m_pin = new QPushButton(makeIcon(Icon::Pin, 16, true), tr("贴图"), this);
     m_copy = new QPushButton(makeIcon(Icon::Copy, 16, true), tr("复制"), this);
     m_save = new QPushButton(makeIcon(Icon::Save, 16, true), tr("保存"), this);
-    m_delete = new QPushButton(makeIcon(Icon::Cancel, 16, true), tr("删除"), this);
+    m_delete = new QPushButton(tr("删除"), this);
     m_clear = new QPushButton(tr("清空"), this);
     auto *close = new QPushButton(tr("关闭"), this);
     for (QPushButton *button : {m_pin, m_copy, m_save, m_delete, m_clear, close}) {
         button->setFixedHeight(32);
         button->setMinimumWidth(72);
-        bottom->addWidget(button);
+        button->setAutoDefault(false);
+        button->setDefault(false);
     }
+    for (QPushButton *button : {m_pin, m_copy, m_save})
+        bottom->addWidget(button);
+    bottom->addSpacing(4);
+    auto *dangerSep = new QFrame(this);
+    dangerSep->setFixedSize(1, 20);
+    dangerSep->setStyleSheet(QStringLiteral("background:#2b2d33;"));
+    bottom->addWidget(dangerSep);
+    bottom->addSpacing(4);
+    for (QPushButton *button : {m_delete, m_clear, close})
+        bottom->addWidget(button);
+    m_pin->setStyleSheet(QStringLiteral(
+        "QPushButton{background:#5e6ad2;border:1px solid #5e6ad2;color:#ffffff;border-radius:6px;"
+        "padding:6px 12px;font-size:14px;text-align:center;}"
+        "QPushButton:hover{background:#5661c4;border-color:#5661c4;}"
+        "QPushButton:pressed{background:#4f59b5;border-color:#4f59b5;}"
+        "QPushButton:disabled{background:#18191d;border-color:#2b2d33;color:#73757f;}"));
+    for (QPushButton *button : {m_delete, m_clear})
+        button->setStyleSheet(QStringLiteral(
+            "QPushButton{background:#18191d;border:1px solid #5a2f2f;color:#ff8a8a;border-radius:6px;"
+            "padding:6px 12px;font-size:14px;text-align:center;}"
+            "QPushButton:hover{background:#3a2222;border-color:#7a3a3a;}"
+            "QPushButton:pressed{background:#4a2626;}"
+            "QPushButton:disabled{background:#18191d;border-color:#2b2d33;color:#73757f;}"));
     layout->addLayout(bottom);
 
     connect(m_enabled, &QCheckBox::toggled, this, [this](bool enabled) {
         HistoryStore::setEnabled(enabled);
+        if (m_entries.isEmpty())
+            m_empty->setText(enabled
+                                 ? tr("暂无历史截图\n新截图会自动记录在这里。")
+                                 : tr("截图历史为空\n开启记录后，新截图将显示在这里。"));
         emit enabledChanged(enabled);
     });
     connect(m_list, &QListWidget::itemSelectionChanged, this, &HistoryDialog::updateActions);
@@ -164,9 +214,13 @@ void HistoryDialog::refresh()
     m_status->setText(!readError.isEmpty()
             ? tr("读取历史失败，请检查历史数据库后重试")
             : entries.isEmpty()
-                ? tr("暂无历史截图")
+                ? QString()
                 : tr("%1 项 · %2").arg(entries.size()).arg(QLocale().formattedDataSize(bytes)));
-    m_empty->setVisible(entries.isEmpty());
+    m_empty->setVisible(entries.isEmpty() && readError.isEmpty());
+    if (entries.isEmpty() && readError.isEmpty())
+        m_empty->setText(m_enabled->isChecked()
+                             ? tr("暂无历史截图\n新截图会自动记录在这里。")
+                             : tr("截图历史为空\n开启记录后，新截图将显示在这里。"));
     updateActions();
 }
 
@@ -253,6 +307,8 @@ void HistoryDialog::removeSelected()
     confirm.setInformativeText(tr("将从本机历史中删除所选的 %1 张截图。此操作无法撤销。")
                                    .arg(ids.size()));
     confirm.setDefaultButton(QMessageBox::No);
+    confirm.setProperty("lenssnipDestructive", true);
+    confirm.setProperty("lenssnipAction", tr("删除"));
     if (confirm.exec() != QMessageBox::Yes)
         return;
     bool removed = true;
@@ -265,9 +321,13 @@ void HistoryDialog::removeSelected()
 void HistoryDialog::clearAll()
 {
     if (m_entries.isEmpty()) return;
-    if (QMessageBox::question(this, tr("清空历史"),
-                              tr("确定清空全部截图历史？应用副本会被删除，用户保存的图片不受影响。"))
-            != QMessageBox::Yes)
+    QMessageBox confirm(QMessageBox::Warning, tr("清空历史"),
+                        tr("确定清空全部截图历史？应用副本会被删除，用户保存的图片不受影响。"),
+                        QMessageBox::Yes | QMessageBox::No, this);
+    confirm.setDefaultButton(QMessageBox::No);
+    confirm.setProperty("lenssnipDestructive", true);
+    confirm.setProperty("lenssnipAction", tr("清空"));
+    if (confirm.exec() != QMessageBox::Yes)
         return;
     if (!HistoryStore::clear()) {
         m_status->setText(tr("清空历史失败，请检查历史数据库后重试"));
@@ -327,12 +387,18 @@ int HistoryDialog::testUi(const QString &previewPath)
             QMessageBox confirm(QMessageBox::Warning,tr("删除历史"),tr("删除所选截图？"),QMessageBox::Yes|QMessageBox::No,&dialog);
             confirm.setInformativeText(tr("将从本机历史中删除所选的 %1 张截图。此操作无法撤销。").arg(2));
             confirm.setDefaultButton(QMessageBox::No);
+            confirm.setProperty("lenssnipDestructive", true);
+            confirm.setProperty("lenssnipAction", tr("删除"));
             confirm.show();QApplication::processEvents();
+            check(confirm.defaultButton()==confirm.button(QMessageBox::No)
+                      && confirm.button(QMessageBox::Yes)->styleSheet().contains(QStringLiteral("#c04a4a")),
+                  "delete confirmation keeps cancel as the visible default and uses the danger action");
             check(confirm.grab().save(previewPath+QStringLiteral("-39-history-confirm.png")),"save the delete confirmation without deleting data");confirm.reject();
             HistoryStore::clear();
             dialog.refresh();
             QApplication::processEvents();
-            check(dialog.m_empty->isVisible(), "empty history explains how to record new captures");
+            check(dialog.m_empty->isVisible() && dialog.m_status->text().isEmpty(),
+                  "empty history explains how to record new captures without repeating the bottom status");
             check(dialog.grab().save(previewPath + QStringLiteral("-history-empty.png")), "save the empty history preview");
         }
     }

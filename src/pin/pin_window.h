@@ -24,6 +24,7 @@
 #include <qt_windows.h>
 
 class QMenu;
+class QLabel;
 
 // ---------- Pinned image window ----------
 class PinWindow : public QWidget
@@ -77,6 +78,7 @@ private:
     void setShadowEnabled(bool enabled);
     void toggleTextSelectable(bool enabled);
     void runOcrForTextSelection();
+    void updateTextStatus();
     int charIndexAt(const QPoint &pos, bool proximity = true) const;
     QString selectedText() const;
     void toggleToolbar(bool enabled);
@@ -123,6 +125,9 @@ private:
     // Text selection support
     bool m_textSelectable = false;
     bool m_ocrRunning = false;
+    QString m_textOcrError;
+    QLabel *m_textStatus = nullptr;
+    bool m_ocrTipShown = false;
     int m_ocrGen = 0;
     OcrCancel m_ocrCancel;
     QVector<OcrLine> m_ocrLines;

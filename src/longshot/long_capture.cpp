@@ -32,6 +32,7 @@
 #include <QCheckBox>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <qt_windows.h>
 
 namespace {
@@ -114,6 +115,10 @@ void LongPreview::paintEvent(QPaintEvent *)
     if (!atStart) chevron(true);
     if (!atEnd) chevron(false);
     if (showFrame) {
+        // A dark halo keeps the light green frame readable on white pages too.
+        const int halo = kPreviewPad + 2;
+        p.setPen(QPen(QColor("#18191d"), halo, Qt::SolidLine, Qt::FlatCap, Qt::MiterJoin));
+        p.drawRect(frameRect.marginsAdded(QMargins(halo / 2, halo / 2, halo / 2, halo / 2)));
         p.setPen(QPen(kMatchColor, kPreviewPad, Qt::SolidLine, Qt::FlatCap, Qt::MiterJoin));
         p.drawRect(frameRect.marginsAdded(QMargins(kPreviewPad / 2, kPreviewPad / 2, kPreviewPad / 2, kPreviewPad / 2)));
     }
@@ -321,6 +326,7 @@ void LongCapture::captureFrame()
         const bool wasLost = m_alignmentLost;
         const bool aligned = ingest(raw);
         m_alignmentLost = !aligned && !m_storageFull;
+        if (m_alignmentLost && m_autoScroll) setAutoScroll(0);
         if (aligned && oldStart != oldEnd)
             autoCrop(m_rowStart < oldStart ? -1 : m_rowEnd > oldEnd ? 1 : 0);
         if (oldStart != m_rowStart || oldEnd != m_rowEnd || oldFrame != m_frameRow
@@ -389,6 +395,8 @@ void LongCapture::resetCapture()
     m_alignmentLost = m_storageFull = m_storageWarned = false;
     m_cropState = m_cropBase = 0;
     m_failClock.invalidate();
+    m_errorText.clear();
+    m_errorClock.invalidate();
     if (m_preview) { m_preview->image = QImage(); m_preview->hide(); }
     updateUi();
 }
@@ -599,6 +607,7 @@ void LongCapture::buildUi()
         "QToolButton:checked:hover{background-color:#222326;}"
         "QFrame#barSeparator{background-color:#2b2d33;margin:0px 6px;border:none;}"
         "QLabel{color:#9c9da1;font-size:12px;background:transparent;padding:0px 4px;}"
+        "QLabel#longCaptureSize{color:#f4f5f8;font-size:14px;}"
         "QComboBox{color:#f4f5f8;background:#0c0d10;border:none;border-radius:12px;"
         "padding:1px 4px 1px 12px;font-size:13px;}"
         "QComboBox:hover{background:#222326;}"
@@ -610,14 +619,17 @@ void LongCapture::buildUi()
     lay->setContentsMargins(12, 7, 12, 7);           // 42px surface around compact controls.
     lay->setSpacing(4);
     m_grip = new QWidget;
-    m_grip->setFixedSize(16, Bar::button);
+    m_grip->setFixedSize(24, Bar::button);
     m_grip->setCursor(Qt::SizeAllCursor);
     m_grip->installEventFilter(this);
     m_label = new QLabel;
+    m_label->setObjectName(QStringLiteral("longCaptureSize"));
     m_feedback = new QLabel(nullptr,Qt::Tool|Qt::FramelessWindowHint|Qt::WindowStaysOnTopHint|Qt::WindowDoesNotAcceptFocus|Qt::WindowTransparentForInput);
     m_feedback->setObjectName(QStringLiteral("longCaptureFeedback"));
-    m_feedback->setAttribute(Qt::WA_TranslucentBackground);m_feedback->setAttribute(Qt::WA_ShowWithoutActivating);
-    m_feedback->setStyleSheet(QStringLiteral("QLabel{background:#18191d;color:#9c9da1;border:1px solid #2b2d33;border-radius:8px;padding:8px 16px;font-size:12px;}"));
+    m_feedback->setAttribute(Qt::WA_StyledBackground);
+    m_feedback->setAttribute(Qt::WA_ShowWithoutActivating);
+    m_feedback->setStyleSheet(QStringLiteral("QLabel{background:#18191d;color:#9c9da1;border:1px solid #2b2d33;border-radius:8px;padding:8px 16px;font-size:12px;}"
+                                             "QLabel[error=\"true\"]{color:#e9be74;border-color:#e9be74;}"));
     m_feedbackAffinity=SetWindowDisplayAffinity(reinterpret_cast<HWND>(m_feedback->winId()),WDA_EXCLUDEFROMCAPTURE);
 
     m_axis = new QWidget;
@@ -648,7 +660,10 @@ void LongCapture::buildUi()
         "QToolButton:hover{background-color:#222326;}"
         "QToolButton:pressed{background-color:#2b2d33;}"
         "QFrame#barSeparator{background-color:#2b2d33;margin:0px 6px;border:none;}"
-        "QCheckBox{color:#f4f5f8;font-size:13px;background:transparent;spacing:6px;}"));
+        "QCheckBox{color:#f4f5f8;font-size:13px;background:transparent;spacing:6px;}"
+        "QCheckBox::indicator{width:16px;height:16px;border:1px solid #777980;border-radius:4px;background:#111216;}"
+        "QCheckBox::indicator:hover{border-color:#9c9da1;}"
+        "QCheckBox::indicator:checked{background:#5e6ad2;border-color:#5e6ad2;image:url(:/icons/check_light.png);}"));
     auto *cropLay = new QHBoxLayout(m_cropPanel);
     cropLay->setContentsMargins(8, 4, 8, 4);
     cropLay->setSpacing(4);
@@ -782,14 +797,24 @@ void LongCapture::updateButtons()
 void LongCapture::updateFeedback()
 {
     if(!m_feedback)return;
-    if(m_suspended||m_done||(!m_alignmentLost&&!m_autoScroll)){m_feedback->hide();return;}
-    m_feedback->setText(m_alignmentLost?tr("图片匹配失败，请返回最后成功位置后继续滚动。")
+    const bool error=m_alignmentLost||(!m_errorText.isEmpty()&&m_errorClock.isValid()&&m_errorClock.elapsed()<4000);
+    if(!m_alignmentLost&&!error&&!m_errorText.isEmpty())m_errorText.clear();
+    if(m_suspended||m_done||(!m_alignmentLost&&!m_autoScroll&&!error)){m_feedback->hide();return;}
+    if(m_feedback->property("error").toBool()!=error){
+        m_feedback->setProperty("error",error);
+        m_feedback->style()->unpolish(m_feedback);
+        m_feedback->style()->polish(m_feedback);
+    }
+    m_feedback->setText(error?(m_alignmentLost?tr("图片匹配失败，请返回最后成功位置后继续滚动。"):m_errorText)
         :m_vertical?(m_autoScroll>0?tr("自动向下滚动"):tr("自动向上滚动"))
                    :(m_autoScroll>0?tr("自动向右滚动"):tr("自动向左滚动")));
     m_feedback->adjustSize();
+    applyRoundedMask(m_feedback);
     const QRect available=screenFor(m_region)->availableGeometry();
     const int x=m_region.center().x()-m_feedback->width()/2;
-    const int y=m_alignmentLost?m_region.bottom()-m_feedback->height()-16:m_bar->geometry().bottom()+12;
+    const int barTop=m_bar?m_bar->geometry().top():m_region.top();
+    const int barBottom=m_bar?m_bar->geometry().bottom():m_region.bottom();
+    const int y=barBottom<m_region.top()?barTop-m_feedback->height()-12:barBottom+12;
     m_feedback->move(qBound(available.left(),x,qMax(available.left(),available.right()+1-m_feedback->width())),
                      qBound(available.top(),y,qMax(available.top(),available.bottom()+1-m_feedback->height())));
     m_feedback->show();
@@ -998,7 +1023,7 @@ bool LongCapture::eventFilter(QObject *watched, QEvent *event)
         const QPointF c = QRectF(w->rect()).center();
         if (w == m_grip) {                       // Six dots: the bar's drag handle.
             p.setPen(Qt::NoPen);
-            p.setBrush(QColor(0x32, 0x32, 0x36));
+            p.setBrush(Bar::dim);
             for (int col : {-1, 1})
                 for (int row : {-1, 0, 1})
                     p.drawRect(QRectF(c.x() + col * 3 - 1.5, c.y() + row * 7 - 1.5, 3, 3));
@@ -1058,9 +1083,9 @@ void LongCapture::notice(const QString &title, const QString &text, const QStrin
 
 void LongCapture::fail(const QString &message)
 {
-    if (!m_label) return;
-    m_label->setText(message);
-    placeBar();
+    m_errorText = message;
+    m_errorClock.start();
+    updateFeedback();
 }
 
 void LongCapture::reportCaptured(const QImage &image)

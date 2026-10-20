@@ -250,6 +250,13 @@ int OcrDialog::testTranslate()
         return 1;
     }
     std::puts("PASS: oversized translation input is rejected");
+    const QSize compact = OcrDialog::preferredSize(QRect(0, 0, 960, 520), true);
+    if (compact.width() > 960 - 32 || compact.height() > 520 - 32) {
+        std::fprintf(stderr, "FAIL: translate card prefers %dx%d on a 960x520 workspace\n",
+                     compact.width(), compact.height());
+        return 1;
+    }
+    std::puts("PASS: translate card fits a 200% 1080p workspace");
 
     // Part 2: the whole card chain - rendered text through recognition and the
     // gateway ends up as translated text in the pane.
@@ -455,6 +462,14 @@ int OcrDialog::testTranslate()
     sourceText->setTextCursor(sourceCursor);
     const bool sourceHighlights = foxAt >= 0 && dialog.m_imageView->highlighted().size() == 3;
     auto *title = dialog.findChild<QLabel *>(QStringLiteral("ocrTitle"));
+    const qreal titlePt = title ? title->font().pointSizeF() : 0;
+    if (titlePt < 12.0 || sourceText->font().pointSizeF() > pane->font().pointSizeF() + 0.01
+        || pane->font().weight() < QFont::Medium) {
+        restore();
+        std::fprintf(stderr, "FAIL: translate type hierarchy title=%.2f source=%.2f result=%.2f weight=%d\n",
+                     titlePt, sourceText->font().pointSizeF(), pane->font().pointSizeF(), pane->font().weight());
+        return 1;
+    }
     const bool sourceSelected = sourceText->textCursor().hasSelection();
     if (title) {
         const QPoint at = title->rect().center();

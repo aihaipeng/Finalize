@@ -141,11 +141,11 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     m_sizeBar->setObjectName(QStringLiteral("sizeBar"));
     m_sizeBar->setFixedHeight(32);
     m_sizeBar->setStyleSheet(QStringLiteral(
-        "QWidget#sizeBar{background:#18191d;border:1px solid #2b2d33;border-radius:4px;}"
+        "QWidget#sizeBar{background:#18191d;border:1px solid #2b2d33;border-radius:8px;}"
         "QLabel{color:#f4f5f8;background:transparent;border:none;font-size:14px;padding:0 9px;}"
         "QToolButton{color:#f4f5f8;background:transparent;border:none;font-size:13px;padding:0;text-align:center;}"
-        "QToolButton:hover{background:#222326;}"
-        "QToolButton:pressed{background:#2b2d33;}"
+        "QToolButton:hover{background:#222326;border-radius:6px;}"
+        "QToolButton:pressed{background:#2b2d33;border-radius:6px;}"
         "QFrame#sizeBarDivider{background:#2b2d33;border:none;}"));
     auto *sizeBarLayout = new QHBoxLayout(m_sizeBar);
     sizeBarLayout->setContentsMargins(0, 0, 0, 0);
@@ -222,7 +222,8 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     m_sizeRadiusSpin->setFrame(false);
     m_sizeRadiusSpin->setFixedHeight(28);
     m_sizeRadiusSpin->setStyleSheet(QStringLiteral(
-        "QSpinBox{color:#f4f5f8;background:transparent;border:none;padding:0;font-size:14px;}"));
+        "QSpinBox{color:#f4f5f8;background:transparent;border:none;padding:0;font-size:14px;}"
+        "QSpinBox:focus{background:#222326;border-radius:4px;}"));
     m_sizeRadiusSpin->installEventFilter(this);
     for (QWidget *child : m_sizeRadiusSpin->findChildren<QWidget *>())
         child->installEventFilter(this);
@@ -360,14 +361,15 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     m_shapeButton->setCheckable(true);
     m_shapeButton->setCursor(Qt::PointingHandCursor);
     connect(m_shapeButton, &QToolButton::clicked, this, [this] {
-        selectTool(m_atool == ATool::Rect ? ATool::None : ATool::Rect);
+        const ATool shape = m_shapeEllipse ? ATool::Ellipse : ATool::Rect;
+        selectTool(m_atool == shape ? ATool::None : shape);
         setCursor(Qt::CrossCursor);
         update();
     });
     m_toolBtn.fill(nullptr, int(ATool::Eraser) + 1);
     m_toolBtn[int(ATool::Rect)] = m_shapeButton;
+    m_toolBtn[int(ATool::Ellipse)] = m_shapeButton;
     struct { ATool tool; Icon icon; const char *tip; } const tools[] = {
-        {ATool::Ellipse, Icon::Ellipse, QT_TRANSLATE_NOOP("CaptureOverlay", "椭圆 (O)")},
         {ATool::Arrow, Icon::Arrow, QT_TRANSLATE_NOOP("CaptureOverlay", "箭头 (A)")},
         {ATool::Pen, Icon::Pen, QT_TRANSLATE_NOOP("CaptureOverlay", "画笔 (P)")},
         {ATool::Marker, Icon::Marker, QT_TRANSLATE_NOOP("CaptureOverlay", "荧光笔 (H)")},
@@ -390,11 +392,11 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     if (pinEdit) {
         auto *done = barButton(Icon::Check, tr("完成编辑 (Enter)"));
         connect(done, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
-        m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Ellipse)], m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
+        m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
                          m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
                          m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)], undo, redo, done};
     } else {
-        m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Ellipse)], m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
+        m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
                          m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
                          m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)], undo, redo};
         m_toolButtons += outputButtons;
@@ -1758,8 +1760,8 @@ static void applyDarkWindowChrome(QWidget *window)
     const HWND hwnd = reinterpret_cast<HWND>(window->winId());
     const BOOL darkTitle = TRUE;
     DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &darkTitle, sizeof(darkTitle));
-    const COLORREF captionColor = RGB(24, 24, 27), titleText = RGB(252, 252, 252),
-                   borderColor = RGB(39, 39, 42);
+    const COLORREF captionColor = RGB(24, 25, 29), titleText = RGB(244, 245, 248),
+                   borderColor = RGB(43, 45, 51);
     DwmSetWindowAttribute(hwnd, 35 /* DWMWA_CAPTION_COLOR */, &captionColor, sizeof(captionColor));
     DwmSetWindowAttribute(hwnd, 36 /* DWMWA_TEXT_COLOR */, &titleText, sizeof(titleText));
     DwmSetWindowAttribute(hwnd, 34 /* DWMWA_BORDER_COLOR */, &borderColor, sizeof(borderColor));
@@ -1798,15 +1800,16 @@ void CaptureOverlay::showCustomSizePopup()
         "QLabel#customSection{color:#9c9da1;font-weight:400;}"
         "QLabel#customHint{color:#9c9da1;font-size:12px;}"
         "QFrame#customDivider{background:#2b2d33;border:none;}"
-        "QFrame#customField{background:#111216;border:1px solid #2b2d33;border-radius:8px;}"
+        "QFrame#customField{background:#111216;border:1px solid #777980;border-radius:8px;}"
         "QFrame#customField:hover{background:#222326;}"
+        "QFrame#customField[focus=\"true\"]{border-color:#828fff;background:#222326;}"
         "QLabel#customFieldLabel{color:#9c9da1;background:transparent;font-size:13px;}"
         "QSpinBox{color:#f4f5f8;background:transparent;border:none;padding:0;min-height:30px;"
         "font-size:14px;selection-background-color:#5e6ad2;}"
         "QSpinBox:hover,QSpinBox:focus{background:transparent;border:none;}"
-        "QComboBox{color:#f4f5f8;background:#111216;border:1px solid #2b2d33;border-radius:8px;"
+        "QComboBox{color:#f4f5f8;background:#111216;border:1px solid #777980;border-radius:8px;"
         "padding:0 8px;min-height:30px;font-size:13px;}"
-        "QComboBox:hover{background:#222326;} QComboBox:focus{border-color:#5e6ad2;}"
+        "QComboBox:hover{background:#222326;} QComboBox:focus{border-color:#828fff;}"
         "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
         "QComboBox::down-arrow{image:url(:/icons/chevron_down_light.png);width:10px;height:10px;}"
         "QComboBox QAbstractItemView{color:#f4f5f8;background:#18191d;border:1px solid #2b2d33;"
@@ -1817,7 +1820,7 @@ void CaptureOverlay::showCustomSizePopup()
         "QScrollBar::handle:vertical{background:#35373e;border-radius:4px;min-height:20px;}"
         "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
         "QCheckBox{color:#f4f5f8;background:transparent;font-size:13px;spacing:7px;}"
-        "QCheckBox::indicator{width:16px;height:16px;border:1px solid #3c3c3c;border-radius:4px;"
+        "QCheckBox::indicator{width:16px;height:16px;border:1px solid #777980;border-radius:4px;"
         "background:#111216;}"
         "QCheckBox::indicator:hover{border-color:#73757f;}"
         "QCheckBox::indicator:checked{background:#5e6ad2;border-color:#5e6ad2;"
@@ -2100,7 +2103,7 @@ void CaptureOverlay::refreshPresetCombo(const QString &selected)
         if (auto *model = qobject_cast<QStandardItemModel *>(m_presetCombo->model())) {
             if (auto *item = model->item(m_presetCombo->count() - 1)) {
                 item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
-                item->setForeground(Bar::dim);
+                item->setForeground(Bar::muted);
             }
         }
         for (const SizePreset &preset : m_sizePresets) {
@@ -2140,9 +2143,9 @@ void CaptureOverlay::saveCurrentPreset()
     dialog.setStyleSheet(QStringLiteral(
         "QDialog{background:#18191d;}"
         "QLabel{color:#f4f5f8;font-size:14px;}"
-        "QLineEdit{color:#f4f5f8;background:#111216;border:1px solid #2b2d33;border-radius:8px;"
+        "QLineEdit{color:#f4f5f8;background:#111216;border:1px solid #777980;border-radius:8px;"
         "padding:0 8px;min-height:30px;font-size:14px;selection-background-color:#5e6ad2;}"
-        "QLineEdit:focus{border-color:#5e6ad2;}"
+        "QLineEdit:focus{border-color:#828fff;}"
         "QPushButton{color:#f4f5f8;background:#222326;border:none;border-radius:8px;"
         "padding:0 12px;min-height:30px;font-size:14px;text-align:center;}"
         "QPushButton:hover{background:#2b2d33;}"));

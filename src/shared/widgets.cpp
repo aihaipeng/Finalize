@@ -17,6 +17,8 @@
 #include <QtMath>
 #include <QToolButton>
 #include <QHash>
+#include <QRegion>
+#include <QVariant>
 #include <QStylePainter>
 #include <QStyleOptionComboBox>
 #include <QFrame>
@@ -197,6 +199,17 @@ QWidget *barSeparator(bool dark)
     if (dark) line->setFixedSize(13, 16);              // 1px line plus 6px margins each side.
     else line->setFixedSize(5, 14);                    // 1px line plus 2px margins each side.
     return line;
+}
+
+void applyRoundedMask(QWidget *widget, int radius)
+{
+    if (!widget || widget->size().isEmpty()) return;
+    const QVariant last = widget->property("lenssnipMaskSize");
+    if (last.isValid() && last.toSize() == widget->size()) return;
+    QPainterPath path;
+    path.addRoundedRect(QRectF(widget->rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
+    widget->setMask(QRegion(path.toFillPolygon().toPolygon()));
+    widget->setProperty("lenssnipMaskSize", widget->size());
 }
 
 // The classic 20-color paint palette, dark row first.

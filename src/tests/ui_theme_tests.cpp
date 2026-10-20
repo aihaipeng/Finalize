@@ -12,6 +12,7 @@
 #include "shared/widgets.h"
 #include <QApplication>
 #include <QColorDialog>
+#include <QScrollArea>
 #include <QDir>
 #include <QFileInfo>
 #include <QFileDialog>
@@ -161,7 +162,12 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
     review.save(overlay.m_colorDialog->grab(), QStringLiteral("-color-dialog"));
     auto *hex=overlay.m_colorDialog->findChild<QLineEdit *>(QStringLiteral("colorHex"));
     auto *alpha=overlay.m_colorDialog->findChild<QSpinBox *>(QStringLiteral("colorAlpha"));
+    auto *colorScroll=overlay.m_colorDialog->findChild<QScrollArea *>(QStringLiteral("colorScroll"));
+    const QRect alphaVisible=colorScroll&&alpha
+        ? QRect(alpha->mapTo(colorScroll->viewport(),QPoint()),alpha->size()) : QRect();
     review.check(hex&&alpha,"the color surface exposes editable hex and alpha fields");
+    review.check(colorScroll&&colorScroll->viewport()->rect().contains(alphaVisible),
+                 "color fields fit without scrolling at this DPI");
     hex->setText(QStringLiteral("#123ABC"));QMetaObject::invokeMethod(hex,"editingFinished");
     review.check(overlay.m_colorDialog->currentColor().name()==QStringLiteral("#123abc"),"hex input updates the real current color");
     const QColor beforeInvalid=overlay.m_colorDialog->currentColor();hex->setText(QStringLiteral("invalid"));QMetaObject::invokeMethod(hex,"editingFinished");
@@ -215,7 +221,7 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
         if (translated) {
             card.resize(1500, 650); card.applyLayout(true); card.m_mask->show(); QApplication::processEvents();
             review.save(card.grab(), QStringLiteral("-translate-edited"));
-            card.m_mask->hide();card.m_text->clear();card.showEmptyState(QStringLiteral("翻译未完成"),QStringLiteral("请检查网络或服务后重试。"));
+            card.m_mask->hide();card.m_text->clear();card.showEmptyState(QStringLiteral("翻译未完成"),QStringLiteral("请检查网络或服务后重试。"),true);
             review.save(card.grab(),QStringLiteral("-30-translate-error"));card.m_emptyIcon->hide();card.m_busy->hide();card.m_emptyRetry->hide();
             card.m_busy->hide();card.m_emptyIcon->hide();card.m_emptyRetry->hide();
             card.m_text->setPlainText(translatedText);
@@ -228,7 +234,7 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
             review.save(card.grab(), QStringLiteral("-ocr-find"));
             card.hideFind(); card.m_text->clear();card.showEmptyState(QStringLiteral("未识别到文字"),QStringLiteral("请调整截图范围后重新识别。"));
             review.save(card.grab(), QStringLiteral("-24-ocr-empty"));
-            card.showEmptyState(QStringLiteral("文字识别暂不可用"),QStringLiteral("请检查本地识别资源后重试。"));
+            card.showEmptyState(QStringLiteral("文字识别暂不可用"),QStringLiteral("请检查本地识别资源后重试。"),true);
             review.save(card.grab(),QStringLiteral("-25-ocr-unavailable"));
             QMessageBox question(QMessageBox::Question,QStringLiteral("重新识别"),QStringLiteral("当前文字已被编辑。重新识别将覆盖你的修改。"),QMessageBox::Yes|QMessageBox::No,&card);
             question.setDefaultButton(QMessageBox::No);question.show();QApplication::processEvents();

@@ -58,6 +58,7 @@
 #include <QLineEdit>
 #include <QHBoxLayout>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <QCursor>
 #include <QFontInfo>
 #include <QPolygonF>
@@ -731,6 +732,15 @@ void CaptureOverlay::syncTextEditorGeometry()
 
 bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
 {
+    if ((ev->type() == QEvent::FocusIn || ev->type() == QEvent::FocusOut) && obj->isWidgetType()) {
+        for (QWidget *w = static_cast<QWidget *>(obj); w; w = w->parentWidget()) {
+            if (w->objectName() != QStringLiteral("customField")) continue;
+            w->setProperty("focus", ev->type() == QEvent::FocusIn);
+            w->style()->unpolish(w);
+            w->style()->polish(w);
+            break;
+        }
+    }
     if (ev->type() == QEvent::ToolTip && obj->isWidgetType()) {   // No hover text anywhere in the capture UI.
         for (QWidget *w = static_cast<QWidget *>(obj); w; w = w->parentWidget())
             if (w == this) return true;
@@ -1599,11 +1609,14 @@ void CaptureOverlay::syncToolButtons()
 {
     const QToolButton *active = m_atool == ATool::None ? nullptr : m_toolBtn[int(m_atool)];
     for (int t = 1; t < m_toolBtn.size(); ++t) {
+        if (m_toolBtn[t] == m_shapeButton) continue;   // Rect and ellipse share one button.
         QSignalBlocker lock(m_toolBtn[t]);
         m_toolBtn[t]->setChecked(m_toolBtn[t] == active);
     }
+    const bool shapeActive = m_atool == ATool::Rect || m_atool == ATool::Ellipse;
     const QSignalBlocker lock(m_shapeButton);
-    m_shapeButton->setIcon(barIcon(Icon::Rect));   // The main bar stays the same whichever sub-shape is armed.
+    m_shapeButton->setChecked(shapeActive);
+    m_shapeButton->setIcon(barIcon(m_shapeEllipse ? Icon::Ellipse : Icon::Rect));
 }
 
 void CaptureOverlay::pickToolColor(const QColor &color, bool undoable)

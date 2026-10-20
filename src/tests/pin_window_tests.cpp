@@ -13,6 +13,7 @@
 #include <QRect>
 #include <QSize>
 #include <QApplication>
+#include <QLabel>
 #include <QMouseEvent>
 #include <QWindow>
 #include <QWheelEvent>
@@ -110,7 +111,7 @@ int PinWindow::testPlacement()
     actions = menu->actions();
     check(!actions.isEmpty(), "context menu has actions");
     // Verify menu items structure
-    check(actions.at(0)->text() == QStringLiteral("文本可选择") && actions.at(0)->isCheckable(),
+    check(actions.at(0)->text().startsWith(QStringLiteral("文本可选择")) && actions.at(0)->isCheckable(),
           "first action is checkable text selection");
     check(actions.at(0)->isChecked() && longPin.m_textSelectable,
           "new pins start with text selection on");
@@ -455,8 +456,8 @@ int PinWindow::testPlacement()
           "the multiply highlight tints the marked line while text stays visible");
     // A "——" often comes back as its own OCR segment on the same visual row;
     // row clustering must keep the row whole instead of cutting the selection.
-    markPin.m_decoHighlight.clear();
-    markPin.m_decoLine.clear();
+    markPin.m_decoHighlight.insert(0, QColor("#ff909c"));
+    markPin.m_decoLine.insert(0, qMakePair(int(PinWindow::DecoWavy), QColor("#ff909c")));
     markPin.m_ocrLines = {
         { QStringLiteral("你好"), QPolygonF(QRectF(10, 40, 40, 20)) },
         { QStringLiteral("——"), QPolygonF(QRectF(55, 42, 30, 16)) },
@@ -467,8 +468,9 @@ int PinWindow::testPlacement()
               && markPin.m_charBoxes.at(2).ch == QChar(0x2014)
               && markPin.m_charBoxes.at(3).ch == QChar(0x2014)
               && markPin.m_charBoxes.at(3).lineIdx == 0
-              && markPin.m_charBoxes.at(4).lineIdx == 1,
-          "a dash segment on the same visual row merges into that row");
+              && markPin.m_charBoxes.at(4).lineIdx == 1
+              && markPin.m_decoHighlight.isEmpty() && markPin.m_decoLine.isEmpty(),
+          "a dash segment on the same visual row merges into that row; rebuild drops stale marks");
     markPin.m_selAnchor = 0;
     markPin.m_selLead = 3;
     check(markPin.selectedText() == QStringLiteral("你好——"),
@@ -832,6 +834,14 @@ int PinWindow::testPlacement()
             std::printf("PIN OCR PICKED: [%s]\n", picked.toStdString().c_str());
             std::fflush(stdout);
         }
+        textPin.m_textOcrError = QStringLiteral("missing model");
+        textPin.updateTextStatus();
+        check(textPin.m_textStatus->isVisible()
+                  && textPin.m_textStatus->text().contains(QStringLiteral("识别失败")),
+              "text selection exposes an OCR failure instead of staying silently checked");
+        textPin.m_textOcrError.clear();
+        textPin.updateTextStatus();
+        check(!textPin.m_textStatus->isVisible(), "clearing the OCR error hides the pin status");
         textPin.toggleTextSelectable(false);
         textPin.close();
     } else {

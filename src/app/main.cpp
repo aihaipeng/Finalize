@@ -80,29 +80,44 @@ int main(int argc, char **argv)
         "QPushButton:hover{background:#222326;}"
         "QPushButton:pressed{background:#2b2d33;}"
         "QPushButton:default{background:#5e6ad2;border-color:#5e6ad2;color:#ffffff;}"
-        "QPushButton:disabled{color:#73757f;}"
-        "QPushButton:focus{border-color:#5e6ad2;}"
-        "QLineEdit,QSpinBox,QDoubleSpinBox{background:#111216;color:#f4f5f8;"
-            "border:1px solid #2b2d33;border-radius:6px;padding:3px 8px;"
+        "QPushButton:default:hover{background:#5661c4;border-color:#5661c4;}"
+        "QPushButton:default:pressed{background:#4f59b5;border-color:#4f59b5;}"
+        "QPushButton:disabled{color:#73757f;background:#18191d;border-color:#2b2d33;}"
+        "QPushButton:focus{border:2px solid #828fff;padding:0 11px;}"
+        "QPushButton:default:focus{border-color:#f4f5f8;}"
+        "QLineEdit,QSpinBox,QDoubleSpinBox,QPlainTextEdit{background:#111216;color:#f4f5f8;"
+            "border:1px solid #777980;border-radius:6px;padding:3px 8px;"
             "selection-background-color:#32345b;selection-color:#f4f5f8;}"
-        "QLineEdit:focus,QSpinBox:focus,QDoubleSpinBox:focus{border-color:#5e6ad2;}"));
+        "QLineEdit:focus,QSpinBox:focus,QDoubleSpinBox:focus,QPlainTextEdit:focus{border-color:#5e6ad2;}"));
     if (app.arguments().contains(QStringLiteral("--test-i18n"))) {
         const QString locale = I18n::effectiveLocale(app.arguments());
         const bool english = locale.startsWith(QStringLiteral("en"));
         const QString capture = QCoreApplication::translate("Controller", "截图 (F1)");
         const QString loading = QCoreApplication::translate("OcrDialog", "正在识别…");
         const QString arrow = QCoreApplication::translate("CaptureOverlay", "箭头 (A)");
+        const QString pinFail = QCoreApplication::translate("PinWindow", "识别失败，右键重试");
+        const QString pinPending = QCoreApplication::translate("PinWindow", "文字识别中…");
+        const QString historyEmpty = QCoreApplication::translate(
+                "HistoryDialog", "暂无历史截图\n新截图会自动记录在这里。");
         const bool hasEnglish = I18n::availableLocales().contains(QStringLiteral("en_US"));
         const bool ok = hasEnglish
                 && (english ? capture == QStringLiteral("Screenshot (F1)")
                                   && loading == QStringLiteral("Recognizing…")
                                   && arrow == QStringLiteral("Arrow (A)")
+                                  && pinFail == QStringLiteral("Recognition failed. Right-click to retry.")
+                                  && pinPending == QStringLiteral("Recognizing text…")
+                                  && historyEmpty == QStringLiteral("No screenshots yet.\nNew screenshots will be recorded here automatically.")
                             : capture == QStringLiteral("截图 (F1)")
                                   && loading == QStringLiteral("正在识别…")
-                                  && arrow == QStringLiteral("箭头 (A)"));
-        std::printf("%s locale=%s locales=%s capture=[%s] loading=[%s] arrow=[%s]\n", ok ? "PASS" : "FAIL",
-                    qPrintable(locale), qPrintable(I18n::availableLocales().join(QLatin1Char(','))),
-                    qPrintable(capture), qPrintable(loading), qPrintable(arrow));
+                                  && arrow == QStringLiteral("箭头 (A)")
+                                  && pinFail == QStringLiteral("识别失败，右键重试")
+                                  && pinPending == QStringLiteral("文字识别中…")
+                                  && historyEmpty == QStringLiteral("暂无历史截图\n新截图会自动记录在这里。"));
+        std::printf("%s locale=%s locales=%s capture=[%s] loading=[%s] arrow=[%s] pinFail=[%s] pinPending=[%s] historyEmpty=[%s]\n",
+                    ok ? "PASS" : "FAIL", qPrintable(locale),
+                    qPrintable(I18n::availableLocales().join(QLatin1Char(','))),
+                    qPrintable(capture), qPrintable(loading), qPrintable(arrow),
+                    qPrintable(pinFail), qPrintable(pinPending), qPrintable(historyEmpty));
         return ok ? 0 : 1;
     }
     if (app.arguments().contains(QStringLiteral("--test-ui-theme"))) {

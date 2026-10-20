@@ -555,6 +555,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         "QComboBox QAbstractItemView::item{min-height:24px;padding:0 12px;border-radius:8px;}"
         "QComboBox QAbstractItemView::item:selected{background:%7;color:white;}"
         "QPlainTextEdit{background:%2;color:%4;border:none;padding:8px 12px;selection-background-color:%8;}"
+        "QPlainTextEdit#translateSourceText{color:%5;}"
         "QGraphicsView{background:%2;border:none;}"
         "QLineEdit{background:%2;color:%4;border:none;border-radius:8px;padding:3px 8px;selection-background-color:%8;}"
         "QLineEdit:focus{background:%3;}"
@@ -567,7 +568,8 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         "QPushButton#retranslateButton:hover,QPushButton#retranslateButton:pressed{background:%7;color:white;}"
         // Icon buttons carry no fill; hover/focus use a background fill instead of a line.
         "QToolButton{background:transparent;color:%4;border:none;border-radius:6px;padding:3px;text-align:center;}"
-        "QToolButton:hover{background:%3;} QToolButton:focus{background:%8;}"
+        "QToolButton:hover{background:%3;} QToolButton:pressed{background:#2b2d33;}"
+        "QToolButton:focus{background:%8;} QToolButton:disabled{color:#73757f;}"
         "QToolButton::menu-indicator{image:none;width:0;}"
         "QToolButton#ocrReplace,QToolButton#ocrReplaceAll{background:%3;padding:0 10px;border:none;}"
         "QToolButton#ocrReplace:hover,QToolButton#ocrReplaceAll:hover{background:#2b2d33;}"
@@ -612,14 +614,9 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     auto *title = new QLabel(m_barcode ? tr("二维码 / 条形码") : m_translate ? tr("识别并翻译") : tr("文字识别"));
     title->setObjectName(QStringLiteral("ocrTitle"));
     QFont titleFont = interfaceFont;
-    titleFont.setPointSizeF(interfaceFont.pointSizeF());
+    titleFont.setPointSizeF(qMax(12.0, interfaceFont.pointSizeF()));
     titleFont.setWeight(QFont::Medium);
     title->setFont(titleFont);
-    auto *brand = new QLabel(QStringLiteral("N"));
-    brand->setObjectName(QStringLiteral("ocrBrand"));
-    brand->setStyleSheet(QStringLiteral("color:#5e6ad2;font-size:14px;font-weight:600;"));
-    brand->setFixedWidth(18);
-    headerLayout->addWidget(brand);
     headerLayout->addWidget(title);
     headerLayout->addStretch();
     auto *back = iconButton(Icon::Back,QStringLiteral("ocrBack"),tr("返回"));
@@ -637,7 +634,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
                           0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)) {
             const QSignalBlocker blocker(pin);
             pin->setChecked(!checked);
-            m_status->setText(tr("切换置顶失败，请重试"));
+            setStatus(tr("切换置顶失败，请重试"));
             return;
         }
         const QString tip = m_barcode
@@ -653,6 +650,10 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     connect(m_maximize,&QToolButton::clicked,this,&OcrDialog::toggleMaximize);
     headerLayout->addWidget(m_maximize);
     auto *close = iconButton(Icon::CardClose,QStringLiteral("ocrClose"),tr("关闭 (Esc)"));
+    close->setStyleSheet(QStringLiteral(
+        "QToolButton#ocrClose{background:transparent;border:none;border-radius:6px;}"
+        "QToolButton#ocrClose:hover{background:#222326;}"
+        "QToolButton#ocrClose:focus{background:transparent;border:2px solid #828fff;}"));
     connect(close,&QToolButton::clicked,this,&QDialog::reject);
     headerLayout->addWidget(close);
     header->setFixedHeight(28);
@@ -862,7 +863,9 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         button->setSizePolicy(QSizePolicy::Minimum,QSizePolicy::Fixed);
         button->setStyleSheet(QStringLiteral(
             "QToolButton{border:none;background:transparent;padding:0 6px;color:#f4f5f8;text-align:center;}"
-            "QToolButton:hover{background:#222326;border-radius:6px;}"));
+            "QToolButton:hover{background:#222326;border-radius:6px;}"
+            "QToolButton:pressed{background:#2b2d33;border-radius:6px;}"
+            "QToolButton:disabled{color:#73757f;}"));
     };
     textAction(m_format,tr("排版"));
     textAction(m_retry,m_translate?tr("识别并翻译"):tr("重新识别"));
@@ -968,7 +971,10 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         connect(m_text,&QPlainTextEdit::selectionChanged,this,&OcrDialog::linkFromOcrTextSelection);
         connect(m_text,&QPlainTextEdit::textChanged,this,&OcrDialog::clearLinkHighlights);
     }
-    if (m_translate) font.setPointSizeF(qMax(10.5,interfaceFont.pointSizeF()));
+    if (m_translate) {
+        font.setPointSizeF(qMax(12.0,interfaceFont.pointSizeF()));
+        font.setWeight(QFont::Medium);
+    }
     m_text->setFont(font);
     m_resultBaseFont = font;
     const auto applyTextScale = [](QPlainTextEdit *pane, const QFont &base,
@@ -1082,7 +1088,10 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     m_emptyRetry->setObjectName(QStringLiteral("emptyRetry"));
     m_emptyRetry->setIcon(cardIcon(Icon::CardReload)); m_emptyRetry->setText(tr("重新识别"));
     m_emptyRetry->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); m_emptyRetry->setFixedHeight(32);
-    m_emptyRetry->setStyleSheet(QStringLiteral("QToolButton{background:#222326;border:none;border-radius:8px;padding:0 12px;color:#f4f5f8;}"));
+    m_emptyRetry->setStyleSheet(QStringLiteral("QToolButton{background:#222326;border:none;border-radius:8px;padding:0 12px;color:#f4f5f8;}"
+                                               "QToolButton:hover{background:#2b2d33;}"
+                                               "QToolButton:pressed{background:#32345b;}"
+                                               "QToolButton:disabled{color:#73757f;}"));
     m_emptyRetry->setFocusPolicy(Qt::TabFocus); m_emptyRetry->hide(); connect(m_emptyRetry,&QToolButton::clicked,this,[this]{if(m_translate&&m_again)m_again->click();else m_retry->click();});
     busyLayout->addWidget(m_emptyRetry,0,Qt::AlignCenter);busyLayout->addStretch();
     connect(m_text,&QPlainTextEdit::textChanged,this,[this]{ if (!m_text->toPlainText().isEmpty() && !m_text->isReadOnly()) {m_busy->hide();m_emptyIcon->hide();m_emptyRetry->hide();} });
@@ -1121,10 +1130,10 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     if (m_barcode) {
         m_barcodeLabel = new QLabel;
         m_barcodeLabel->setObjectName(QStringLiteral("barcodeKind"));
-        m_barcodeLabel->setStyleSheet(QStringLiteral("QLabel{background:#222326;color:#5e6ad2;border:none;border-radius:6px;padding:4px 10px;font-size:12px;}"));
+        m_barcodeLabel->setStyleSheet(QStringLiteral("QLabel{background:#222326;color:#f4f5f8;border:none;border-radius:6px;padding:4px 10px;font-size:12px;}"));
         m_barcodeLabel->setSizePolicy(QSizePolicy::Maximum,QSizePolicy::Fixed);
         m_barcodeLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        m_barcodePicker = new QComboBox;
+        m_barcodePicker = new PickerCombo;
         m_barcodePicker->setObjectName(QStringLiteral("barcodePicker"));
         m_barcodePicker->setAccessibleName(tr("选择二维码/条形码"));
         m_barcodePicker->setFocusPolicy(Qt::TabFocus);
@@ -1291,7 +1300,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
             m_sourcePane->setPlaceholderText(tr("未识别到文字，可在此输入原文"));
             m_text->setReadOnly(false);
             m_text->setPlaceholderText(tr("在上方输入原文后点击重新翻译"));
-            m_status->setText(result.error.isEmpty() ? tr("未识别到文字") : result.error);
+            setStatus(result.error.isEmpty() ? tr("未识别到文字") : result.error);
             applyLayout(true);
             return;
         }
@@ -1300,10 +1309,10 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
             showLoading(false);
             m_text->setPlainText(m_previous);
             m_text->document()->setModified(m_previousModified);
-            m_status->setText(result.error);
+            setStatus(result.error);
             m_text->setReadOnly(m_text->toPlainText().isEmpty());
             m_text->setPlaceholderText(QString());
-            if(m_previous.isEmpty())showEmptyState(tr("文字识别暂不可用"),result.error);
+            if(m_previous.isEmpty())showEmptyState(tr("文字识别暂不可用"),result.error,true);
             applyLayout(true);
             return;
         }
@@ -1355,18 +1364,39 @@ QSize OcrDialog::preferredSize(const QRect &available, bool translate) {
     } else {
         width = available.width() >= 1082 ? 1100 : 660;
     }
+    const int availableHeight = qMax(320, available.height() - 32);
+    const int minHeight = qMin(560, availableHeight);
     return QSize(qMin(width,qMax(640,available.width()-32)),
-                 qMin(height,qMax(560,available.height()-32)));
+                 qMax(minHeight, qMin(height, availableHeight)));
 }
 
-void OcrDialog::showEmptyState(const QString &title,const QString &detail)
+void OcrDialog::showEmptyState(const QString &title,const QString &detail,bool error)
 {
-    m_busy->setText(title + QStringLiteral("\n\n") + detail);
+    m_busy->setTextFormat(Qt::RichText);
+    m_busy->setText(QStringLiteral("<div style=\"font-size:16px;font-weight:600;color:#f4f5f8;\">%1</div>"
+                                   "<div style=\"margin-top:8px;font-size:13px;color:#9c9da1;\">%2</div>")
+                        .arg(title.toHtmlEscaped(),detail.toHtmlEscaped()));
     QFont font=this->font();font.setPointSizeF(qMax(10.5,font.pointSizeF()));m_busy->setFont(font);
-    m_busy->setWordWrap(true);m_busy->show();m_emptyIcon->show();m_emptyRetry->show();
+    m_busy->setWordWrap(true);m_busy->show();
+    if(error) {
+        QPixmap warning=makeIcon(Icon::Warning,22,true).pixmap(22,22);
+        QPainter p(&warning);p.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        p.fillRect(warning.rect(),QColor("#e9be74"));p.end();
+        m_emptyIcon->setPixmap(warning);
+    } else {
+        const Icon icon=m_barcode?Icon::Barcode:m_translate?Icon::CardTranslate:Icon::Ocr;
+        m_emptyIcon->setPixmap(cardIcon(icon,22).pixmap(22,22));
+    }
+    m_emptyIcon->show();m_emptyRetry->show();
     m_emptyRetry->setText(m_translate?tr("重新翻译"):tr("重新识别"));
     m_emptyRetry->setEnabled(m_retry->isEnabled());
     m_emptyRetry->setFocus();
+}
+
+void OcrDialog::setStatus(const QString &text)
+{
+    m_status->setText(text);
+    m_status->setToolTip(text);
 }
 
 void OcrDialog::showLoading(bool loading, const QString &text) {
@@ -1387,7 +1417,7 @@ void OcrDialog::showLoading(bool loading, const QString &text) {
         m_content->show();
         if (m_toolbar) m_toolbar->show();
         if (wasLoading) {
-            setMinimumSize(640,560);
+            setMinimumSize(640,qMin(560,m_finalSize.height()));
             if (!m_maximized) setGeometry(screenCentered(m_screenRect,m_finalSize));
         }
         if (m_content->layout()) m_content->layout()->activate();
@@ -1395,8 +1425,13 @@ void OcrDialog::showLoading(bool loading, const QString &text) {
     }
     m_header->setVisible(!loading);
     auto *close = findChild<QToolButton *>(QStringLiteral("ocrClose"));
-    if(loading) { close->setParent(this);close->move(width()-44,12);close->show();close->raise(); }
-    else if(close->parentWidget()==this) { close->setParent(m_header);qobject_cast<QHBoxLayout *>(m_header->layout())->addWidget(close);close->show(); }
+    if(loading) {
+        close->setFocusPolicy(Qt::NoFocus);
+        close->setParent(this);close->move(width()-44,12);close->show();close->raise();
+    } else {
+        close->setFocusPolicy(Qt::TabFocus);
+        if(close->parentWidget()==this) { close->setParent(m_header);qobject_cast<QHBoxLayout *>(m_header->layout())->addWidget(close);close->show(); }
+    }
     layout()->activate();
     if (!loading) applyLayout(true);
 }
@@ -1488,7 +1523,7 @@ void OcrDialog::start() {
     bool expected = false;
     if (!engine.busy.compare_exchange_strong(expected,true)) {
         showLoading(false);
-        m_status->setText(tr("上一项识别正在结束，请稍候再点击重新识别"));
+        setStatus(tr("上一项识别正在结束，请稍候再点击重新识别"));
         return;
     }
     m_cancel = std::make_shared<std::atomic_bool>(false);
@@ -1518,7 +1553,7 @@ void OcrDialog::start() {
     m_busy->setText(tr("正在识别…"));
     if (initialLoad) showLoading(true,tr("正在识别…"));
     else m_busy->show();
-    m_status->setText(m_translate ? QString() : tr("正在识别…"));
+    setStatus(m_translate ? QString() : tr("正在识别…"));
     m_watcher.setFuture(QtConcurrent::run([&engine,image,cancel] {
         const OcrResult result = recognizeChunked(image,cancel);
         engine.busy.store(false);
@@ -1566,11 +1601,11 @@ void OcrDialog::finishBarcode(const BarcodeResult &result)
     m_barcodeItems = result.items;
     m_barcodePicker->clear();
     if (!result.error.isEmpty()) {
-        m_barcodeLabel->clear(); m_text->clear();
-        showEmptyState(tr("识别失败"),result.error);
+        m_barcodeLabel->clear(); m_barcodeLabel->hide(); m_barcodePicker->hide(); m_text->clear();
+        showEmptyState(tr("识别失败"),result.error,true);
         m_imageView->setBarcodeRegions({},-1);
     } else if (m_barcodeItems.isEmpty()) {
-        m_barcodeLabel->clear();
+        m_barcodeLabel->clear(); m_barcodeLabel->hide(); m_barcodePicker->hide();
         m_text->clear();
         showEmptyState(tr("未识别到二维码或条形码"),tr("请确保图像清晰且码完整。"));
         m_imageView->setBarcodeRegions({},-1);
@@ -1580,6 +1615,7 @@ void OcrDialog::finishBarcode(const BarcodeResult &result)
             if (preview.size() > 72) preview = preview.left(69) + QStringLiteral("…");
             m_barcodePicker->addItem(QStringLiteral("%1 · %2").arg(item.format,preview));
         }
+        m_barcodeLabel->show();
         m_barcodePicker->setVisible(m_barcodeItems.size() > 1);
         showBarcodeItem(0);
     }
@@ -1681,8 +1717,8 @@ void OcrDialog::translateLines()
             else
                 message = tr("%1暂时无法翻译，请稍后重试或切换为其他翻译引擎").arg(m_provider->currentText());
             m_text->setPlaceholderText(message);
-            m_status->setText(message);
-            if(m_previous.isEmpty()) {m_text->setPlaceholderText(QString());showEmptyState(tr("翻译未完成"),message);}
+            setStatus(message);
+            if(m_previous.isEmpty()) {m_text->setPlaceholderText(QString());showEmptyState(tr("翻译未完成"),message,true);}
             applyLayout(true);
             return;
         }

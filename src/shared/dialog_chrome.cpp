@@ -13,8 +13,12 @@
 #include <QInputDialog>
 #include <QPainter>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QCursor>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -96,7 +100,8 @@ void styleMessageBox(QMessageBox *message)
         "QLabel#qt_msgbox_informativelabel{color:#9c9da1;font-size:12px;}"
         "QPushButton{background:#18191d;border:1px solid #2b2d33;color:#f4f5f8;"
         "border-radius:6px;padding:0 12px;min-height:32px;font-size:14px;text-align:center;}"
-        "QPushButton:hover{background:#222326;}"));
+        "QPushButton:hover{background:#222326;}"
+        "QPushButton:default{border:2px solid #828fff;padding:0 11px;}"));
     message->setMinimumSize(480,200);
     if(message->icon()==QMessageBox::Question||message->icon()==QMessageBox::Information)
         message->setIcon(QMessageBox::NoIcon);
@@ -114,16 +119,28 @@ void styleMessageBox(QMessageBox *message)
         detail->setWordWrap(true);detail->setFixedWidth(432);
     }
     if(message->standardButtons().testFlag(QMessageBox::Yes)&&message->standardButtons().testFlag(QMessageBox::No)) {
-        const QString title=message->windowTitle();
-        const QString action=title.contains(QCoreApplication::translate("HistoryDialog","删除"))?QCoreApplication::translate("HistoryDialog","删除")
-            :title.contains(QCoreApplication::translate("HistoryDialog","清空"))?QCoreApplication::translate("HistoryDialog","清空")
-            :QCoreApplication::translate("OcrDialog","重新识别");
-        message->button(QMessageBox::Yes)->setText(action);
-        message->button(QMessageBox::Yes)->setStyleSheet(QStringLiteral("background:#5e6ad2;border:1px solid #5e6ad2;color:#ffffff;border-radius:6px;padding:0 12px;min-height:32px;"));
+        // Explicit action/danger properties keep translated titles out of button labelling.
+        const bool destructive=message->property("lenssnipDestructive").toBool();
+        const QString propertyAction=message->property("lenssnipAction").toString();
+        const QString action=propertyAction.isEmpty()
+                ?QCoreApplication::translate("OcrDialog","重新识别") : propertyAction;
+        auto *yes=message->button(QMessageBox::Yes);
+        yes->setText(action);
+        const QString danger=QStringLiteral(
+            "QPushButton{background:#c04a4a;border:1px solid #c04a4a;color:#ffffff;border-radius:6px;padding:0 12px;min-height:32px;}"
+            "QPushButton:hover{background:#a83f3f;border-color:#a83f3f;}");
+        const QString accent=QStringLiteral(
+            "QPushButton{background:#5e6ad2;border:1px solid #5e6ad2;color:#ffffff;border-radius:6px;padding:0 12px;min-height:32px;}"
+            "QPushButton:hover{background:#5661c4;border-color:#5661c4;}");
+        yes->setStyleSheet(destructive?danger:accent);
+        if(message->defaultButton()==yes)
+            yes->setStyleSheet((destructive?danger:accent)
+                +QStringLiteral("QPushButton{border:2px solid #f4f5f8;padding:0 11px;}"));
         message->button(QMessageBox::No)->setText(QCoreApplication::translate("QPlatformTheme","Cancel"));
     }
     if(auto *ok=message->button(QMessageBox::Ok))
-        ok->setStyleSheet(QStringLiteral("background:#5e6ad2;border:1px solid #5e6ad2;color:#ffffff;border-radius:6px;padding:0 12px;min-height:32px;"));
+        ok->setStyleSheet(QStringLiteral("background:#5e6ad2;border:1px solid #5e6ad2;color:#ffffff;border-radius:6px;padding:0 12px;min-height:32px;"
+                                         "QPushButton:hover{background:#5661c4;border-color:#5661c4;}"));
 }
 class DialogPolish : public QObject
 {
@@ -159,8 +176,10 @@ protected:
         p.setPen(Qt::NoPen);p.setBrush(QColor::fromHsvF(qMax(0.0,color.hsvHueF()),1,1));p.drawRoundedRect(rect(),8,8);
         QLinearGradient white(0,0,width(),0);white.setColorAt(0,Qt::white);white.setColorAt(1,QColor(255,255,255,0));p.fillRect(rect(),white);
         QLinearGradient black(0,0,0,height());black.setColorAt(0,QColor(0,0,0,0));black.setColorAt(1,Qt::black);p.fillRect(rect(),black);
-        p.setBrush(Qt::NoBrush);p.setPen(QPen(Qt::white,2));
-        p.drawEllipse(QPointF(color.hsvSaturationF()*(width()-1),(1-color.valueF())*(height()-1)),6,6);
+        const QPointF marker(color.hsvSaturationF()*(width()-1),(1-color.valueF())*(height()-1));
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(QColor("#18191d"),4));p.drawEllipse(marker,7,7);
+        p.setPen(QPen(Qt::white,2));p.drawEllipse(marker,6,6);
     }
     void mousePressEvent(QMouseEvent *e) override {if(e->button()==Qt::LeftButton) pick(e->position());}
     void mouseMoveEvent(QMouseEvent *e) override {if(e->buttons()&Qt::LeftButton) pick(e->position());}
@@ -258,7 +277,11 @@ ColorDialog::ColorDialog(const QColor &initial,QWidget *parent):QColorDialog(ini
     auto *native=new QWidget(this);native->setObjectName(QStringLiteral("nativeColorControls"));
     if(layout())native->setLayout(layout());
     native->hide();
-    auto *root=new QVBoxLayout(this);root->setContentsMargins(0,0,0,0);root->setSpacing(18);
+    auto *scroll=new QScrollArea(this);scroll->setObjectName(QStringLiteral("colorScroll"));
+    scroll->setWidgetResizable(true);scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto *content=new QWidget;
+    auto *root=new QVBoxLayout(content);root->setContentsMargins(0,0,0,0);root->setSpacing(18);
     auto *fields=new QHBoxLayout;fields->setSpacing(28);
     auto *left=new QVBoxLayout;left->setSpacing(16);
     auto *plane=new ColorPlane(this);plane->setObjectName(QStringLiteral("colorPlane"));plane->setFixedHeight(380);left->addWidget(plane);
@@ -277,7 +300,7 @@ ColorDialog::ColorDialog(const QColor &initial,QWidget *parent):QColorDialog(ini
     auto *buttons=new QHBoxLayout;buttons->setSpacing(12);buttons->addStretch();
     auto *cancel=new QPushButton(QCoreApplication::translate("QPlatformTheme","Cancel"),this);
     auto *ok=new QPushButton(QCoreApplication::translate("QPlatformTheme","OK"),this);
-    cancel->setFixedSize(88,32);ok->setFixedSize(88,32);buttons->addWidget(cancel);buttons->addWidget(ok);root->addLayout(buttons);
+    cancel->setFixedSize(88,32);ok->setFixedSize(88,32);buttons->addWidget(cancel);buttons->addWidget(ok);
     connect(ok,&QPushButton::clicked,this,&QDialog::accept);connect(cancel,&QPushButton::clicked,this,&QDialog::reject);
     ok->setDefault(true);
     const auto refresh=[this,plane,hue,hex,channels](const QColor &color){
@@ -291,6 +314,26 @@ ColorDialog::ColorDialog(const QColor &initial,QWidget *parent):QColorDialog(ini
     for(auto *spin:channels)connect(spin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this,channels]{setCurrentColor(QColor(channels[0]->value(),channels[1]->value(),channels[2]->value(),channels[3]->value()));});
     connect(hue,&QSlider::valueChanged,this,[this](int value){const QColor c=currentColor();setCurrentColor(QColor::fromHsv(value,c.hsvSaturation(),c.value(),c.alpha()));});
     plane->picked=[this,hue](qreal saturation,qreal value){setCurrentColor(QColor::fromHsvF(hue->value()/360.0,saturation,value,currentColor().alphaF()));};
-    setStyleSheet(QStringLiteral("QLabel{color:#9c9da1;font-size:14px;background:transparent;border:none;}QLineEdit,QSpinBox{background:#111216;color:#f4f5f8;border:1px solid #2b2d33;border-radius:6px;padding:0 12px;font-size:14px;}"));
-    refresh(initial);styleDialog(this);setMinimumSize(820,600);resize(820,600);
+    setStyleSheet(QStringLiteral("QLabel{color:#9c9da1;font-size:14px;background:transparent;border:none;}"
+                                 "QLineEdit,QSpinBox{background:#111216;color:#f4f5f8;border:1px solid #777980;border-radius:6px;padding:0 12px;font-size:14px;}"
+                                 "QLineEdit:focus,QSpinBox:focus{border-color:#828fff;}"
+                                 "QScrollArea{background:transparent;border:none;}"
+                                 "QScrollArea>QWidget>QWidget{background:transparent;}"));
+    scroll->setWidget(content);
+    auto *shell=new QVBoxLayout(this);shell->setContentsMargins(0,0,0,0);shell->setSpacing(12);
+    shell->addWidget(scroll);shell->addLayout(buttons);
+    refresh(initial);styleDialog(this);
+    const QScreen *target=QGuiApplication::screenAt(QCursor::pos());
+    if(!target)target=QGuiApplication::primaryScreen();
+    const QSize avail=target?target->availableGeometry().size()-QSize(32,32):QSize(820,600);
+    const QSize initialSize(qMin(820,avail.width()),qMin(600,avail.height()));
+    const qreal scale=target?target->devicePixelRatio():1.0;
+    const bool compact=initialSize.height()<560||scale>=1.5;
+    plane->setFixedHeight(compact?qBound(160,initialSize.height()-310,300):380);
+    if(compact){
+        form->setSpacing(2);hex->setFixedHeight(26);
+        for(QSpinBox *spin:channels)spin->setFixedHeight(26);
+    }
+    setMinimumSize(qMin(640,initialSize.width()),qMin(420,initialSize.height()));
+    resize(initialSize);
 }

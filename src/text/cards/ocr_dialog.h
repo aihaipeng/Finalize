@@ -172,7 +172,8 @@ private:
     void updateMask();
     void setActionsEnabled(bool enabled);
     void showLoading(bool loading, const QString &text = {});
-    void showEmptyState(const QString &title,const QString &detail);
+    void showEmptyState(const QString &title,const QString &detail,bool error=false);
+    void setStatus(const QString &text);
     void applyLayout(bool force = false);
     int layoutClass() const;
     void linkFromOcrTextSelection();

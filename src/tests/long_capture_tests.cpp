@@ -404,6 +404,17 @@ int LongCapture::testOutput()
           "crop waits for a captured image and its panel crops top and bottom");
     check(session.m_label->text() == QStringLiteral("400 × 300") && session.m_dir->currentText() == QStringLiteral("纵向"),
           "bar starts with the selection size and vertical direction");
+    const QString sizeLabel = session.m_label->text();
+    session.fail(QStringLiteral("保存失败，请重试"));
+    check(session.m_label->text() == sizeLabel && session.m_feedback->isVisible()
+              && session.m_feedback->text().contains(QStringLiteral("保存失败")),
+          "a save/copy error stays in the feedback strip instead of replacing the size readout");
+    const QImage feedback = session.m_feedback->grab().toImage();
+    check(feedback.pixelColor(4, feedback.height() / 2) == QColor(QStringLiteral("#18191d")),
+          "the feedback strip paints its opaque dark surface");
+    session.m_errorText.clear();
+    session.m_errorClock.invalidate();
+    session.updateFeedback();
     bool allDisabled = true;
     for (QToolButton *b : session.m_gated) allDisabled = allDisabled && !b->isEnabled();
     check(allDisabled, "edit, OCR, translate, barcode, pin and copy wait for a captured image");

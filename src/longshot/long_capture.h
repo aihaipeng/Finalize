@@ -132,7 +132,8 @@ private:
     bool m_vertical = true;
     int m_autoScroll = 0;                            // 0 off, 1 down/right, -1 up/left.
     bool m_paused = false;                           // A dialog is open over the desktop.
-    QElapsedTimer m_scrollClock, m_previewClock, m_failClock;
+    QElapsedTimer m_scrollClock, m_previewClock, m_failClock, m_errorClock;
+    QString m_errorText;
     QWidget *m_mask = nullptr;
     QWidget *m_bar = nullptr;
     QWidget *m_grip = nullptr;                       // Drags the bar itself.

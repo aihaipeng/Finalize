@@ -621,6 +621,10 @@
 Try returning to the last successfully matched frame and continue capturing.</translation>
     </message>
     <message>
+        <source>图片匹配失败，请返回最后成功位置后继续滚动。</source>
+        <translation>Image matching failed. Return to the last successful position and continue scrolling.</translation>
+    </message>
+    <message>
         <location line="+6"/>
         <source>长截图</source>
         <translation>Scrolling capture</translation>
@@ -1387,6 +1391,22 @@ Put the runtime and models back in the program folder and try again.</translatio
         <translation>Pin</translation>
     </message>
     <message>
+        <source>文字识别中…</source>
+        <translation>Recognizing text…</translation>
+    </message>
+    <message>
+        <source>识别失败，右键重试</source>
+        <translation>Recognition failed. Right-click to retry.</translation>
+    </message>
+    <message>
+        <source>（识别中…）</source>
+        <translation> (recognizing…)</translation>
+    </message>
+    <message>
+        <source>（识别失败）</source>
+        <translation> (failed)</translation>
+    </message>
+    <message>
         <location line="+649"/>
         <source>选字工具栏</source>
         <translation>Text selection toolbar</translation>
@@ -1711,6 +1731,12 @@ Put the runtime and models back in the program folder and try again.</translatio
     <message>
         <source>记录截图历史（仅保存在本机）</source>
         <translation>Record screenshot history (local only)</translation>
+    </message>
+    <message>
+        <source>暂无历史截图
+新截图会自动记录在这里。</source>
+        <translation>No screenshots yet.
+New screenshots will be recorded here automatically.</translation>
     </message>
     <message>
         <source>默认关闭。开启后，未保存的截图也会复制到本机历史；可随时关闭或清空。</source>

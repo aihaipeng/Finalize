@@ -61,6 +61,9 @@ extern const QString darkMenuQss;
 // 1px vertical divider between toolbar groups, styled by the bar stylesheet.
 QWidget *barSeparator(bool dark = false);
 
+// Rounded top-level tool surfaces: keep the opaque sheet background and clip the window corners.
+void applyRoundedMask(QWidget *widget, int radius = 8);
+
 // ---------- Compact color strip with the complete palette available on demand. ----------
 class ColorBoard : public QWidget
 {
