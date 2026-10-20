@@ -126,7 +126,7 @@ int OcrDialog::testBarcode(const QString &previewPath)
     check(card.findChild<QToolButton *>(QStringLiteral("ocrSearch")) == nullptr,
           "barcode card has no stray search button in its header");
     waitFor([&] { return retry->isEnabled() && !text->toPlainText().isEmpty(); });
-    check(card.windowTitle() == QStringLiteral("Nami 二维码/条形码"),
+    check(card.windowTitle() == QStringLiteral("LensSnip 二维码/条形码"),
           "barcode card title names both symbol families");
     check(text->toPlainText() == qrText && kind->text() == QStringLiteral("QR Code"),
           "single result shows payload and format");
@@ -203,7 +203,7 @@ int CaptureOverlay::testBarcode(const QString &previewPath)
     if (!previewPath.isEmpty()) overlay.grab().save(previewPath + QStringLiteral("-barcode-toolbar.png"));
     button->click();
     QPointer<OcrDialog> card = overlay.m_ocrDialog;
-    check(card && card->windowTitle() == QStringLiteral("Nami 二维码/条形码"),
+    check(card && card->windowTitle() == QStringLiteral("LensSnip 二维码/条形码"),
           "barcode action opens the barcode card");
     auto *retry = card ? card->findChild<QToolButton *>(QStringLiteral("ocrRetry")) : nullptr;
     waitFor([&] { return card && retry && retry->isEnabled() && card->barcodeRegionCount() > 0; });

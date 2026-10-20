@@ -458,7 +458,7 @@ void LongCapture::autoCrop(int growth)
 void LongCapture::setAutoCrop(bool on)
 {
     m_autoCrop = on;
-    NamiSettings().setValue(QStringLiteral("LongShot/AutoCrop"), on);
+    LensSnipSettings().setValue(QStringLiteral("LongShot/AutoCrop"), on);
     if (m_autoCropBox && m_autoCropBox->isChecked() != on) {
         const QSignalBlocker block(m_autoCropBox);
         m_autoCropBox->setChecked(on);
@@ -662,7 +662,7 @@ void LongCapture::buildUi()
         w->setFocusPolicy(Qt::NoFocus);
         cropLay->addWidget(w);
     }
-    m_autoCrop = NamiSettings()
+    m_autoCrop = LensSnipSettings()
                      .value(QStringLiteral("LongShot/AutoCrop"), false).toBool();
     m_autoCropBox->setChecked(m_autoCrop);
     updateCropDirection();
@@ -1039,7 +1039,7 @@ bool LongCapture::eventFilter(QObject *watched, QEvent *event)
 
 void LongCapture::notice(const QString &title, const QString &text, const QString &noAskKey)
 {
-    NamiSettings settings;
+    LensSnipSettings settings;
     if (!noAskKey.isEmpty() && settings.value(noAskKey, false).toBool()) return;
     if (m_notice) return;
     auto *box = new QMessageBox(QMessageBox::Warning, title, text, QMessageBox::Ok);
@@ -1050,7 +1050,7 @@ void LongCapture::notice(const QString &title, const QString &text, const QStrin
     m_paused = true;                             // The dialog may cover the selection.
     connect(box, &QMessageBox::finished, this, [this, box, noAskKey] {
         if (!noAskKey.isEmpty() && box->checkBox() && box->checkBox()->isChecked())
-            NamiSettings().setValue(noAskKey, true);
+            LensSnipSettings().setValue(noAskKey, true);
         m_paused = false;                        // The dialog closed; capturing may resume.
     });
     box->show();

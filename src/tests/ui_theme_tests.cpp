@@ -317,9 +317,9 @@ int Controller::testThemeUi(const QString &previewPath)
         if(alert)showAlert(nullptr,heading,detail);
         else showNotice(nullptr,heading,detail);
     };
-    captureCard(true,QStringLiteral("无法注册截图热键"),QStringLiteral("F1 已被其他程序占用。\n请释放该快捷键后重新启动 Nami。"),QStringLiteral("-43-hotkey"));
+    captureCard(true,QStringLiteral("无法注册截图热键"),QStringLiteral("F1 已被其他程序占用。\n请释放该快捷键后重新启动 LensSnip。"),QStringLiteral("-43-hotkey"));
     captureCard(true,QStringLiteral("保存失败"),QStringLiteral("请检查保存路径或磁盘空间后重试。\n当前截图与标注仍然保留。"),QStringLiteral("-44-save-error"));
-    captureCard(false,QStringLiteral("语言已保存"),QStringLiteral("将在下次启动 Nami 时生效。"),QStringLiteral("-42-language-notice"));
+    captureCard(false,QStringLiteral("语言已保存"),QStringLiteral("将在下次启动 LensSnip 时生效。"),QStringLiteral("-42-language-notice"));
     for(bool multiline:{false,true}){
         QInputDialog input;input.setWindowTitle(multiline?QStringLiteral("排除窗口检测"):QStringLiteral("保存预设"));
         input.setLabelText(multiline?QStringLiteral("每行一个程序文件名，下次截图生效。"):QStringLiteral("预设名称"));

@@ -33,7 +33,7 @@ QThreadPool &historyPool()
 
 QString historyRoot()
 {
-    const QByteArray overridePath = qgetenv("NAMI_HISTORY_ROOT");
+    const QByteArray overridePath = qgetenv("LENSSNIP_HISTORY_ROOT");
     if (!overridePath.isEmpty()) return QString::fromLocal8Bit(overridePath);
     const QString base = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
     return base + QStringLiteral("/history");
@@ -77,7 +77,7 @@ public:
             return false;
         }
         if (!ensureDirectories(error)) return false;
-        m_name = QStringLiteral("nami-history-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+        m_name = QStringLiteral("lenssnip-history-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
         m_db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_name);
         m_db.setDatabaseName(databasePath());
         if (!m_db.open()) {
@@ -136,7 +136,7 @@ private:
 
 void prune(QSqlDatabase &db)
 {
-    NamiSettings settings;
+    LensSnipSettings settings;
     const int maxItems = qMax(0, settings.value(QStringLiteral("History/maxItems"), 100).toInt());
     const qint64 maxBytes = qMax<qint64>(0, settings.value(QStringLiteral("History/maxBytes"),
                                                           Q_INT64_C(1073741824)).toLongLong());
@@ -200,13 +200,13 @@ void prune(QSqlDatabase &db)
 
 bool HistoryStore::enabled()
 {
-    return NamiSettings()
+    return LensSnipSettings()
             .value(QStringLiteral("History/enabled"), false).toBool();
 }
 
 void HistoryStore::setEnabled(bool enabled)
 {
-    NamiSettings settings;
+    LensSnipSettings settings;
     settings.setValue(QStringLiteral("History/enabled"), enabled);
     settings.sync();
 }
@@ -434,18 +434,18 @@ int HistoryStore::testHistory()
     };
 
     check(QSettings::defaultFormat() == QSettings::IniFormat, "settings use INI");
-    const QString settingsFile = NamiSettings().fileName();
-    check(settingsFile.endsWith(QStringLiteral("Nami.ini"), Qt::CaseInsensitive), "settings file is Nami.ini");
+    const QString settingsFile = LensSnipSettings().fileName();
+    check(settingsFile.endsWith(QStringLiteral("LensSnip.ini"), Qt::CaseInsensitive), "settings file is LensSnip.ini");
     check(QSqlDatabase::isDriverAvailable(QStringLiteral("QSQLITE")), "SQLite driver available");
-    check(QDir::fromNativeSeparators(rootPath()).contains(QStringLiteral("/Nami/"), Qt::CaseInsensitive),
-          "default history root is under AppLocalData/Nami");
+    check(QDir::fromNativeSeparators(rootPath()).contains(QStringLiteral("/LensSnip/"), Qt::CaseInsensitive),
+          "default history root is under AppLocalData/LensSnip");
 
     QTemporaryDir temp;
     check(temp.isValid(), "temporary history root");
     if (!temp.isValid()) return 1;
-    qputenv("NAMI_HISTORY_ROOT", temp.path().toLocal8Bit());
+    qputenv("LENSSNIP_HISTORY_ROOT", temp.path().toLocal8Bit());
 
-    NamiSettings settings;
+    LensSnipSettings settings;
     const QVariant oldEnabled = settings.value(QStringLiteral("History/enabled"));
     const QVariant oldItems = settings.value(QStringLiteral("History/maxItems"));
     const QVariant oldBytes = settings.value(QStringLiteral("History/maxBytes"));
@@ -522,6 +522,6 @@ int HistoryStore::testHistory()
     if (oldAge.isValid()) settings.setValue(QStringLiteral("History/maxAgeDays"), oldAge);
     else settings.remove(QStringLiteral("History/maxAgeDays"));
     settings.sync();
-    qunsetenv("NAMI_HISTORY_ROOT");
+    qunsetenv("LENSSNIP_HISTORY_ROOT");
     return pass ? 0 : 1;
 }

@@ -7,8 +7,6 @@
 moc_*
 *.moc
 
-# Local-only assets, scripts, and docs
-/icons/
 /*.cmd
 /*.bat
 /*.ps1
@@ -16,7 +14,6 @@ moc_*
 /*.md
 /docs/
 /translations/*.md
-/.agents/
 /.playwright-mcp/
 /aqtinstall.log
 /skills-lock.json

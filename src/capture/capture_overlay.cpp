@@ -117,14 +117,14 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         // Position the native window before freezing its local coordinate system.
         if (!SetWindowPos(reinterpret_cast<HWND>(winId()), nullptr, nativeDesktop.x(), nativeDesktop.y(),
                           nativeDesktop.width(), nativeDesktop.height(), SWP_NOZORDER | SWP_NOACTIVATE)) {
-            QMessageBox::warning(nullptr, QStringLiteral("Nami"), tr("无法定位截图覆盖层"));
+            QMessageBox::warning(nullptr, QStringLiteral("LensSnip"), tr("无法定位截图覆盖层"));
             deleteLater();
             return;
         }
         QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     }
 
-    NamiSettings settings;
+    LensSnipSettings settings;
     m_roundEnabled = settings.value(QStringLiteral("Capture/roundEnabled"), false).toBool();
     m_roundRadius = qBound(0, settings.value(QStringLiteral("Capture/roundRadius"), 0).toInt(), 60);
     const QString savedUnit = settings.value(QStringLiteral("Capture/sizeUnit"), QStringLiteral("px")).toString();
@@ -1255,7 +1255,7 @@ void CaptureOverlay::recoverDetector()
             if (!m_detectionOptions.disabledUiPrograms.contains(win.program, Qt::CaseInsensitive)) {
                 m_detectionOptions.disabledUiPrograms.append(win.program);
                 if (windowHung(win.hwnd)) {
-                    NamiSettings settings;
+                    LensSnipSettings settings;
                     QStringList disabled = settings.value(QStringLiteral("Snip/crashes")).toStringList();
                     if (!disabled.contains(win.program, Qt::CaseInsensitive)) disabled.append(win.program);
                     settings.setValue(QStringLiteral("Snip/crashes"), disabled);
@@ -1673,7 +1673,7 @@ void CaptureOverlay::applyRoundSettings(bool persist)
     if (m_sizeRadiusDivider) m_sizeRadiusDivider->setVisible(rounded);
     if (m_sizeBar && m_sizeBar->isVisible()) m_sizeBar->adjustSize();
     if (persist) {
-        NamiSettings settings;
+        LensSnipSettings settings;
         settings.setValue(QStringLiteral("Capture/roundEnabled"), m_roundEnabled);
         settings.setValue(QStringLiteral("Capture/roundRadius"), m_roundRadius);
     }
@@ -1728,7 +1728,7 @@ void CaptureOverlay::setSizeUnit(SizeUnit unit, bool persist)
 {
     m_sizeUnit = unit;
     if (persist) {
-        NamiSettings settings;
+        LensSnipSettings settings;
         settings.setValue(QStringLiteral("Capture/sizeUnit"),
                           unit == SizeUnit::Dp ? QStringLiteral("dip") : QStringLiteral("px"));
     }
@@ -2063,7 +2063,7 @@ void CaptureOverlay::applyCustomPreset(int index)
 void CaptureOverlay::loadSizePresets()
 {
     m_sizePresets.clear();
-    NamiSettings settings;
+    LensSnipSettings settings;
     for (const QString &entry : settings.value(QStringLiteral("Capture/presets")).toStringList()) {
         const QStringList parts = entry.split(QLatin1Char('|'));
         if (parts.size() != 5) continue;
@@ -2082,7 +2082,7 @@ void CaptureOverlay::saveSizePresets() const
         entries.append(QStringLiteral("%1|%2|%3|%4|%5").arg(preset.name)
                            .arg(preset.global.x()).arg(preset.global.y())
                            .arg(preset.global.width()).arg(preset.global.height()));
-    NamiSettings()
+    LensSnipSettings()
         .setValue(QStringLiteral("Capture/presets"), entries);
 }
 
@@ -2482,7 +2482,7 @@ void CaptureOverlay::saveCapture()
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     const QString path = QFileDialog::getSaveFileName(
         this, tr("保存图片"),
-        dir + QStringLiteral("/nami.png"),
+        dir + QStringLiteral("/lenssnip.png"),
         QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
     if (path.isEmpty()) {
         activateWindow();                       // Cancelled dialog: reclaim focus and keep the selection.

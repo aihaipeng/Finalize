@@ -37,7 +37,7 @@ bool HotkeyFilter::nativeEventFilter(const QByteArray &, void *message, qintptr 
 Controller::Controller()
 {
     m_tray.setIcon(QApplication::windowIcon());
-    m_tray.setToolTip(tr("Nami · F1 截图"));
+    m_tray.setToolTip(tr("LensSnip · F1 截图"));
     QMenu *m = &m_menu;
     m->setStyleSheet(darkMenuQss);
     m->addAction(tr("截图 (F1)"), this, &Controller::startCapture);
@@ -51,7 +51,7 @@ Controller::Controller()
         if (m_history) m_history->setRecordingEnabled(enabled);
     });
     QMenu *detection = m->addMenu(tr("窗口/UI 检测"));
-    NamiSettings settings;
+    LensSnipSettings settings;
     for (const auto &entry : {qMakePair(tr("自动检测窗口"), QStringLiteral("detect_windows")),
                               qMakePair(tr("自动检测 UI 元素"), QStringLiteral("detect_ui_elements"))}) {
         QAction *action = detection->addAction(entry.first);
@@ -59,11 +59,11 @@ Controller::Controller()
         action->setChecked(settings.value(QStringLiteral("Snip/") + entry.second, entry.second == QStringLiteral("detect_windows")).toBool());
         const QString key = entry.second;
         connect(action, &QAction::toggled, this, [key](bool enabled) {
-            NamiSettings().setValue(QStringLiteral("Snip/") + key, enabled);
+            LensSnipSettings().setValue(QStringLiteral("Snip/") + key, enabled);
         });
     }
     detection->addAction(tr("排除程序…"), this, [] {
-        NamiSettings settings;
+        LensSnipSettings settings;
         bool ok = false;
         const QString text = QInputDialog::getMultiLineText(nullptr, Controller::tr("排除窗口检测"),
             Controller::tr("每行一个程序文件名，例如 example.exe（不区分大小写，下次截图生效）："),
@@ -88,7 +88,7 @@ Controller::Controller()
         connect(action, &QAction::triggered, this, [locale] {
             I18n::saveLocale(locale);
             showNotice(nullptr, QCoreApplication::translate("Controller", "语言已保存"),
-                       QCoreApplication::translate("Controller", "将在下次启动 Nami 时生效。"));
+                       QCoreApplication::translate("Controller", "将在下次启动 LensSnip 时生效。"));
         });
     };
     addLanguage(QStringLiteral("system"));
@@ -110,10 +110,10 @@ void Controller::startCapture()
     if (m_capture && m_capture->isVisible()) { m_capture->raise(); m_capture->activateWindow(); return; }
     const QVector<ScreenFrame> frames = freezeScreens();   // Freeze before showing the selection overlay.
     if (frames.isEmpty()) {
-        QMessageBox::warning(nullptr, QStringLiteral("Nami"), tr("无法读取屏幕像素"));
+        QMessageBox::warning(nullptr, QStringLiteral("LensSnip"), tr("无法读取屏幕像素"));
         return;
     }
-    NamiSettings settings;
+    LensSnipSettings settings;
     DetectionOptions options;
     options.windows = settings.value(QStringLiteral("Snip/detect_windows"), true).toBool();
     options.elements = settings.value(QStringLiteral("Snip/detect_ui_elements"), false).toBool();

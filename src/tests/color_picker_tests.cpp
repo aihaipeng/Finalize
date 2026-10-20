@@ -107,7 +107,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
             QApplication::sendEvent(&liveOverlay, &event);
         };
         if (qApp->arguments().contains(QStringLiteral("--wait-for-foreground"))) {
-            liveOverlay.setWindowTitle(QStringLiteral("Nami UI regression"));
+            liveOverlay.setWindowTitle(QStringLiteral("LensSnip UI regression"));
             QElapsedTimer wait; wait.start();
             while (wait.elapsed() < 10000) {
                 DWORD foreground = 0;

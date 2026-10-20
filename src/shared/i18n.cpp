@@ -98,10 +98,10 @@ QStringList availableLocales()
 {
     QStringList locales;
     const QDir dir(translationDir());
-    for (const QFileInfo &info : dir.entryInfoList({QStringLiteral("nami_*.qm"), QStringLiteral("nami_*.ts")},
+    for (const QFileInfo &info : dir.entryInfoList({QStringLiteral("lenssnip_*.qm"), QStringLiteral("lenssnip_*.ts")},
                                                    QDir::Files, QDir::Name)) {
-        const QString base = info.completeBaseName();   // nami_en_US
-        const QString locale = base.mid(QStringLiteral("nami_").size());
+        const QString base = info.completeBaseName();   // lenssnip_en_US
+        const QString locale = base.mid(QStringLiteral("lenssnip_").size());
         if (!locale.isEmpty() && !locales.contains(locale)) locales.append(locale);
     }
     if (!locales.contains(QStringLiteral("zh_CN"))) locales.append(QStringLiteral("zh_CN"));
@@ -120,7 +120,7 @@ QString displayName(const QString &locale)
 
 QString configuredLocale()
 {
-    const QString value = NamiSettings()
+    const QString value = LensSnipSettings()
                               .value(QStringLiteral("UI/language")).toString();
     return value.isEmpty() ? QStringLiteral("system") : value;
 }
@@ -155,15 +155,15 @@ bool install(QTranslator *applicationTranslator, QTranslator *qtTranslator, cons
     const QLocale parsed(locale);
     bool applicationLoaded = false;
     if (loadApplication) {
-        applicationLoaded = applicationTranslator->load(parsed, QStringLiteral("nami"),
+        applicationLoaded = applicationTranslator->load(parsed, QStringLiteral("lenssnip"),
                                                          QStringLiteral("_"), translationDir());
         if (!applicationLoaded && !languageOnly(locale).isEmpty() && languageOnly(locale) != locale)
-            applicationLoaded = applicationTranslator->load(QStringLiteral("nami_") + languageOnly(locale),
+            applicationLoaded = applicationTranslator->load(QStringLiteral("lenssnip_") + languageOnly(locale),
                                                             translationDir());
         if (applicationLoaded) QCoreApplication::installTranslator(applicationTranslator);
 
         const auto loadTs = [&](const QString &target) {
-            const QFileInfo info(translationDir() + QStringLiteral("/nami_") + target + QStringLiteral(".ts"));
+            const QFileInfo info(translationDir() + QStringLiteral("/lenssnip_") + target + QStringLiteral(".ts"));
             if (!info.isFile() || info.size() > 16 * 1024 * 1024) return false;
             auto *translator = new TsTranslator(QCoreApplication::instance());
             if (!translator->loadFile(info.absoluteFilePath())) { delete translator; return false; }
@@ -188,7 +188,7 @@ bool install(QTranslator *applicationTranslator, QTranslator *qtTranslator, cons
 
 void saveLocale(const QString &locale)
 {
-    NamiSettings()
+    LensSnipSettings()
         .setValue(QStringLiteral("UI/language"), locale);
 }
 }

@@ -5,12 +5,12 @@
 
 // The org/app constructor defaults to NativeFormat (the Windows registry), even when
 // QSettings::setDefaultFormat() is set. Always use this explicit INI wrapper.
-class NamiSettings : public QSettings
+class LensSnipSettings : public QSettings
 {
 public:
-    NamiSettings()
+    LensSnipSettings()
         : QSettings(QSettings::IniFormat, QSettings::UserScope,
-                    QStringLiteral("Nami"), QStringLiteral("Nami"))
+                    QStringLiteral("LensSnip"), QStringLiteral("LensSnip"))
     {
     }
 };

@@ -55,7 +55,7 @@ QString OcrEngine::load(const QString &root) {
         if (!entry || !(m_api = entry()->GetApi(ORT_API_VERSION)))
             throw std::runtime_error("Incompatible OCR runtime API");
         m_version = QString::fromLatin1(entry()->GetVersionString());
-        checked(m_api->CreateEnv(ORT_LOGGING_LEVEL_ERROR, "nami-ocr", &m_env));
+        checked(m_api->CreateEnv(ORT_LOGGING_LEVEL_ERROR, "lenssnip-ocr", &m_env));
         OrtSessionOptions *raw = nullptr;
         checked(m_api->CreateSessionOptions(&raw));
         std::unique_ptr<OrtSessionOptions, decltype(m_api->ReleaseSessionOptions)> options(raw, m_api->ReleaseSessionOptions);

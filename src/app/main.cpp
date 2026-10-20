@@ -1,7 +1,7 @@
 #include "shared/dialog_chrome.h"
 #include "onnxruntime_c_api.h"
 #include <QClipboard>
-// nami — screenshot capture, pinned images, scrolling capture, and offline OCR (Qt 6 / MinGW).
+// lenssnip — screenshot capture, pinned images, scrolling capture, and offline OCR (Qt 6 / MinGW).
 // shortcut: Screen captures run serially; use concurrent streamers if synchronized frames are required.
 
 #include "app/controller.h"
@@ -37,9 +37,9 @@
 
 int main(int argc, char **argv)
 {
-    QSettings::setDefaultFormat(QSettings::IniFormat);   // User settings live in %APPDATA%/Nami/Nami.ini.
+    QSettings::setDefaultFormat(QSettings::IniFormat);   // User settings live in %APPDATA%/LensSnip/LensSnip.ini.
     QApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("Nami"));
+    app.setApplicationName(QStringLiteral("LensSnip"));
     QFont baseFont = QApplication::font();
     baseFont.setPointSizeF(10.5);                              // 96 dpi ≈ 14 px standard UI body.
     app.setFont(baseFont);
@@ -238,7 +238,7 @@ int main(int argc, char **argv)
     if (!RegisterHotKey(nullptr, 1, MOD_NOREPEAT, VK_F1))
         showAlert(nullptr, QCoreApplication::translate("Main", "无法注册截图热键"),
                   QCoreApplication::translate("Main",
-                      "F1 已被其他程序占用。\n请释放该快捷键后重新启动 Nami。"));
+                      "F1 已被其他程序占用。\n请释放该快捷键后重新启动 LensSnip。"));
 
     const int exitCode = app.exec();
     QThreadPool::globalInstance()->waitForDone();

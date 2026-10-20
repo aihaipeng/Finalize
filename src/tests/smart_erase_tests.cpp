@@ -34,7 +34,7 @@ int CaptureOverlay::testSmartErase(const QString &previewPath)
         if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); }
     };
 
-    if (const QString bench = qEnvironmentVariable("NAMI_ERASE_BENCH"); !bench.isEmpty()) {
+    if (const QString bench = qEnvironmentVariable("LENSSNIP_ERASE_BENCH"); !bench.isEmpty()) {
         // Offline comparison: <name>-dirty.png + <name>-mask.png (255 hole) -> <name>-pin.png.
         for (const QString &file : QDir(bench).entryList({QStringLiteral("*-dirty.png")})) {
             const QString stem = bench + QLatin1Char('/') + file.chopped(10);

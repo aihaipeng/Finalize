@@ -514,8 +514,8 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     : QDialog(nullptr, Qt::Window | Qt::FramelessWindowHint | Qt::WindowMinMaxButtonsHint),
       m_image(image), m_translate(translate), m_barcode(barcode) {
     setObjectName(QStringLiteral("ocrComparison"));
-    setWindowTitle(m_barcode ? tr("Nami 二维码/条形码")
-                             : m_translate ? tr("Nami 翻译") : tr("Nami OCR"));
+    setWindowTitle(m_barcode ? tr("LensSnip 二维码/条形码")
+                             : m_translate ? tr("LensSnip 翻译") : tr("LensSnip OCR"));
     setWindowModality(Qt::NonModal);
     setAttribute(Qt::WA_TranslucentBackground);
     setMinimumSize(640,360);
@@ -807,7 +807,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
         for (const auto &[label,provider] : providers)
             m_provider->addItem(label,int(provider));
         // Every card starts on Auto (fallback across engines); a chosen engine lasts for this card only.
-        const NamiSettings settings;
+        const LensSnipSettings settings;
         populateLanguages(settings.value(QStringLiteral("Translate/source")).toString(),
                           settings.value(QStringLiteral("Translate/target"),QStringLiteral("zh")).toString());
         syncPickers();
@@ -837,7 +837,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
             viewGroup->addAction(action);
             connect(action,&QAction::triggered,this,[this,mode] {
                 setDisplay(mode);
-                NamiSettings().setValue(QStringLiteral("Translate/view"),mode);
+                LensSnipSettings().setValue(QStringLiteral("Translate/view"),mode);
             });
         }
         m_view->setMenu(viewMenu);
@@ -1270,7 +1270,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     setMinimumSize(loadingSize());
     setGeometry(screenCentered(m_screenRect,loadingSize()));
     if (m_translate)
-        setDisplay(NamiSettings().value(QStringLiteral("Translate/view"),0).toInt());
+        setDisplay(LensSnipSettings().value(QStringLiteral("Translate/view"),0).toInt());
     showLoading(true, m_barcode ? tr("正在识别二维码…") : tr("正在识别…"));
     connect(&m_barcodeWatcher, &QFutureWatcher<BarcodeResult>::finished, this, [this] {
         if (!m_barcode || m_closed) return;
@@ -1881,7 +1881,7 @@ void OcrDialog::populateLanguages(const QString &source, const QString &target)
 
 void OcrDialog::saveTranslateChoice() const
 {
-    NamiSettings settings;
+    LensSnipSettings settings;
     settings.remove(QStringLiteral("Translate/provider"));   // Engine is per card; drop the old stored choice.
     settings.setValue(QStringLiteral("Translate/source"),m_source->currentData().toString());
     settings.setValue(QStringLiteral("Translate/target"),m_target->currentData().toString());

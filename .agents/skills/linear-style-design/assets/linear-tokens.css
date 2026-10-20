@@ -1,0 +1,227 @@
+/* Linear-inspired baseline, not an official Linear token package. */
+:root {
+  --ls-font-sans: "Inter Variable", Inter, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+    "Noto Sans CJK SC", sans-serif;
+  --ls-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --ls-weight-regular: 400;
+  --ls-weight-medium: 500;
+  --ls-weight-semibold: 600;
+
+  --ls-text-micro: 0.6875rem;
+  --ls-text-caption: 0.75rem;
+  --ls-text-ui: 0.8125rem;
+  --ls-text-body: 0.9375rem;
+  --ls-text-reading: 1rem;
+  --ls-text-lead: 1.125rem;
+  --ls-text-heading-sm: 1.25rem;
+  --ls-text-heading-md: 1.5rem;
+  --ls-text-heading-lg: 2rem;
+  --ls-text-display-sm: 3rem;
+  --ls-text-display: 4rem;
+
+  --ls-space-1: 4px;
+  --ls-space-2: 8px;
+  --ls-space-3: 12px;
+  --ls-space-4: 16px;
+  --ls-space-5: 20px;
+  --ls-space-6: 24px;
+  --ls-space-8: 32px;
+  --ls-space-10: 40px;
+  --ls-space-12: 48px;
+  --ls-space-16: 64px;
+  --ls-space-24: 96px;
+  --ls-space-32: 128px;
+
+  --ls-radius-xs: 4px;
+  --ls-radius-sm: 6px;
+  --ls-radius-md: 8px;
+  --ls-radius-lg: 12px;
+  --ls-radius-xl: 16px;
+  --ls-radius-full: 9999px;
+
+  --ls-control-compact: 1.75rem;
+  --ls-control-default: 2rem;
+  --ls-control-touch: 2.75rem;
+  --ls-row-compact: 1.75rem;
+  --ls-row-default: 2.25rem;
+  --ls-sidebar-width: 15rem;
+  --ls-inspector-width: 20rem;
+  --ls-app-header-min: 2.75rem;
+  --ls-container-max: 75rem;
+  --ls-container-wide: 84rem;
+  --ls-page-gutter: 24px;
+
+  --ls-duration-feedback: 100ms;
+  --ls-duration-popover: 160ms;
+  --ls-duration-dialog: 200ms;
+  --ls-duration-exit: 100ms;
+  --ls-ease-out: cubic-bezier(.25, .46, .45, .94);
+
+  /* Light baseline; an explicit light theme uses these values. */
+  color-scheme: light;
+  --ls-bg-canvas: #f9f9fa;
+  --ls-bg-surface: #ffffff;
+  --ls-bg-subtle: #f3f4f5;
+  --ls-bg-raised: #ffffff;
+  --ls-bg-control: #ffffff;
+  --ls-state-hover: rgba(0, 0, 0, .04);
+  --ls-state-pressed: rgba(0, 0, 0, .07);
+  --ls-state-selected: rgba(0, 0, 0, .06);
+
+  --ls-text-primary: #1b1b1b;
+  --ls-text-secondary: #5b5c5e;
+  --ls-text-muted: #68696f;
+  --ls-text-disabled: #9c9c9e;
+  --ls-text-link: #4f5bc4;
+  --ls-border-subtle: rgba(0, 0, 0, .06);
+  --ls-border-default: #e2e2e5;
+  --ls-border-strong: #d2d2d6;
+  --ls-border-control: #82838a;
+  --ls-focus-ring: #4f5bc4;
+  --ls-overlay-scrim: rgba(0, 0, 0, .35);
+
+  --ls-action-primary-bg: #1b1b1b;
+  --ls-action-primary-fg: #ffffff;
+  --ls-action-primary-hover: #303033;
+  --ls-accent-fill: #5e6ad2;
+  --ls-accent-fill-hover: #5661c4;
+  --ls-accent-fill-pressed: #4f5bc4;
+  --ls-accent-on-fill: #ffffff;
+  --ls-accent-subtle: rgba(94, 106, 210, .10);
+
+  --ls-feedback-success: #198038;
+  --ls-feedback-warning: #8a6500;
+  --ls-feedback-danger: #c03434;
+  --ls-feedback-info: #4f5bc4;
+  --ls-shadow-popover: 0 8px 24px rgba(0, 0, 0, .12);
+  --ls-shadow-dialog: 0 16px 48px rgba(0, 0, 0, .18);
+}
+
+/* Explicit dark, or system dark only when no explicit choice exists. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ls-bg-canvas: #09090a;
+  --ls-bg-surface: #121213;
+  --ls-bg-subtle: #161617;
+  --ls-bg-raised: #1b1b1c;
+  --ls-bg-control: #1b1b1c;
+  --ls-state-hover: rgba(255, 255, 255, .04);
+  --ls-state-pressed: rgba(255, 255, 255, .07);
+  --ls-state-selected: rgba(255, 255, 255, .06);
+
+  --ls-text-primary: #f7f8f8;
+  --ls-text-secondary: #d0d6e0;
+  --ls-text-muted: #8a8f98;
+  --ls-text-disabled: #62666d;
+  --ls-text-link: #828fff;
+  --ls-border-subtle: rgba(255, 255, 255, .06);
+  --ls-border-default: rgba(255, 255, 255, .09);
+  --ls-border-strong: rgba(255, 255, 255, .14);
+  --ls-border-control: #777980;
+  --ls-focus-ring: #828fff;
+  --ls-overlay-scrim: rgba(0, 0, 0, .60);
+
+  --ls-action-primary-bg: #e5e5e6;
+  --ls-action-primary-fg: #09090a;
+  --ls-action-primary-hover: #ffffff;
+  --ls-accent-subtle: rgba(94, 106, 210, .14);
+  --ls-feedback-success: #27a644;
+  --ls-feedback-warning: #f2c94c;
+  --ls-feedback-danger: #eb5757;
+  --ls-feedback-info: #8fa6ff;
+  --ls-shadow-popover: 0 8px 24px rgba(0, 0, 0, .28);
+  --ls-shadow-dialog: 0 16px 48px rgba(0, 0, 0, .40);
+}
+
+/* Resolve system preference to the same dark role values. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --ls-bg-canvas: #09090a;
+    --ls-bg-surface: #121213;
+    --ls-bg-subtle: #161617;
+    --ls-bg-raised: #1b1b1c;
+    --ls-bg-control: #1b1b1c;
+    --ls-state-hover: rgba(255, 255, 255, .04);
+    --ls-state-pressed: rgba(255, 255, 255, .07);
+    --ls-state-selected: rgba(255, 255, 255, .06);
+    --ls-text-primary: #f7f8f8;
+    --ls-text-secondary: #d0d6e0;
+    --ls-text-muted: #8a8f98;
+    --ls-text-disabled: #62666d;
+    --ls-text-link: #828fff;
+    --ls-border-subtle: rgba(255, 255, 255, .06);
+    --ls-border-default: rgba(255, 255, 255, .09);
+    --ls-border-strong: rgba(255, 255, 255, .14);
+    --ls-border-control: #777980;
+    --ls-focus-ring: #828fff;
+    --ls-overlay-scrim: rgba(0, 0, 0, .60);
+    --ls-action-primary-bg: #e5e5e6;
+    --ls-action-primary-fg: #09090a;
+    --ls-action-primary-hover: #ffffff;
+    --ls-accent-subtle: rgba(94, 106, 210, .14);
+    --ls-feedback-success: #27a644;
+    --ls-feedback-warning: #f2c94c;
+    --ls-feedback-danger: #eb5757;
+    --ls-feedback-info: #8fa6ff;
+    --ls-shadow-popover: 0 8px 24px rgba(0, 0, 0, .28);
+    --ls-shadow-dialog: 0 16px 48px rgba(0, 0, 0, .40);
+  }
+}
+
+:root:lang(zh) { --ls-text-ui: 0.875rem; }
+@media (max-width: 639px) {
+  :root { --ls-page-gutter: 16px; }
+}
+
+/* Opt-in root and field recipes; adapt names to the existing project. */
+.ls-root {
+  background: var(--ls-bg-canvas);
+  color: var(--ls-text-primary);
+  font-family: var(--ls-font-sans);
+  font-size: var(--ls-text-body);
+  font-weight: var(--ls-weight-regular);
+  line-height: 1.6;
+}
+.ls-field {
+  box-sizing: border-box;
+  min-height: var(--ls-control-default);
+  padding: 5px 12px;
+  border: 1px solid var(--ls-border-control);
+  border-radius: var(--ls-radius-md);
+  background: var(--ls-bg-control);
+  color: var(--ls-text-primary);
+  font: inherit;
+  font-size: var(--ls-text-ui);
+  line-height: 1.5;
+}
+.ls-field::placeholder {
+  color: var(--ls-text-muted);
+  opacity: 1;
+}
+.ls-root :focus-visible {
+  outline: 2px solid var(--ls-focus-ring);
+  outline-offset: 2px;
+}
+.ls-field[aria-invalid="true"] { border-color: var(--ls-feedback-danger); }
+.ls-link { color: var(--ls-text-link); text-decoration: underline; }
+.ls-number { font-variant-numeric: tabular-nums; }
+.ls-font-latin { font-feature-settings: "cv01", "ss03"; }
+
+/* Components must consume these tokens; JS/canvas motion needs its own handling. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ls-duration-feedback: 0ms;
+    --ls-duration-popover: 0ms;
+    --ls-duration-dialog: 0ms;
+    --ls-duration-exit: 0ms;
+  }
+}
+@media (prefers-contrast: more) {
+  .ls-field { border-color: var(--ls-text-secondary); }
+}
+@media (forced-colors: active) {
+  .ls-field { border-color: ButtonText; }
+  .ls-root :focus-visible { outline-color: Highlight; }
+}

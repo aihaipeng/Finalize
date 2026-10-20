@@ -1,6 +1,6 @@
 QT       += core gui widgets concurrent svg network sql
 LIBS     += -limm32 -lgdi32 -ldwmapi -loleacc -lole32 -loleaut32
-TARGET    = nami
+TARGET    = lenssnip
 TEMPLATE  = app
 CONFIG   += c++20
 # Vendored zxing-cpp 3.1.1, readers only. Its core is C++20; the public API is C++17.
@@ -33,11 +33,11 @@ include(src/tests/tests.pri)
 exists($$PWD/icons/icons.qrc) {
     RESOURCES += icons/icons.qrc
 }
-TRANSLATIONS += translations/nami_zh_CN.ts translations/nami_en_US.ts
+TRANSLATIONS += translations/lenssnip_zh_CN.ts translations/lenssnip_en_US.ts
 TR_EXCLUDE += *_tests.cpp
 CONFIG += lrelease
 LRELEASE_DIR = .
 # qmake's lrelease feature writes beside the build target; copy only the
 # compiled QM packs into the runtime language folder.
-QMAKE_POST_LINK = cmd /c "if not exist \"$$PWD\\release\\language\" mkdir \"$$PWD\\release\\language\" & copy /Y \"$$PWD\\release\\nami_*.qm\" \"$$PWD\\release\\language\\\" & if not exist \"$$PWD\\release\\sqldrivers\" mkdir \"$$PWD\\release\\sqldrivers\" & copy /Y \"$$[QT_INSTALL_BINS]\\Qt6Sql.dll\" \"$$PWD\\release\\\" & copy /Y \"$$[QT_INSTALL_PLUGINS]\\sqldrivers\\qsqlite.dll\" \"$$PWD\\release\\sqldrivers\\\""
+QMAKE_POST_LINK = cmd /c "if not exist \"$$PWD\\release\\language\" mkdir \"$$PWD\\release\\language\" & copy /Y \"$$PWD\\release\\lenssnip_*.qm\" \"$$PWD\\release\\language\\\" & if not exist \"$$PWD\\release\\sqldrivers\" mkdir \"$$PWD\\release\\sqldrivers\" & copy /Y \"$$[QT_INSTALL_BINS]\\Qt6Sql.dll\" \"$$PWD\\release\\\" & copy /Y \"$$[QT_INSTALL_PLUGINS]\\sqldrivers\\qsqlite.dll\" \"$$PWD\\release\\sqldrivers\\\""
 DISTFILES += onnxruntime-LICENSE.txt third_party/zxing-cpp/LICENSE third_party/zxing-cpp/README.md

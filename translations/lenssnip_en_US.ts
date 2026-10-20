@@ -512,8 +512,8 @@
     <name>Controller</name>
     <message>
         <location filename="../src/app/controller.cpp" line="+34"/>
-        <source>Nami · F1 截图</source>
-        <translation>Nami · F1 Screenshot</translation>
+        <source>LensSnip · F1 截图</source>
+        <translation>LensSnip · F1 Screenshot</translation>
     </message>
     <message>
         <location line="+3"/>
@@ -559,8 +559,8 @@
     </message>
     <message>
         <location line="+1"/>
-        <source>语言将在下次启动 Nami 时生效。</source>
-        <translation>The language will take effect the next time Nami starts.</translation>
+        <source>语言将在下次启动 LensSnip 时生效。</source>
+        <translation>The language will take effect the next time LensSnip starts.</translation>
     </message>
     <message>
         <location line="+8"/>
@@ -796,18 +796,18 @@ Save or pin it.</translation>
     <name>OcrDialog</name>
     <message>
         <location filename="../src/text/cards/ocr_dialog.cpp" line="+512"/>
-        <source>Nami 二维码/条形码</source>
-        <translation>Nami QR Code/Barcode</translation>
+        <source>LensSnip 二维码/条形码</source>
+        <translation>LensSnip QR Code/Barcode</translation>
     </message>
     <message>
         <location line="+1"/>
-        <source>Nami 翻译</source>
-        <translation>Nami Translation</translation>
+        <source>LensSnip 翻译</source>
+        <translation>LensSnip Translation</translation>
     </message>
     <message>
         <location line="+0"/>
-        <source>Nami OCR</source>
-        <translation>Nami OCR</translation>
+        <source>LensSnip OCR</source>
+        <translation>LensSnip OCR</translation>
     </message>
     <message>
         <location line="+103"/>

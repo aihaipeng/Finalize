@@ -69,8 +69,8 @@ private:
 };
 void styleMessageBox(QMessageBox *message)
 {
-    if(message->property("namiDialogChrome").toBool())return;
-    message->setProperty("namiDialogChrome",true);
+    if(message->property("lensSnipDialogChrome").toBool())return;
+    message->setProperty("lensSnipDialogChrome",true);
     auto *surface=new QWidget(message);
     surface->setObjectName(QStringLiteral("messageSurface"));
     surface->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -171,8 +171,8 @@ private:
 
 void styleDialog(QDialog *dialog,bool showTitle)
 {
-    if(dialog->property("namiDialogChrome").toBool())return;
-    dialog->setProperty("namiDialogChrome",true);
+    if(dialog->property("lensSnipDialogChrome").toBool())return;
+    dialog->setProperty("lensSnipDialogChrome",true);
     dialog->setWindowFlag(Qt::FramelessWindowHint);
     dialog->setAttribute(Qt::WA_TranslucentBackground);
     auto *body=new QWidget(dialog);
@@ -199,7 +199,7 @@ void showMessageCard(QWidget *parent,const QString &heading,const QString &detai
 {
     QDialog dialog(parent);
     dialog.setObjectName(QStringLiteral("messageCard"));
-    dialog.setWindowTitle(alert?QStringLiteral("Nami"):heading);
+    dialog.setWindowTitle(alert?QStringLiteral("LensSnip"):heading);
     auto *layout=new QVBoxLayout(&dialog);
     layout->setContentsMargins(0,0,0,0);
     auto *content=new QWidget(&dialog);

@@ -139,7 +139,7 @@ int PinWindow::testPlacement()
         if (candidate->text() == QStringLiteral("翻译")) { candidate->trigger(); break; }
     OcrDialog *card = nullptr;
     for (QWidget *top : QApplication::topLevelWidgets())
-        if (top->windowTitle() == QStringLiteral("Nami 翻译")) card = qobject_cast<OcrDialog *>(top);
+        if (top->windowTitle() == QStringLiteral("LensSnip 翻译")) card = qobject_cast<OcrDialog *>(top);
     check(card != nullptr, "translate row opens a translate-mode card");
     if (card) { card->reject(); card->deleteLater(); }
     OcrEngine::instance().busy.store(false);
@@ -584,7 +584,7 @@ int PinWindow::testPlacement()
         OcrDialog *card = nullptr;
         for (QWidget *w : QApplication::topLevelWidgets())
             if (auto *d = qobject_cast<OcrDialog *>(w); d && d->isVisible()
-                    && d->windowTitle() == QStringLiteral("Nami 二维码/条形码")) card = d;
+                    && d->windowTitle() == QStringLiteral("LensSnip 二维码/条形码")) card = d;
         check(card && !host.isVisible() && !host.m_toolbar->isVisible(),
               "barcode opens its card and hides the pin and its toolbar");
         if (card) card->reject();

@@ -488,7 +488,7 @@ int LongCapture::testOutput()
             (translate ? card->m_translate : card->m_ocr)->click();
             check(alive && alive->m_ocrDialog && alive->m_ocrDialog->isVisible()
                       && alive->m_ocrDialog->windowTitle()
-                          == (translate ? QStringLiteral("Nami 翻译") : QStringLiteral("Nami OCR"))
+                          == (translate ? QStringLiteral("LensSnip 翻译") : QStringLiteral("LensSnip OCR"))
                       && alive->suspended() && !alive->m_bar->isVisible(),
                   translate ? "long capture translate opens the same translate card and pauses the session"
                             : "long capture OCR opens the same OCR card and pauses the session");
@@ -522,7 +522,7 @@ int LongCapture::testOutput()
         QPointer<LongCapture> alive(card);
         card->m_barcode->click();
         check(alive && alive->m_ocrDialog && alive->m_ocrDialog->isVisible()
-                  && alive->m_ocrDialog->windowTitle() == QStringLiteral("Nami 二维码/条形码")
+                  && alive->m_ocrDialog->windowTitle() == QStringLiteral("LensSnip 二维码/条形码")
                   && alive->suspended() && !alive->m_bar->isVisible(),
               "long capture barcode opens its card and pauses the session");
         alive->m_ocrDialog->findChild<QToolButton *>(QStringLiteral("ocrBack"))->click();
@@ -655,7 +655,7 @@ int LongCapture::testOutput()
 int LongCapture::testLiveCapture(const QString &previewPath)
 {
     // The live row-count expectation assumes auto crop is off; keep the user's setting untouched.
-    NamiSettings settings;
+    LensSnipSettings settings;
     const QVariant savedAutoCrop = settings.value(QStringLiteral("LongShot/AutoCrop"));
     settings.setValue(QStringLiteral("LongShot/AutoCrop"), false);
     settings.sync();

@@ -746,7 +746,7 @@ void PinWindow::ensureSelToolbar()
     auto *copyBtn = pinButton(Icon::Copy, tr("复制"));
     connect(copyBtn, &QToolButton::clicked, this, [this] {
         if (!copyTextToClipboard(selectedText()))
-            QMessageBox::warning(this, QStringLiteral("Nami"), tr("复制失败，剪贴板可能被占用，请重试"));
+            QMessageBox::warning(this, QStringLiteral("LensSnip"), tr("复制失败，剪贴板可能被占用，请重试"));
         // Reference behavior: copying also dismisses the bar and the selection.
         m_selBarOpen = false;
         m_selAnchor = -1;
@@ -932,7 +932,7 @@ void PinWindow::toggleToolbar(bool enabled)
             auto *copyBtn = pinButton(Icon::Copy, tr("复制图片"));
             connect(copyBtn, &QToolButton::clicked, this, [this] {
                 if (!copyImageToClipboard(annotatedPix().toImage()))
-                    QMessageBox::warning(this, QStringLiteral("Nami"), tr("复制失败，剪贴板可能被占用，请重试"));
+                    QMessageBox::warning(this, QStringLiteral("LensSnip"), tr("复制失败，剪贴板可能被占用，请重试"));
             });
             lay->addWidget(copyBtn);
 
@@ -943,7 +943,7 @@ void PinWindow::toggleToolbar(bool enabled)
                     this, tr("保存图片"), dir + QStringLiteral("/pin.png"),
                     QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
                 if (!path.isEmpty() && !saveImageAtomic(annotatedPix().toImage(), path))
-                    QMessageBox::warning(this, QStringLiteral("Nami"), tr("保存失败，请检查路径或磁盘空间后重试"));
+                    QMessageBox::warning(this, QStringLiteral("LensSnip"), tr("保存失败，请检查路径或磁盘空间后重试"));
             });
             lay->addWidget(saveBtn);
 
@@ -1170,7 +1170,7 @@ QMenu *PinWindow::createContextMenu()
     QAction *copy = m->addAction(tr("复制图片"));
     connect(copy, &QAction::triggered, this, [this] {
         if (!copyImageToClipboard(m_pix.toImage()))
-            QMessageBox::warning(this, QStringLiteral("Nami"), tr("复制失败，剪贴板可能被占用，请重试"));
+            QMessageBox::warning(this, QStringLiteral("LensSnip"), tr("复制失败，剪贴板可能被占用，请重试"));
     });
 
     QAction *save = m->addAction(tr("保存图片"));
@@ -1180,7 +1180,7 @@ QMenu *PinWindow::createContextMenu()
             this, tr("保存图片"), dir + QStringLiteral("/pin.png"),
             QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
         if (!path.isEmpty() && !saveImageAtomic(m_pix.toImage(), path))
-            QMessageBox::warning(this, QStringLiteral("Nami"), tr("保存失败，请检查路径或磁盘空间后重试"));
+            QMessageBox::warning(this, QStringLiteral("LensSnip"), tr("保存失败，请检查路径或磁盘空间后重试"));
     });
 
     m->addSeparator();
@@ -1208,7 +1208,7 @@ void PinWindow::contextMenuEvent(QContextMenuEvent *e)
         m.setStyleSheet(darkMenuQss);
         if (m.exec(e->globalPos()) == m.addAction(tr("复制"))) {
             if (!copyTextToClipboard(selectedText()))
-                QMessageBox::warning(this, QStringLiteral("Nami"), tr("复制失败，剪贴板可能被占用，请重试"));
+                QMessageBox::warning(this, QStringLiteral("LensSnip"), tr("复制失败，剪贴板可能被占用，请重试"));
             m_selBarOpen = false;
             m_selAnchor = -1;
             m_selLead = -1;

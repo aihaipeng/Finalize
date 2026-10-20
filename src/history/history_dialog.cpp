@@ -229,7 +229,7 @@ void HistoryDialog::saveSelected()
         return;
     }
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-    const QString suggested = dir + QStringLiteral("/nami-history-")
+    const QString suggested = dir + QStringLiteral("/lenssnip-history-")
             + entry.created.toLocalTime().toString(QStringLiteral("yyyyMMdd-HHmmss")) + QStringLiteral(".png");
     const QString path = QFileDialog::getSaveFileName(
             this, tr("保存图片"), suggested,
@@ -287,9 +287,9 @@ int HistoryDialog::testUi(const QString &previewPath)
     QTemporaryDir temp;
     check(temp.isValid(), "temporary history root");
     if (!temp.isValid()) return 1;
-    qputenv("NAMI_HISTORY_ROOT", temp.path().toLocal8Bit());
+    qputenv("LENSSNIP_HISTORY_ROOT", temp.path().toLocal8Bit());
 
-    NamiSettings settings;
+    LensSnipSettings settings;
     const QVariant oldEnabled = settings.value(QStringLiteral("History/enabled"));
     const QVariant oldItems = settings.value(QStringLiteral("History/maxItems"));
     settings.setValue(QStringLiteral("History/enabled"), true);
@@ -343,6 +343,6 @@ int HistoryDialog::testUi(const QString &previewPath)
     if (oldItems.isValid()) settings.setValue(QStringLiteral("History/maxItems"), oldItems);
     else settings.remove(QStringLiteral("History/maxItems"));
     settings.sync();
-    qunsetenv("NAMI_HISTORY_ROOT");
+    qunsetenv("LENSSNIP_HISTORY_ROOT");
     return pass ? 0 : 1;
 }
