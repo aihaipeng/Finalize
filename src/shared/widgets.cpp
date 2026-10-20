@@ -46,9 +46,10 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
         "card-zoom-in", "card-zoom-out", "card-actual", "card-pin", "card-minimize", "card-maximize",
         "card-restore", "card-close", "card-search", "card-up", "card-down", "card-right", "card-format",
         "back", "crop", "crop_start", "crop_end", "barcode", "card-link", "round_rect",
-        "corner_square", "corner_rounded", "aspect_lock", "warning"};
+        "corner_square", "corner_rounded", "aspect_lock", "warning", "sliders"};
     // A shared stroke grid keeps primary tools and card actions visually aligned.
     const char *path = nullptr;
+    const char *markup = nullptr;
     switch (icon) {
     case Icon::Save: path = "M4 3h13l4 4v14H3V3z M7 3v6h10V3 M7 21v-8h10v8"; break;
     case Icon::Copy: case Icon::CardCopy: path = "M9 8h11v13H9z M5 16H3V3h12v2"; break;
@@ -60,14 +61,20 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
     case Icon::Marker: path = "M5 14l9-10 6 6-10 9z M4 21h9"; break;
     case Icon::Text: path = "M4 5h16 M12 5v15 M8 20h8"; break;
     case Icon::Number: path = "M8 4L6 20 M17 4l-2 16 M3 9h18 M2 15h18"; break;
-    case Icon::Mosaic: path = "M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z"; break;
+    case Icon::Mosaic:
+        // A framed checkerboard is the clearest pixelation glyph; filled cells avoid a layout-grid read.
+        markup = R"(<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='3' y='3' width='18' height='18' rx='1.5' fill='none' stroke='white' stroke-width='1.6'/><path fill='white' d='M5 5h4v4H5z M13 5h4v4h-4z M9 9h4v4H9z M17 9h4v4h-4z M5 13h4v4H5z M13 13h4v4h-4z M9 17h4v4H9z M17 17h4v4h-4z'/></svg>)";
+        break;
     case Icon::Eraser: path = "M3 14l10-10 8 8-9 9H9z M9 8l8 8 M12 21h10"; break;
     case Icon::Undo: path = "M8 6L3 11l5 5 M4 11h10a6 6 0 0 1 6 6"; break;
     case Icon::Redo: path = "M16 6l5 5-5 5 M20 11H10a6 6 0 0 0-6 6"; break;
     case Icon::Cancel: case Icon::CardClose: path = "M6 6l12 12 M18 6L6 18"; break;
     case Icon::Refresh: case Icon::CardReload: path = "M20 8a8 8 0 1 0 1 7 M20 3v6h-6"; break;
-    case Icon::Ocr: path = "M3 8V3h5 M16 3h5v5 M21 16v5h-5 M8 21H3v-5 M7 12h10 M8 8h8 M8 16h6"; break;
-    case Icon::Barcode: path = "M3 3h6v6H3z M15 3h6v6h-6z M3 15h6v6H3z M15 15h2v2h-2z M19 15h2v6h-6v-2"; break;
+    case Icon::Ocr: path = "M3 8V3h5 M16 3h5v5 M21 16v5h-5 M8 21H3v-5 M8 18l3.5-11 3.5 11 M9.4 14.5h4.2"; break;
+    case Icon::Barcode:
+        // Three finder rings plus data dots; distinct from the framed pixel tiles used by mosaic.
+        markup = R"(<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'><path fill-rule='evenodd' d='M3 3h7v7H3z M5 5h3v3H5z M6 6h1.5v1.5H6z M14 3h7v7h-7z M16 5h3v3h-3z M17 6h1.5v1.5H17z M3 14h7v7H3z M5 16h3v3H5z M6 17h1.5v1.5H6z M13 13h2v2h-2z M17 13h2v2h-2z M20 13h1v1h-1z M13 17h2v2h-2z M17 17h2v2h-2z M20 17h1v4h-1z M13 20h2v1h-2z M17 20h2v1h-2z'/></svg>)";
+        break;
     case Icon::Translate: case Icon::CardTranslate: path = "M3 5h11 M9 2v3 M5 5c0 6 5 10 9 11 M12 5c-1 7-4 11-9 13 M14 21l4-11 4 11 M16 17h4"; break;
     case Icon::LongShot: path = "M5 3h14v18H5z M9 8l3-3 3 3 M12 5v14 M9 16l3 3 3-3"; break;
     case Icon::RoundRect: path = "M4 14V9a5 5 0 0 1 5-5h5 M4 18v2h2 M18 4h2v2 M20 18v2h-2"; break;
@@ -80,11 +87,13 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
     case Icon::Maximize: case Icon::CardMaximize: path = "M5 5h14v14H5z"; break;
     case Icon::View: path = "M2 12c6-9 14-9 20 0-6 9-14 9-20 0 M15 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0"; break;
     case Icon::Warning: path = "M12 3L2 21h20z M12 9v6 M12 18v.1"; break;
+    case Icon::Sliders: path = "M4 7h6 M14 7h6 M12 4v6 M4 12h10 M18 12h2 M16 9v6 M4 17h4 M12 17h8 M10 14v6"; break;
     case Icon::Check: path = "M4 12l5 5L20 6"; break;
     default: break;
     }
     QSvgRenderer svg;
-    if (path) svg.load(QByteArray("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='") + path + "'/></svg>");
+    if (markup) svg.load(QByteArray(markup));
+    else if (path) svg.load(QByteArray("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='") + path + "'/></svg>");
     else svg.load(QStringLiteral(":/icons/%1.svg").arg(QLatin1String(names[int(icon)])));
     QIcon result;
     for (const auto &variant : variants)

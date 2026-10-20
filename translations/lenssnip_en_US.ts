@@ -17,6 +17,50 @@
 <context>
     <name>CaptureOverlay</name>
     <message>
+        <source>更多工具</source>
+        <translation>More tools</translation>
+    </message>
+    <message>
+        <source>下拉</source>
+        <translation>Dropdown</translation>
+    </message>
+    <message>
+        <source>调整</source>
+        <translation>Adjust</translation>
+    </message>
+    <message>
+        <source>调整工具栏</source>
+        <translation>Adjust toolbar</translation>
+    </message>
+    <message>
+        <source>形状</source>
+        <translation>Shape</translation>
+    </message>
+    <message>
+        <source>撤销</source>
+        <translation>Undo</translation>
+    </message>
+    <message>
+        <source>重做</source>
+        <translation>Redo</translation>
+    </message>
+    <message>
+        <source>二维码</source>
+        <translation>QR code</translation>
+    </message>
+    <message>
+        <source>刷新</source>
+        <translation>Refresh</translation>
+    </message>
+    <message>
+        <source>调整按钮顺序</source>
+        <translation>Reorder toolbar buttons</translation>
+    </message>
+    <message>
+        <source>拖动按钮调整顺序，再次点击完成</source>
+        <translation>Drag buttons to reorder; click again when done</translation>
+    </message>
+    <message>
         <location filename="../src/capture/annotations.cpp" line="+1207"/>
         <source>智能擦除：点击切换为像素化</source>
         <translation>Smart Erase: click to switch to Pixelate</translation>
@@ -670,6 +714,10 @@ Save or pin it.</translation>
         <location line="+0"/>
         <source>横向</source>
         <translation>Horizontal</translation>
+    </message>
+    <message>
+        <source>切换纵向/横向截图</source>
+        <translation>Switch vertical/horizontal capture</translation>
     </message>
     <message>
         <location line="+3"/>
@@ -1823,6 +1871,105 @@ New screenshots will be recorded here automatically.</translation>
 开启记录后，新截图将显示在这里。</source>
         <translation>Screenshot history is empty
 Enable recording to keep new screenshots here.</translation>
+    </message>
+</context>
+<context>
+    <name>ToolLayoutDialog</name>
+    <message>
+        <source>调整工具栏</source>
+        <translation>Adjust toolbar</translation>
+    </message>
+    <message>
+        <source>拖动排序；选择按钮显示位置。</source>
+        <translation>Drag to reorder; choose where each button appears.</translation>
+    </message>
+    <message>
+        <source>工具栏位置</source>
+        <translation>Toolbar position</translation>
+    </message>
+    <message>
+        <source>上方</source>
+        <translation>Top</translation>
+    </message>
+    <message>
+        <source>下方</source>
+        <translation>Bottom</translation>
+    </message>
+    <message>
+        <source>左侧</source>
+        <translation>Left</translation>
+    </message>
+    <message>
+        <source>右侧</source>
+        <translation>Right</translation>
+    </message>
+    <message>
+        <source>截图区域</source>
+        <translation>Capture area</translation>
+    </message>
+    <message>
+        <source>工具</source>
+        <translation>Tools</translation>
+    </message>
+    <message>
+        <source>拖动排序</source>
+        <translation>Drag to reorder</translation>
+    </message>
+    <message>
+        <source>拖动排序，或聚焦后按 ↑/↓</source>
+        <translation>Drag to reorder, or focus and press Up/Down</translation>
+    </message>
+    <message>
+        <source>恢复默认</source>
+        <translation>Restore Defaults</translation>
+    </message>
+    <message>
+        <source>取消</source>
+        <translation>Cancel</translation>
+    </message>
+    <message>
+        <source>保存</source>
+        <translation>Save</translation>
+    </message>
+    <message>
+        <source>始终显示</source>
+        <translation>Always Show</translation>
+    </message>
+    <message>
+        <source>隐藏在更多菜单中</source>
+        <translation>In More Menu</translation>
+    </message>
+    <message>
+        <source>始终隐藏</source>
+        <translation>Always Hide</translation>
+    </message>
+    <message>
+        <source>拖动按钮到四边；隐藏工具进入下拉；下拉入口不能隐藏。</source>
+        <translation>Drag buttons to any side; hidden tools go to the dropdown; the dropdown entry cannot be hidden.</translation>
+    </message>
+    <message>
+        <source>截图区域（默认黑色）</source>
+        <translation>Capture area (default black)</translation>
+    </message>
+    <message>
+        <source>把按钮拖到这里，右侧变竖栏</source>
+        <translation>Drop buttons here to make the right side vertical</translation>
+    </message>
+    <message>
+        <source>隐藏栏</source>
+        <translation>Hidden</translation>
+    </message>
+    <message>
+        <source>隐藏工具拖到这里 · 实际截图下拉末尾为“调整”</source>
+        <translation>Drag hidden tools here · The dropdown ends with Adjust</translation>
+    </message>
+    <message>
+        <source>下拉按钮不能隐藏</source>
+        <translation>The dropdown entry cannot be hidden</translation>
+    </message>
+    <message>
+        <source>关闭</source>
+        <translation>Close</translation>
     </message>
 </context>
 </TS>

@@ -20,7 +20,6 @@ class OcrDialog;
 #include <QElapsedTimer>
 #include <qt_windows.h>
 
-class QComboBox;
 class QToolButton;
 class QMessageBox;
 class QCheckBox;
@@ -143,7 +142,7 @@ private:
     QLabel *m_label = nullptr, *m_feedback = nullptr;
     bool m_feedbackAffinity = false, m_hidFeedback = false;
     void updateFeedback();
-    QComboBox *m_dir = nullptr;
+    QToolButton *m_dir = nullptr;
     QToolButton *m_auto = nullptr, *m_autoUp = nullptr, *m_save = nullptr;
     QList<QToolButton *> m_gated;                    // Edit, OCR, translate, pin, copy: bounded image length only.
     QToolButton *m_ocr = nullptr, *m_translate = nullptr, *m_barcode = nullptr;

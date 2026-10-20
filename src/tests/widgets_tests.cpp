@@ -20,7 +20,7 @@ int ColorBoard::testRendering()
     auto check = [](bool ok, const char *message) {
         if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); }
     };
-    for (int i = 0; i <= int(Icon::MarkerRect); ++i) {     // Every glyph loads from the resource and draws ink.
+    for (int i = 0; i <= int(Icon::Sliders); ++i) {        // Every glyph renders ink, from a resource or inline markup.
         const QImage img = makeIcon(Icon(i)).pixmap(QSize(16, 16)).toImage();
         bool ink = false;
         for (int y = 0; y < img.height() && !ink; ++y)

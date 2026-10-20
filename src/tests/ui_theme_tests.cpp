@@ -1,4 +1,5 @@
 #include "capture/capture_overlay.h"
+#include "capture/tool_layout_dialog.h"
 #include "app/controller.h"
 #include "shared/dialog_chrome.h"
 #include <QMessageBox>
@@ -10,9 +11,15 @@
 #include "longshot/long_capture.h"
 #include "text/cards/ocr_dialog.h"
 #include "shared/widgets.h"
+#include "shared/settings.h"
 #include <QApplication>
 #include <QColorDialog>
+#include <QComboBox>
+#include <QCursor>
+#include <QKeyEvent>
 #include <QScrollArea>
+#include <algorithm>
+#include <climits>
 #include <QDir>
 #include <QFileInfo>
 #include <QFileDialog>
@@ -77,6 +84,18 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
     desktop.fill(QColor("#e6e9ee"));
     { QPainter painter(&desktop); painter.drawImage(QPoint(280, 140), documentImage()); }
     const QRect source(QGuiApplication::primaryScreen()->geometry().topLeft(), desktop.size());
+    const bool hadToolDock = LensSnipSettings().contains(QStringLiteral("Capture/toolDock"));
+    const QString previousToolDock = LensSnipSettings().value(QStringLiteral("Capture/toolDock")).toString();
+    const bool hadToolLayoutBefore = LensSnipSettings().contains(QStringLiteral("Capture/toolLayout"));
+    const QStringList previousToolLayoutBefore = LensSnipSettings().value(QStringLiteral("Capture/toolLayout")).toStringList();
+    const bool hadToolLayoutV2 = LensSnipSettings().contains(QStringLiteral("Capture/toolLayoutV2"));
+    const QStringList previousToolLayoutV2 = LensSnipSettings().value(QStringLiteral("Capture/toolLayoutV2")).toStringList();
+    const bool hadToolOrder = LensSnipSettings().contains(QStringLiteral("Capture/toolOrder"));
+    const QStringList previousToolOrder = LensSnipSettings().value(QStringLiteral("Capture/toolOrder")).toStringList();
+    LensSnipSettings().remove(QStringLiteral("Capture/toolDock"));
+    LensSnipSettings().remove(QStringLiteral("Capture/toolLayout"));
+    LensSnipSettings().remove(QStringLiteral("Capture/toolLayoutV2"));
+    LensSnipSettings().remove(QStringLiteral("Capture/toolOrder"));
     CaptureOverlay overlay({ScreenFrame{source, QRect(nativeFromLogical(source).topLeft(), desktop.size()), desktop}});
     overlay.setAttribute(Qt::WA_DeleteOnClose, false);
     overlay.presetSelection(overlay.localScreenRect(QRect(source.topLeft() + QPoint(280, 180), QSize(900, 480))), ATool::Pen);
@@ -174,7 +193,192 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
     review.check(overlay.m_colorDialog->currentColor()==beforeInvalid,"invalid hex cannot overwrite the selected color");
     alpha->setValue(80);review.check(overlay.m_colorDialog->currentColor().alpha()==80,"alpha input is retained in the QColorDialog contract");
     overlay.m_colorDialog->reject();
+
+    review.check(overlay.m_tools && overlay.m_tools->isVisible()
+                     && overlay.toolSide(QStringLiteral("pen")) == QStringLiteral("bottom")
+                     && overlay.toolSide(QStringLiteral("more")) == QStringLiteral("bottom")
+                     && overlay.m_toolsTop && !overlay.m_toolsTop->isVisible()
+                     && overlay.m_toolsLeft && !overlay.m_toolsLeft->isVisible()
+                     && overlay.m_toolsRight && !overlay.m_toolsRight->isVisible(),
+                 "the fresh layout keeps every visible tool on the bottom bar");
+    review.check(overlay.m_moreButton && overlay.m_moreButton->isVisible()
+                     && overlay.m_moreButton->parentWidget() == overlay.m_tools
+                     && overlay.m_moreButton->width() < Bar::button,
+                 "the dropdown entry is a compact button in the visible bar");
+
+    overlay.m_toolSide[QStringLiteral("refresh")] = QStringLiteral("hidden");
+    overlay.relayoutToolButtons();
+    overlay.placeToolBars();
+    overlay.rebuildMorePanel();
+    const QList<QToolButton *> moreButtons = overlay.m_morePanel->findChildren<QToolButton *>();
+    const bool hasRefresh = std::any_of(moreButtons.cbegin(), moreButtons.cend(), [](QToolButton *b) {
+        return b->toolTip() == QStringLiteral("刷新");
+    });
+    const bool hasAdjust = std::any_of(moreButtons.cbegin(), moreButtons.cend(), [](QToolButton *b) {
+        return b->text() == QStringLiteral("调整");
+    });
+    review.check(hasRefresh && hasAdjust,
+                 "the dropdown lists hidden tools and the adjustment action");
+    overlay.m_moreButton->click(); QApplication::processEvents();
+    review.check(overlay.m_morePanel->isVisible(),
+                 "the dropdown entry expands the hidden tools");
+    review.save(overlay.m_morePanel->grab(), QStringLiteral("-toolbar-more"));
+    review.save(overlay.grab(overlay.localScreenRect(source)), QStringLiteral("-toolbar-more-open"));
+    overlay.m_moreButton->click(); QApplication::processEvents();
+    review.check(!overlay.m_morePanel->isVisible(),
+                 "the dropdown entry collapses the hidden tools");
+
+    overlay.saveToolLayout();
+    const QStringList savedLayout = LensSnipSettings().value(QStringLiteral("Capture/toolLayoutV2")).toStringList();
+    review.check(savedLayout.contains(QStringLiteral("refresh=hidden")),
+                 "the per-button side and order persist in the new layout key");
+    overlay.m_toolSide[QStringLiteral("refresh")] = QStringLiteral("bottom");
+    overlay.relayoutToolButtons();
+    overlay.placeToolBars();
+    review.check(overlay.m_refreshButton->isVisible(),
+                 "a hidden tool can be returned to a visible side");
+
+    overlay.m_toolSide[QStringLiteral("pen")] = QStringLiteral("right");
+    overlay.m_toolSide[QStringLiteral("arrow")] = QStringLiteral("top");
+    overlay.m_toolSide[QStringLiteral("ocr")] = QStringLiteral("left");
+    overlay.relayoutToolButtons();
+    overlay.placeToolBars();
+    QApplication::processEvents();
+    review.check(overlay.m_toolsRight->isVisible()
+                     && overlay.m_toolsRight->height() > overlay.m_toolsRight->width()
+                     && overlay.m_toolsRight->geometry().left() > overlay.m_sel.right()
+                     && overlay.toolSide(QStringLiteral("pen")) == QStringLiteral("right"),
+                 "a button assigned to the right side creates a vertical bar");
+    review.check(overlay.m_toolsTop->isVisible()
+                     && overlay.m_toolsTop->width() > overlay.m_toolsTop->height()
+                     && overlay.m_toolsTop->geometry().bottom() < overlay.m_sel.top()
+                     && overlay.toolSide(QStringLiteral("arrow")) == QStringLiteral("top"),
+                 "a button assigned to the top creates a horizontal bar above the selection");
+    review.check(overlay.m_toolsLeft->isVisible()
+                     && overlay.m_toolsLeft->height() > overlay.m_toolsLeft->width()
+                     && overlay.m_toolsLeft->geometry().right() < overlay.m_sel.left()
+                     && overlay.toolSide(QStringLiteral("ocr")) == QStringLiteral("left"),
+                 "a button assigned to the left creates a vertical bar");
+    review.check(overlay.m_tools->isVisible() && overlay.m_tools->layout()->count() > 0,
+                 "the remaining buttons stay on the bottom bar while side bars are visible");
+    review.check(overlay.m_toolOptions->isVisible(),
+                 "the active pen keeps its options strip visible");
+    const QRect penBar = overlay.m_toolsRight->geometry();
+    const QRect penOptions = overlay.m_toolOptions->geometry();
+    review.check(!penOptions.intersects(penBar)
+                     && (penOptions.left() >= penBar.right() + 1
+                         || penOptions.right() <= penBar.left()),
+                 "the options strip follows the active pen side");
+    review.save(overlay.grab(overlay.localScreenRect(source)), QStringLiteral("-toolbar-sides"));
+    overlay.selectTool(ATool::Arrow);
+    QApplication::processEvents();
+    review.check(overlay.m_toolOptions->isVisible()
+                     && overlay.m_toolsTop->isVisible()
+                     && (overlay.m_toolOptions->geometry().bottom() < overlay.m_toolsTop->geometry().top()
+                         || overlay.m_toolOptions->geometry().top() > overlay.m_toolsTop->geometry().bottom()),
+                 "the options strip follows the active top tool");
+    overlay.selectTool(ATool::Pen);
+    QApplication::processEvents();
+
+    QPixmap liveCard;
+    QPoint liveCardCenter;
+    bool cardOverlapsToolbar = false;
+    QTimer::singleShot(100, [&] {
+        auto *dialog = qobject_cast<ToolLayoutDialog *>(QApplication::activeModalWidget());
+        if (!dialog) return;
+        liveCard = dialog->grab();
+        liveCardCenter = dialog->mapToGlobal(dialog->rect().center());
+        for (QWidget *bar : {overlay.m_tools, overlay.m_toolsTop,
+                             overlay.m_toolsLeft, overlay.m_toolsRight})
+            if (bar && bar->isVisible() && bar->geometry().intersects(overlay.m_layoutCardRect))
+                cardOverlapsToolbar = true;
+        dialog->reject();
+    });
+    overlay.showToolLayoutDialog();
+    const QRect liveAvailable = QGuiApplication::primaryScreen()->availableGeometry();
+    review.check(!liveCard.isNull()
+                     && qAbs(liveCardCenter.x() - liveAvailable.center().x()) <= 2
+                     && qAbs(liveCardCenter.y() - liveAvailable.center().y()) <= 2
+                     && !cardOverlapsToolbar,
+                 "the live adjustment card is centered and every visible bar avoids it");
+    review.save(liveCard, QStringLiteral("-tool-layout-live"));
+
+    QVector<ToolLayoutItem> dialogItems{
+        {QStringLiteral("pen"), QStringLiteral("画笔"), Icon::Pen, QStringLiteral("bottom"), false},
+        {QStringLiteral("refresh"), QStringLiteral("刷新"), Icon::Refresh, QStringLiteral("hidden"), false},
+        {QStringLiteral("ocr"), QStringLiteral("文字识别"), Icon::Ocr, QStringLiteral("left"), false},
+        {QStringLiteral("more"), QStringLiteral("下拉"), Icon::ChevronDown, QStringLiteral("bottom"), true}};
+    QVector<ToolLayoutItem> defaultItems;
+    for (const ToolLayoutItem &item : dialogItems) {
+        ToolLayoutItem entry = item;
+        entry.side = QStringLiteral("bottom");
+        defaultItems.append(entry);
+    }
+    const QRect screenAvailable = QGuiApplication::primaryScreen()->availableGeometry();
+    ToolLayoutDialog layoutDialog(dialogItems, defaultItems);
+    review.check(layoutDialog.findChild<QLabel *>(QStringLiteral("toolLayoutHint"))
+                     && layoutDialog.findChildren<QWidget *>(QStringLiteral("toolLayoutZone")).size() == 4
+                     && layoutDialog.findChildren<QToolButton *>(QStringLiteral("toolLayoutHiddenChip")).size() == 1
+                     && layoutDialog.findChildren<QComboBox *>().isEmpty()
+                     && layoutDialog.items().size() == 4,
+                 "the adjustment card exposes four spatial zones, hidden chips and no legacy combo boxes");
+    layoutDialog.fitToScreen(screenAvailable);
+    layoutDialog.show(); QApplication::processEvents();
+    review.check(qAbs(layoutDialog.geometry().center().x() - screenAvailable.center().x()) <= 2
+                     && qAbs(layoutDialog.geometry().center().y() - screenAvailable.center().y()) <= 2,
+                 "the adjustment card is centered on the capture screen");
+    review.save(layoutDialog.grab(), QStringLiteral("-tool-layout-dialog"));
+    int layoutSignals = 0;
+    QObject::connect(&layoutDialog, &ToolLayoutDialog::layoutChanged,
+                     &layoutDialog,
+                     [&layoutSignals](const QVector<ToolLayoutItem> &) { ++layoutSignals; });
+    QPushButton *restore = nullptr;
+    for (QPushButton *button : layoutDialog.findChildren<QPushButton *>())
+        if (button->text() == QStringLiteral("恢复默认")) restore = button;
+    review.check(restore != nullptr, "the card exposes restore defaults");
+    if (restore) {
+        restore->click();
+        QApplication::processEvents();
+        bool allBottom = true;
+        for (const ToolLayoutItem &item : layoutDialog.items())
+            if (item.side != QStringLiteral("bottom")) allBottom = false;
+        review.check(allBottom, "restore defaults returns every button to the bottom bar");
+    }
+    const auto sideOf = [&layoutDialog](const QString &id) {
+        for (const ToolLayoutItem &item : layoutDialog.items())
+            if (item.id == id) return item.side;
+        return QString();
+    };
+    layoutDialog.moveItem(QStringLiteral("pen"), QStringLiteral("right"), 0);
+    review.check(sideOf(QStringLiteral("pen")) == QStringLiteral("right"),
+                 "moving a button to a side updates the layout model");
+    layoutDialog.moveItem(QStringLiteral("refresh"), QStringLiteral("hidden"), 0);
+    review.check(sideOf(QStringLiteral("refresh")) == QStringLiteral("hidden"),
+                 "moving a button to the hidden tray updates the dropdown contents");
+    layoutDialog.moveItem(QStringLiteral("more"), QStringLiteral("hidden"), 0);
+    review.check(sideOf(QStringLiteral("more")) == QStringLiteral("bottom")
+                     && layoutSignals >= 3,
+                 "the dropdown entry cannot be hidden and every move emits the live layout");
+    layoutDialog.hide();
+
+    overlay.m_toolSide[QStringLiteral("pen")] = QStringLiteral("right");
+    overlay.m_toolSide[QStringLiteral("refresh")] = QStringLiteral("hidden");
+    overlay.saveToolLayout();
+    const QStringList finalLayout = LensSnipSettings().value(QStringLiteral("Capture/toolLayoutV2")).toStringList();
+    review.check(finalLayout.contains(QStringLiteral("pen=right"))
+                     && finalLayout.contains(QStringLiteral("refresh=hidden"))
+                     && finalLayout.contains(QStringLiteral("more=bottom")),
+                 "the new layout keeps per-button sides including the dropdown entry");
+
     overlay.close();
+    if (hadToolDock) LensSnipSettings().setValue(QStringLiteral("Capture/toolDock"), previousToolDock);
+    else LensSnipSettings().remove(QStringLiteral("Capture/toolDock"));
+    if (hadToolLayoutBefore) LensSnipSettings().setValue(QStringLiteral("Capture/toolLayout"), previousToolLayoutBefore);
+    else LensSnipSettings().remove(QStringLiteral("Capture/toolLayout"));
+    if (hadToolLayoutV2) LensSnipSettings().setValue(QStringLiteral("Capture/toolLayoutV2"), previousToolLayoutV2);
+    else LensSnipSettings().remove(QStringLiteral("Capture/toolLayoutV2"));
+    if (hadToolOrder) LensSnipSettings().setValue(QStringLiteral("Capture/toolOrder"), previousToolOrder);
+    else LensSnipSettings().remove(QStringLiteral("Capture/toolOrder"));
 
     const QImage image = documentImage();
     {
@@ -298,6 +502,7 @@ int LongCapture::testThemeUi(const QString &previewPath)
     review.check(capture.m_feedbackAffinity||!capture.m_feedback->isVisible(),"feedback is excluded or hidden before capturing the scroll region");
     capture.setUiVisible(true);
     capture.m_cropPanel->show();QApplication::processEvents();review.save(capture.m_cropPanel->grab(),QStringLiteral("-16-longshot-crop"));
+    capture.setVertical(false);QApplication::processEvents();review.save(capture.m_bar->grab(),QStringLiteral("-longshot-bar-horizontal"));
     capture.cleanupUi();
     return review.pass ? 0 : 1;
 }

@@ -88,6 +88,8 @@ int CaptureOverlay::testSelection()
         mouse(QEvent::MouseButtonRelease,outside,Qt::LeftButton,Qt::NoButton);
         check(overlay.m_sel==expected && overlay.m_drag==H_None && overlay.m_tools->isVisible(),
               "outside release retains the expanded region and restores the toolbar");
+        check(overlay.m_tools->geometry().top() > overlay.m_sel.bottom(),
+              "restored toolbar is positioned around the committed selection");
         overlay.m_sel=base;
         mouse(QEvent::MouseButtonPress,outside,Qt::LeftButton,Qt::LeftButton);
         const QPoint inside = base.center();
@@ -184,12 +186,236 @@ int CaptureOverlay::testSelection()
     expected.setDevicePixelRatio(1);
     check(overlay.cropped().toImage()==expected.toImage(),"output crops the adjusted region at the frozen image's native pixel scale");
     failures += testCustomSize();
+    overlay.m_toolSide[QStringLiteral("arrow")] = QStringLiteral("top");
+    overlay.m_toolSide[QStringLiteral("ocr")] = QStringLiteral("left");
+    overlay.m_toolSide[QStringLiteral("pen")] = QStringLiteral("right");
+    overlay.relayoutToolButtons();
+    overlay.m_atool = ATool::None;
+    if (overlay.m_toolOptions) overlay.m_toolOptions->hide();
+    const QRect fullBounds = overlay.rect();
+    const QRect screenBounds = overlay.localScreenRect(
+        QGuiApplication::primaryScreen()->availableGeometry());
+    const QSize edgeSize(200, 160);
+    const QVector<QRect> edgeSelections{
+        QRect(QPoint(screenBounds.center().x() - edgeSize.width() / 2, screenBounds.top()), edgeSize),
+        QRect(QPoint(screenBounds.center().x() - edgeSize.width() / 2,
+                     screenBounds.bottom() + 1 - edgeSize.height()), edgeSize),
+        QRect(QPoint(screenBounds.left(), screenBounds.center().y() - edgeSize.height() / 2), edgeSize),
+        QRect(QPoint(screenBounds.right() + 1 - edgeSize.width(),
+                     screenBounds.center().y() - edgeSize.height() / 2), edgeSize)
+    };
+    for (const QRect &edge : edgeSelections) {
+        overlay.m_sel = edge;
+        overlay.m_hover = {};
+        overlay.placeToolBars();
+        overlay.updateTip();
+        bool chromeOverlap = false;
+        bool barOverlapsSelection = false;
+        for (QWidget *bar : {overlay.m_tools, overlay.m_toolsTop,
+                             overlay.m_toolsLeft, overlay.m_toolsRight}) {
+            if (!bar || !bar->isVisible()) continue;
+            if (bar != overlay.m_toolsTop
+                && overlay.m_sizeBar->geometry().intersects(bar->geometry()))
+                chromeOverlap = true;
+            if (bar->layout() && bar->layout()->count() > 0
+                && bar->geometry().intersects(edge))
+                barOverlapsSelection = true;
+        }
+        const bool chromeOk = overlay.m_sizeBar->isVisible()
+            && overlay.m_toolsTop->isVisible()
+            && fullBounds.contains(overlay.m_sizeBar->geometry())
+            && fullBounds.contains(overlay.m_toolsTop->geometry())
+            && !chromeOverlap
+            && !barOverlapsSelection
+            && !overlay.m_sizeBar->geometry().intersects(edge)
+            && !overlay.m_sizeBar->geometry().intersects(overlay.m_toolsTop->geometry());
+        if (!chromeOk)
+            std::fprintf(stderr, "EDGE sel=(%d,%d %dx%d) size=(%d,%d %dx%d) top=(%d,%d %dx%d) left=(%d,%d %dx%d) right=(%d,%d %dx%d) bottom=(%d,%d %dx%d) barsSel=%d chrome=%d\n",
+                         edge.x(), edge.y(), edge.width(), edge.height(),
+                         overlay.m_sizeBar->x(), overlay.m_sizeBar->y(),
+                         overlay.m_sizeBar->width(), overlay.m_sizeBar->height(),
+                         overlay.m_toolsTop->x(), overlay.m_toolsTop->y(),
+                         overlay.m_toolsTop->width(), overlay.m_toolsTop->height(),
+                         overlay.m_toolsLeft->x(), overlay.m_toolsLeft->y(),
+                         overlay.m_toolsLeft->width(), overlay.m_toolsLeft->height(),
+                         overlay.m_toolsRight->x(), overlay.m_toolsRight->y(),
+                         overlay.m_toolsRight->width(), overlay.m_toolsRight->height(),
+                         overlay.m_tools->x(), overlay.m_tools->y(),
+                         overlay.m_tools->width(), overlay.m_tools->height(),
+                         barOverlapsSelection ? 1 : 0, chromeOverlap ? 1 : 0);
+        check(chromeOk, "chrome stays outside the selection without overlapping at every edge");
+    }
+    const QString visualDir = QStringLiteral("debug/strict-ui/audit/boundary");
+    if (QDir().mkpath(visualDir)) {
+        const auto stage = [&overlay, &screenBounds, &visualDir](const QString &side,
+                                                                  const QString &name) {
+            overlay.m_moreButton->setChecked(false);
+            overlay.m_hover = {};
+            for (const QString &id : overlay.m_toolOrder) {
+                const bool hidden = id == QStringLiteral("pen")
+                    || id == QStringLiteral("marker") || id == QStringLiteral("mosaic");
+                overlay.m_toolSide[id] = hidden ? QStringLiteral("hidden") : side;
+            }
+            overlay.relayoutToolButtons();
+            const QSize size(300, 200);
+            if (side == QStringLiteral("top"))
+                overlay.m_sel = QRect(QPoint(screenBounds.center().x() - size.width() / 2,
+                                             screenBounds.top()), size);
+            else if (side == QStringLiteral("bottom"))
+                overlay.m_sel = QRect(QPoint(screenBounds.center().x() - size.width() / 2,
+                                             screenBounds.bottom() + 1 - size.height()), size);
+            else if (side == QStringLiteral("left"))
+                overlay.m_sel = QRect(QPoint(screenBounds.left(),
+                                             screenBounds.center().y() - size.height() / 2), size);
+            else
+                overlay.m_sel = QRect(QPoint(screenBounds.right() + 1 - size.width(),
+                                             screenBounds.center().y() - size.height() / 2), size);
+            overlay.m_atool = ATool::None;
+            if (overlay.m_toolOptions) overlay.m_toolOptions->hide();
+            overlay.placeToolBars();
+            overlay.m_moreButton->click();
+            QApplication::processEvents();
+            overlay.grab(screenBounds).save(visualDir + QLatin1Char('/') + name + QStringLiteral(".png"));
+            overlay.m_moreButton->setChecked(false);
+            if (overlay.m_morePanel) overlay.m_morePanel->hide();
+        };
+        stage(QStringLiteral("top"), QStringLiteral("top"));
+        stage(QStringLiteral("bottom"), QStringLiteral("bottom"));
+        stage(QStringLiteral("left"), QStringLiteral("left"));
+        stage(QStringLiteral("right"), QStringLiteral("right"));
+    }
     overlay.resetSelection();
     check(overlay.m_sel.isEmpty() && overlay.m_mode==Selecting,"clearing the selection still permits a new capture");
     overlay.close();
     QCursor::setPos(savedCursor);
     failures += testSelectionBorders();
     if (!failures) std::printf("PASS: eight-direction outside adjustment, cursor/region keys, screen toggle and crop output\n");
+    return failures ? 1 : 0;
+}
+
+int CaptureOverlay::testToolbarPlacement(const QString &previewPath)
+{
+    int failures = 0;
+    auto frames = freezeScreens();
+    for (ScreenFrame &frame : frames) {
+        frame.image.fill(QColor(110, 135, 160));
+        QPainter painter(&frame.image);
+        painter.setPen(QColor(85, 110, 135));
+        for (int x = 0; x < frame.image.width(); x += 40)
+            painter.drawLine(x, 0, x, frame.image.height());
+        for (int y = 0; y < frame.image.height(); y += 40)
+            painter.drawLine(0, y, frame.image.width(), y);
+    }
+    CaptureOverlay overlay(frames, {}, DetectionOptions(), false);
+    overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    overlay.m_roundEnabled = false;
+    overlay.m_toolOrder = QStringList{
+        QStringLiteral("more"), QStringLiteral("save"), QStringLiteral("refresh"),
+        QStringLiteral("pin"), QStringLiteral("barcode"), QStringLiteral("translate"),
+        QStringLiteral("ocr"), QStringLiteral("scroll"), QStringLiteral("redo"),
+        QStringLiteral("undo"), QStringLiteral("eraser"), QStringLiteral("number"),
+        QStringLiteral("copy"), QStringLiteral("text"), QStringLiteral("shape"),
+        QStringLiteral("arrow"), QStringLiteral("marker"), QStringLiteral("pen"),
+        QStringLiteral("mosaic")};
+    const QRect bounds = overlay.localScreenRect(
+        QGuiApplication::primaryScreen()->availableGeometry());
+    const QSize size(246, 116);
+    const int midX = bounds.center().x() - size.width() / 2;
+    const int midY = bounds.center().y() - size.height() / 2;
+    const int right = bounds.right() + 1 - size.width();
+    const int bottom = bounds.bottom() + 1 - size.height();
+    const QVector<QPair<QString, QPoint>> positions{
+        {QStringLiteral("top"), QPoint(midX, bounds.top())},
+        {QStringLiteral("bottom"), QPoint(midX, bottom)},
+        {QStringLiteral("left"), QPoint(bounds.left(), midY)},
+        {QStringLiteral("right"), QPoint(right, midY)},
+        {QStringLiteral("top-left"), bounds.topLeft()},
+        {QStringLiteral("top-right"), QPoint(right, bounds.top() + 20)},
+        {QStringLiteral("bottom-left"), QPoint(bounds.left(), bottom)},
+        {QStringLiteral("bottom-right"), QPoint(right, bottom)}};
+    if (!previewPath.isEmpty()) QDir().mkpath(previewPath);
+    for (bool mirrored : {false, true}) {
+        for (const QString &id : overlay.m_toolOrder) {
+            const bool vertical = id == QStringLiteral("marker")
+                || id == QStringLiteral("pen") || id == QStringLiteral("mosaic");
+            overlay.m_toolSide[id] = id == QStringLiteral("more")
+                ? (mirrored ? QStringLiteral("top") : QStringLiteral("bottom"))
+                : vertical ? (mirrored ? QStringLiteral("right") : QStringLiteral("left"))
+                           : (mirrored ? QStringLiteral("bottom") : QStringLiteral("top"));
+        }
+        overlay.relayoutToolButtons();
+        for (const auto &position : positions) {
+            const QString name = (mirrored ? QStringLiteral("mirrored-") : QStringLiteral("user-"))
+                + position.first;
+            overlay.m_sel = QRect(position.second, size);
+            overlay.m_mode = Adjusting;
+            overlay.m_hover = {};
+            overlay.placeToolBars();
+            overlay.showToolBars();
+            QApplication::processEvents();
+            overlay.m_inspector->hide();
+            const QVector<QWidget *> chrome{overlay.m_toolsTop, overlay.m_toolsRight,
+                overlay.m_tools, overlay.m_toolsLeft, overlay.m_sizeBar};
+            if (!overlay.m_sizeBar->isVisible()) {
+                ++failures;
+                std::fprintf(stderr, "FAIL %s: size strip disappeared\n", qPrintable(name));
+            }
+            for (int i = 0; i < chrome.size(); ++i) {
+                QWidget *a = chrome.at(i);
+                if (!a->isVisible()) {
+                    if (a != overlay.m_sizeBar && a->layout() && a->layout()->count() > 0) {
+                        ++failures;
+                        std::fprintf(stderr, "FAIL %s: nonempty chrome %d disappeared\n", qPrintable(name), i);
+                    }
+                    continue;
+                }
+                if (!bounds.contains(a->geometry())) {
+                    ++failures;
+                    std::fprintf(stderr, "FAIL %s: chrome %d outside screen\n", qPrintable(name), i);
+                }
+                for (int j = i + 1; j < chrome.size(); ++j) {
+                    QWidget *b = chrome.at(j);
+                    if (!b->isVisible()) continue;
+                    if (a->geometry().adjusted(-3, -3, 3, 3).intersects(b->geometry())) {
+                        ++failures;
+                        std::fprintf(stderr, "FAIL %s: chrome %d (%d,%d %dx%d) overlaps %d (%d,%d %dx%d)\n",
+                            qPrintable(name), i, a->x(), a->y(), a->width(), a->height(),
+                            j, b->x(), b->y(), b->width(), b->height());
+                    }
+                }
+            }
+            QVector<QRect> firstPlacement;
+            for (QWidget *widget : chrome) firstPlacement << widget->geometry();
+            overlay.hideToolBars();
+            overlay.placeToolBars();
+            overlay.showToolBars();
+            for (int i = 0; i < chrome.size(); ++i) {
+                if (chrome.at(i)->geometry() != firstPlacement.at(i)) {
+                    ++failures;
+                    std::fprintf(stderr, "FAIL %s: chrome %d moved after hide/show\n", qPrintable(name), i);
+                }
+            }
+            if (!previewPath.isEmpty()) {
+                QRect view = overlay.m_sel.adjusted(-12, -12, 12, 12);
+                for (QWidget *widget : chrome)
+                    if (widget->isVisible()) view = view.united(widget->geometry().adjusted(-12, -12, 12, 12));
+                view = view.intersected(bounds);
+                const QString output = previewPath + QLatin1Char('/') + name;
+                overlay.grab(view).save(output + QStringLiteral(".png"));
+                SetWindowPos(reinterpret_cast<HWND>(overlay.winId()), HWND_TOPMOST,
+                             0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                QApplication::processEvents();
+                overlay.m_inspector->hide();
+                overlay.repaint();
+                QThread::msleep(60);
+                const QRect global(overlay.mapToGlobal(view.topLeft()), view.size());
+                grabNative(nativeFromLogical(global)).save(output + QStringLiteral("-desktop.png"));
+            }
+        }
+    }
+    overlay.close();
+    std::printf("%s: mixed horizontal/vertical toolbar placement, 4 edges + 4 corners, both layouts\n",
+                failures ? "FAIL" : "PASS");
     return failures ? 1 : 0;
 }
 
@@ -619,7 +845,7 @@ int CaptureOverlay::testOutput()
         overlay.m_dragStarted = false;
         overlay.m_undoStack = {overlay.m_anns};
         overlay.m_redoStack = {overlay.m_anns};
-        overlay.placeToolbar();
+        overlay.placeToolBars();
         overlay.showToolBars();
         const QPoint pressPoint(ink.rect.center().x(), ink.rect.top());
         QMouseEvent press(QEvent::MouseButtonPress, pressPoint, overlay.mapToGlobal(pressPoint),

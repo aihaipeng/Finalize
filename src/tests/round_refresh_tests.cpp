@@ -125,7 +125,7 @@ int CaptureOverlay::testRoundRefresh(const QString &previewPath)
           "a zero radius returns to square corners without losing the stored value");
     radius->setValue(12);
     if (!previewPath.isEmpty()) {
-        overlay.placeToolbar();
+        overlay.placeToolBars();
         overlay.showToolBars();
         overlay.grab().save(previewPath + QStringLiteral("-round-toolbar.png"));
         overlay.cropped().save(previewPath + QStringLiteral("-round-crop.png"));

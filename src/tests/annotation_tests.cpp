@@ -105,7 +105,7 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
         overlay.setAttribute(Qt::WA_DeleteOnClose, false);
         overlay.m_mode = Adjusting;
         overlay.m_sel = QRect(origin + QPoint(40, 40), QSize(500, 280));
-        overlay.placeToolbar();
+        overlay.placeToolBars();
         overlay.showToolBars();
         auto mouse = [&overlay, origin](QEvent::Type type, const QPoint &at) {
             const QPoint pos = origin + at;
@@ -526,7 +526,7 @@ int CaptureOverlay::testTextAnnotation()
     const QPoint origin = screen.topLeft() - overlay.geometry().topLeft() + QPoint(60, 60);
     overlay.m_mode = Adjusting;
     overlay.m_sel = QRect(origin, QSize(800, 300));
-    overlay.placeToolbar();
+    overlay.placeToolBars();
     overlay.showToolBars();
     overlay.selectTool(ATool::Text);
     QLineEdit *fontEdit = overlay.m_sizeInput->findChild<QLineEdit *>();

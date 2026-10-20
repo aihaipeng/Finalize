@@ -27,7 +27,7 @@ enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, 
                   CardFit, CardTranslate, CardReload, CardCopy, CardZoomIn,
                   CardZoomOut, CardActual, CardPin, CardMinimize, CardMaximize, CardRestore, CardClose, CardSearch,
                   CardUp, CardDown, CardRight, CardFormat, Back, Crop, CropStart, CropEnd, Barcode, CardLink,
-                  RoundRect, CornerSquare, CornerRounded, AspectLock, Warning };
+                  RoundRect, CornerSquare, CornerRounded, AspectLock, Warning, Sliders };
 
 // dark: glyphs for a dark surface (light ink) instead of the light bars.
 QIcon makeIcon(Icon icon, int size = 16, bool dark = false);

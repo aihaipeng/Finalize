@@ -2,9 +2,12 @@
 
 #include "platform/window_detection.h"
 #include "capture/pixel_inspector.h"
+#include "capture/tool_layout_dialog.h"
 #include "shared/widgets.h"
 class OcrDialog;
 #include <QObject>
+#include <QHash>
+#include <QStringList>
 #include <QImage>
 #include <QPixmap>
 #include <QVector>
@@ -78,6 +81,7 @@ public:
     static int testBarcode(const QString &previewPath);
     static int testRoundRefresh(const QString &previewPath);
     static int testSelection();
+    static int testToolbarPlacement(const QString &previewPath);
     static int testThemeUi(const QString &previewPath);
     static int testColorPicker(const QString &previewPath);
     static int testMosaic(const QString &previewPath);
@@ -262,8 +266,31 @@ private:
     static Qt::CursorShape cursorForHandle(Handle h);
     QRect resizeBy(Handle h, const QPoint &pos);
     void updateTip();
+    void createToolBars();
     void buildToolLayout();
-    void placeToolbar();
+    void relayoutToolButtons();
+    void loadToolLayout();
+    void saveToolLayout();
+    QVector<ToolLayoutItem> currentToolLayout() const;
+    void applyToolLayout(const QVector<ToolLayoutItem> &items);
+    QWidget *barForSide(const QString &side) const;
+    QWidget *widgetForTool(const QString &id) const;
+    QString toolSide(const QString &id) const;
+    QStringList toolsForSide(const QString &side) const;
+    QString activeToolSide() const;
+    bool isToolBarWidget(const QObject *object) const;
+    bool overToolChrome(const QPoint &point) const;
+    void raiseToolBars();
+    void updateLayoutCardRect();
+    QRect avoidLayoutCard(const QRect &bar, const QRect &avail, const QString &side) const;
+    void rebuildMorePanel();
+    void toggleMorePanel(bool open);
+    void placeMorePanel();
+    void showToolLayoutDialog();
+    void triggerToolButton(QToolButton *button);
+    QString toolDisplayName(const QString &id) const;
+    Icon toolIcon(const QString &id) const;
+    void placeToolBars();
     void positionToolOptions();
     void hideToolBars();
     void showToolBars();
@@ -335,7 +362,17 @@ private:
     QWidget *m_sizeRadiusDivider = nullptr;
     QToolButton *m_sizeLockButton = nullptr;
     QWidget *m_tools = nullptr;
+    QWidget *m_toolsTop = nullptr;
+    QWidget *m_toolsLeft = nullptr;
+    QWidget *m_toolsRight = nullptr;
     QVector<QWidget *> m_toolButtons;
+    QStringList m_defaultToolOrder;
+    QStringList m_toolOrder;
+    QHash<QString, QString> m_toolSide;
+    QToolButton *m_moreButton = nullptr;
+    QWidget *m_morePanel = nullptr;
+    QRect m_layoutCardRect;
+    QWidget *m_layoutCardWidget = nullptr;
     ATool m_atool = ATool::None;
     QColor m_acolor = QColor("#ed1c24");             // Red first: the loudest marking color.
     int m_apen = 3;

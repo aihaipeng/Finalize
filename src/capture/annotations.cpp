@@ -59,6 +59,7 @@
 #include <QHBoxLayout>
 #include <QSignalBlocker>
 #include <QStyle>
+#include <QTimer>
 #include <QCursor>
 #include <QFontInfo>
 #include <QPolygonF>
@@ -460,8 +461,7 @@ QCursor CaptureOverlay::mosaicBrushCursor(qreal width, qreal dpr)
 void CaptureOverlay::updateAnnotationCursor(const QPoint &pos)
 {
     if (m_mode != Adjusting) { setCursor(Qt::CrossCursor); return; }
-    if ((m_tools->isVisible() && m_tools->geometry().contains(pos))
-        || (m_toolOptions->isVisible() && m_toolOptions->geometry().contains(pos))) {
+    if (overToolChrome(pos)) {
         setCursor(Qt::ArrowCursor);
         return;
     }
@@ -732,6 +732,29 @@ void CaptureOverlay::syncTextEditorGeometry()
 
 bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
 {
+    if (obj == m_layoutCardWidget
+        && (ev->type() == QEvent::Move || ev->type() == QEvent::Resize
+            || ev->type() == QEvent::Show)) {
+        updateLayoutCardRect();
+        placeToolBars();
+    }
+    if (obj == m_morePanel && ev->type() == QEvent::Leave && m_morePanel->isVisible()) {
+        QTimer::singleShot(180, this, [this] {
+            const auto inside = [](QWidget *widget) {
+                return widget && widget->isVisible()
+                    && widget->rect().contains(widget->mapFromGlobal(QCursor::pos()));
+            };
+            if (m_morePanel && m_morePanel->isVisible()
+                && !inside(m_morePanel) && !inside(m_moreButton)
+                && m_moreButton) m_moreButton->setChecked(false);
+        });
+    }
+    if (m_morePanel && m_morePanel->isVisible() && ev->type() == QEvent::MouseButtonPress
+        && obj->isWidgetType()) {
+        auto *widget = static_cast<QWidget *>(obj);
+        if (widget != m_moreButton && !m_morePanel->isAncestorOf(widget)
+            && m_moreButton) m_moreButton->setChecked(false);
+    }
     if ((ev->type() == QEvent::FocusIn || ev->type() == QEvent::FocusOut) && obj->isWidgetType()) {
         for (QWidget *w = static_cast<QWidget *>(obj); w; w = w->parentWidget()) {
             if (w->objectName() != QStringLiteral("customField")) continue;
@@ -771,7 +794,7 @@ bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
             return true;
         }
     }
-    if ((obj == m_tools || obj == m_toolOptions)
+    if ((isToolBarWidget(obj) || obj == m_toolOptions)
         && (ev->type() == QEvent::Enter || ev->type() == QEvent::Leave))
         updateInspector();
     if (m_embedded && obj == m_toolOptions && ev->type() == QEvent::KeyPress) {
@@ -934,7 +957,7 @@ void CaptureOverlay::beginTextEdit(const QPoint &pos, int existing)
     ImmAssociateContext(reinterpret_cast<HWND>(winId()), m_imeCtx);
     m_textView->show();
     m_textView->raise();
-    m_tools->raise();
+    raiseToolBars();
     m_toolOptions->raise();
     m_sizeBar->hide();
     m_inspector->hide();
@@ -1570,7 +1593,7 @@ void CaptureOverlay::stopItemDrag()
 void CaptureOverlay::endAnnotationDrag()                         // Restore what stepped aside.
 {
     m_sizeBar->hide();
-    placeToolbar();
+    placeToolBars();
     showToolBars();
     syncSizeInput();
     update();
@@ -1591,6 +1614,7 @@ void CaptureOverlay::setToolNone()
 
 void CaptureOverlay::selectTool(ATool tool)                      // Shared by toolbar toggles and keyboard.
 {
+    if (m_moreButton && m_moreButton->isChecked()) m_moreButton->setChecked(false);
     if (m_live) { m_live = false; commitAnnotation(); }
     stopItemDrag();
     commitTextEdit();
@@ -2149,7 +2173,7 @@ void CaptureOverlay::updateToolOptions()
         emit stripRebuilt();
         return;
     }
-    placeToolbar();
+    placeToolBars();
     m_toolOptions->raise();
     update(old.united(m_toolOptions->geometry()).adjusted(-4, -4, 4, 4));
 }

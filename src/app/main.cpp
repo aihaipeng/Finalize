@@ -99,6 +99,12 @@ int main(int argc, char **argv)
         const QString pinPending = QCoreApplication::translate("PinWindow", "文字识别中…");
         const QString historyEmpty = QCoreApplication::translate(
                 "HistoryDialog", "暂无历史截图\n新截图会自动记录在这里。");
+        const QString preview = QCoreApplication::translate("ToolLayoutDialog", "截图区域（默认黑色）");
+        const QString hiddenHint = QCoreApplication::translate(
+                "ToolLayoutDialog", "隐藏工具拖到这里 · 实际截图下拉末尾为“调整”");
+        const QString save = QCoreApplication::translate("ToolLayoutDialog", "保存");
+        const QString dropdown = QCoreApplication::translate("CaptureOverlay", "下拉");
+        const QString adjust = QCoreApplication::translate("CaptureOverlay", "调整");
         const bool hasEnglish = I18n::availableLocales().contains(QStringLiteral("en_US"));
         const bool ok = hasEnglish
                 && (english ? capture == QStringLiteral("Screenshot (F1)")
@@ -107,17 +113,29 @@ int main(int argc, char **argv)
                                   && pinFail == QStringLiteral("Recognition failed. Right-click to retry.")
                                   && pinPending == QStringLiteral("Recognizing text…")
                                   && historyEmpty == QStringLiteral("No screenshots yet.\nNew screenshots will be recorded here automatically.")
+                                  && preview == QStringLiteral("Capture area (default black)")
+                                  && hiddenHint == QStringLiteral("Drag hidden tools here · The dropdown ends with Adjust")
+                                  && save == QStringLiteral("Save")
+                                  && dropdown == QStringLiteral("Dropdown")
+                                  && adjust == QStringLiteral("Adjust")
                             : capture == QStringLiteral("截图 (F1)")
                                   && loading == QStringLiteral("正在识别…")
                                   && arrow == QStringLiteral("箭头 (A)")
                                   && pinFail == QStringLiteral("识别失败，右键重试")
                                   && pinPending == QStringLiteral("文字识别中…")
-                                  && historyEmpty == QStringLiteral("暂无历史截图\n新截图会自动记录在这里。"));
-        std::printf("%s locale=%s locales=%s capture=[%s] loading=[%s] arrow=[%s] pinFail=[%s] pinPending=[%s] historyEmpty=[%s]\n",
+                                  && historyEmpty == QStringLiteral("暂无历史截图\n新截图会自动记录在这里。")
+                                  && preview == QStringLiteral("截图区域（默认黑色）")
+                                  && hiddenHint == QStringLiteral("隐藏工具拖到这里 · 实际截图下拉末尾为“调整”")
+                                  && save == QStringLiteral("保存")
+                                  && dropdown == QStringLiteral("下拉")
+                                  && adjust == QStringLiteral("调整"));
+        std::printf("%s locale=%s locales=%s capture=[%s] loading=[%s] arrow=[%s] pinFail=[%s] pinPending=[%s] historyEmpty=[%s] preview=[%s] hidden=[%s] save=[%s] dropdown=[%s] adjust=[%s]\n",
                     ok ? "PASS" : "FAIL", qPrintable(locale),
                     qPrintable(I18n::availableLocales().join(QLatin1Char(','))),
                     qPrintable(capture), qPrintable(loading), qPrintable(arrow),
-                    qPrintable(pinFail), qPrintable(pinPending), qPrintable(historyEmpty));
+                    qPrintable(pinFail), qPrintable(pinPending), qPrintable(historyEmpty),
+                    qPrintable(preview), qPrintable(hiddenHint), qPrintable(save),
+                    qPrintable(dropdown), qPrintable(adjust));
         return ok ? 0 : 1;
     }
     if (app.arguments().contains(QStringLiteral("--test-ui-theme"))) {
@@ -184,6 +202,9 @@ int main(int argc, char **argv)
         return CaptureOverlay::testColorPicker(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-color-picker")) + 1));
     if (app.arguments().contains(QStringLiteral("--test-selection")))
         return CaptureOverlay::testSelection();
+    if (app.arguments().contains(QStringLiteral("--test-toolbar-placement")))
+        return CaptureOverlay::testToolbarPlacement(app.arguments().value(
+            app.arguments().indexOf(QStringLiteral("--test-toolbar-placement")) + 1));
     if (app.arguments().contains(QStringLiteral("--test-window-detection")))
         return CaptureOverlay::testWindowDetection();
     if (app.arguments().contains(QStringLiteral("--test-text-annotation")))

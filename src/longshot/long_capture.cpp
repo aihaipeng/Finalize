@@ -16,7 +16,6 @@
 #include <QLabel>
 #include <QtMath>
 #include <QToolButton>
-#include <QComboBox>
 #include <QHBoxLayout>
 #include <QFileDialog>
 #include <QStandardPaths>
@@ -608,13 +607,10 @@ void LongCapture::buildUi()
         "QFrame#barSeparator{background-color:#2b2d33;margin:0px 6px;border:none;}"
         "QLabel{color:#9c9da1;font-size:12px;background:transparent;padding:0px 4px;}"
         "QLabel#longCaptureSize{color:#f4f5f8;font-size:14px;}"
-        "QComboBox{color:#f4f5f8;background:#0c0d10;border:none;border-radius:12px;"
-        "padding:1px 4px 1px 12px;font-size:13px;}"
-        "QComboBox:hover{background:#222326;}"
-        "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
-        "QComboBox::down-arrow{image:none;width:0px;height:0px;}"
-        "QComboBox QAbstractItemView{outline:0px;color:#f4f5f8;background:#18191d;border:1px solid #2b2d33;"
-        "padding:4px;selection-background-color:#5e6ad2;selection-color:#ffffff;}"));
+        "QToolButton#longCaptureAxisToggle{color:#f4f5f8;background:#0c0d10;border:none;"
+        "border-radius:12px;padding:0px 12px;font-size:13px;}"
+        "QToolButton#longCaptureAxisToggle:hover{background:#222326;}"
+        "QToolButton#longCaptureAxisToggle:pressed{background:#2b2d33;}"));
     auto *lay = new QHBoxLayout(m_bar);
     lay->setContentsMargins(12, 7, 12, 7);           // 42px surface around compact controls.
     lay->setSpacing(4);
@@ -637,14 +633,18 @@ void LongCapture::buildUi()
     m_axis->setToolTip(tr("移动截图区域"));
     m_axis->setCursor(Qt::SizeVerCursor);
     m_axis->installEventFilter(this);
-    m_dir = flatComboBox();
-    m_dir->addItems({tr("纵向"), tr("横向")});
-    m_dir->setFixedSize(qMax(98, m_dir->sizeHint().width()), 24);
+    m_dir = new QToolButton;
+    m_dir->setObjectName(QStringLiteral("longCaptureAxisToggle"));
+    m_dir->setText(tr("纵向"));
+    m_dir->setToolTip(tr("切换纵向/横向截图"));
+    m_dir->setAccessibleName(tr("切换纵向/横向截图"));
     m_dir->setFocusPolicy(Qt::NoFocus);
-    m_autoUp = barButton(Icon::LongShot, tr("自动向上滚动截图"));
+    m_dir->setCursor(Qt::PointingHandCursor);
+    m_dir->setFixedHeight(24);
+    m_dir->setMinimumWidth(64);
+    m_autoUp = barButton(Icon::ChevronUp, tr("自动向上滚动截图"));
     m_autoUp->setCheckable(true);
-    m_autoUp->setIcon(rotatedIcon(barIcon(Icon::LongShot), Bar::icon, 180));
-    m_auto = barButton(Icon::LongShot, tr("自动向下滚动截图"));
+    m_auto = barButton(Icon::ChevronDown, tr("自动向下滚动截图"));
     m_auto->setCheckable(true);
     m_crop = barButton(Icon::Crop, tr("裁剪"));
     m_crop->installEventFilter(this);
@@ -716,7 +716,7 @@ void LongCapture::buildUi()
         b->setFocusPolicy(Qt::NoFocus);
         lay->addWidget(b);
     }
-    connect(m_dir, &QComboBox::currentIndexChanged, this, [this](int index) { setVertical(index == 0); });
+    connect(m_dir, &QToolButton::clicked, this, [this] { setVertical(!m_vertical); });
     connect(m_autoUp, &QToolButton::toggled, this, [this](bool on) { setAutoScroll(on ? -1 : 0); });
     connect(m_auto, &QToolButton::toggled, this, [this](bool on) { setAutoScroll(on ? 1 : 0); });
     connect(edit, &QToolButton::clicked, this, [this] { finish(true); });
@@ -922,17 +922,14 @@ void LongCapture::setVertical(bool vertical)
     if (vertical == m_vertical) return;
     setAutoScroll(0);
     m_vertical = vertical;
-    if (m_dir && m_dir->currentIndex() != (vertical ? 0 : 1)) {
-        const QSignalBlocker block(m_dir);
-        m_dir->setCurrentIndex(vertical ? 0 : 1);
-    }
+    if (m_dir) m_dir->setText(vertical ? tr("纵向") : tr("横向"));
     if (m_auto) {
-        m_auto->setIcon(vertical ? barIcon(Icon::LongShot) : rotatedIcon(barIcon(Icon::LongShot), Bar::icon));
+        m_auto->setIcon(vertical ? barIcon(Icon::ChevronDown) : barIcon(Icon::ChevronRight));
         m_auto->setToolTip(vertical ? tr("自动向下滚动截图") : tr("自动向右滚动截图"));
     }
     if (m_autoUp) {
-        m_autoUp->setIcon(vertical ? rotatedIcon(barIcon(Icon::LongShot), Bar::icon, 180)
-                                   : rotatedIcon(barIcon(Icon::LongShot), Bar::icon, 90));
+        m_autoUp->setIcon(vertical ? barIcon(Icon::ChevronUp)
+                                   : rotatedIcon(barIcon(Icon::ChevronRight), Bar::icon, 180));
         m_autoUp->setToolTip(vertical ? tr("自动向上滚动截图") : tr("自动向左滚动截图"));
     }
     updateCropDirection();

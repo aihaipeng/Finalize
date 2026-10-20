@@ -157,7 +157,7 @@ int CaptureOverlay::testSmartErase(const QString &previewPath)
             overlay.setAttribute(Qt::WA_DeleteOnClose, false);
             overlay.m_mode = Adjusting;
             overlay.m_sel = QRect(origin + QPoint(40, 40), QSize(500, 280));
-            overlay.placeToolbar();
+            overlay.placeToolBars();
             overlay.showToolBars();
             auto mouse = [&overlay, origin](QEvent::Type type, const QPoint &at) {
                 const QPoint pos = origin + at;

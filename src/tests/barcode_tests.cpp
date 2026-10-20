@@ -197,7 +197,7 @@ int CaptureOverlay::testBarcode(const QString &previewPath)
     overlay.setAttribute(Qt::WA_DeleteOnClose, false);
     overlay.m_mode = Adjusting;
     overlay.m_sel = overlay.localScreenRect(frame.logicalRect);
-    overlay.placeToolbar();
+    overlay.placeToolBars();
     overlay.showToolBars();
     auto *button = overlay.m_tools->findChild<QToolButton *>(QStringLiteral("barcodeButton"));
     check(button && button->isEnabled() && button->toolTip() == QStringLiteral("识别二维码/条形码"),

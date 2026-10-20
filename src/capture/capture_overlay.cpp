@@ -1,5 +1,6 @@
 #include "shared/dialog_chrome.h"
 #include "capture/capture_overlay.h"
+#include "capture/tool_layout_dialog.h"
 #include <QWindow>
 #include "platform/output.h"
 #include "shared/settings.h"
@@ -37,7 +38,7 @@
 #include <QAbstractItemView>
 #include <QDialog>
 #include <QLineEdit>
-#include <QHBoxLayout>
+#include <QHBoxLayout>\n#include <QVBoxLayout>\n#include <QBoxLayout>
 #include <QGridLayout>
 #include <QPushButton>
 #include <QFileDialog>
@@ -55,6 +56,8 @@
 #include <QFrame>
 #include <QPalette>
 #include <QStandardItemModel>
+#include <QStyle>
+#include <QVariant>
 #include <qt_windows.h>
 #include <dwmapi.h>
 #include <imm.h>
@@ -290,8 +293,24 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         "QToolButton:pressed{background-color:#2b2d33;}"
         "QToolButton:checked{background:transparent;}"
         "QToolButton:checked:hover{background-color:#222326;}"
-        "QFrame#barSeparator{background-color:#2b2d33;margin:0px 6px;border:none;}");
+        "QToolButton#toolMoreButton{padding:0px;border:none;background:transparent;}"
+        "QToolButton#toolMoreButton:hover{background-color:#222326;}"
+        "QToolButton#toolMoreButton:checked{background-color:#2b2d33;}"
+        "QFrame#barSeparator{background-color:#2b2d33;margin:0px 6px;border:none;}"
+        "QFrame#barSeparatorH{background-color:#2b2d33;margin:6px 0px;border:none;}");
     m_tools->setStyleSheet(barQss);
+    m_toolsTop = new QWidget(this);
+    m_toolsLeft = new QWidget(this);
+    m_toolsRight = new QWidget(this);
+    m_toolsTop->setObjectName(QStringLiteral("toolBarTop"));
+    m_toolsLeft->setObjectName(QStringLiteral("toolBarLeft"));
+    m_toolsRight->setObjectName(QStringLiteral("toolBarRight"));
+    for (QWidget *bar : {m_toolsTop, m_toolsLeft, m_toolsRight}) {
+        bar->installEventFilter(this);
+        bar->setCursor(Qt::ArrowCursor);
+        bar->setStyleSheet(barQss);
+        bar->hide();
+    }
     // Capture output actions; a pin edit session replaces them with one
     // confirm button that applies the result back to the pin.
     QList<QWidget *> outputButtons;
@@ -401,7 +420,70 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
                          m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)], undo, redo};
         m_toolButtons += outputButtons;
     }
-    for (QWidget *button : m_toolButtons) button->setFocusPolicy(Qt::NoFocus);
+    const QStringList toolIds = pinEdit
+        ? QStringList{QStringLiteral("shape"), QStringLiteral("arrow"), QStringLiteral("pen"),
+                      QStringLiteral("marker"), QStringLiteral("mosaic"), QStringLiteral("text"),
+                      QStringLiteral("number"), QStringLiteral("eraser"), QStringLiteral("undo"),
+                      QStringLiteral("redo"), QStringLiteral("done")}
+        : QStringList{QStringLiteral("shape"), QStringLiteral("arrow"), QStringLiteral("pen"),
+                      QStringLiteral("marker"), QStringLiteral("mosaic"), QStringLiteral("text"),
+                      QStringLiteral("number"), QStringLiteral("eraser"), QStringLiteral("undo"),
+                      QStringLiteral("redo"), QStringLiteral("scroll"), QStringLiteral("ocr"),
+                      QStringLiteral("translate"), QStringLiteral("barcode"), QStringLiteral("pin"),
+                      QStringLiteral("refresh"), QStringLiteral("save"), QStringLiteral("copy")};
+    const bool canEditLayout = !pinEdit && !m_embedded;
+    m_defaultToolOrder = toolIds;
+    for (int i = 0; i < m_toolButtons.size(); ++i) {
+        QWidget *button = m_toolButtons[i];
+        const QString id = toolIds.value(i);
+        button->setProperty("lenssnipToolId", id);
+        const bool history = id == QStringLiteral("undo") || id == QStringLiteral("redo");
+        const bool output = id == QStringLiteral("scroll") || id == QStringLiteral("ocr")
+            || id == QStringLiteral("translate") || id == QStringLiteral("barcode")
+            || id == QStringLiteral("pin") || id == QStringLiteral("refresh")
+            || id == QStringLiteral("save") || id == QStringLiteral("copy")
+            || id == QStringLiteral("done");
+        button->setProperty("lenssnipToolGroup",
+                            history ? QStringLiteral("history")
+                                    : output ? QStringLiteral("output") : QStringLiteral("tools"));
+        button->setFocusPolicy(Qt::NoFocus);
+        m_toolOrder << id;
+        m_toolSide.insert(id, QStringLiteral("bottom"));
+    }
+    if (canEditLayout) {
+        m_moreButton = new QToolButton(m_tools);
+        m_moreButton->setObjectName(QStringLiteral("toolMoreButton"));
+        m_moreButton->setIcon(barIcon(Icon::ChevronDown, 14));
+        m_moreButton->setIconSize(QSize(12, 12));
+        m_moreButton->setFixedSize(16, Bar::button);
+        m_moreButton->setCheckable(true);
+        m_moreButton->setCursor(Qt::PointingHandCursor);
+        m_moreButton->setFocusPolicy(Qt::NoFocus);
+        m_moreButton->setToolTip(tr("更多工具"));
+        m_moreButton->setAccessibleName(tr("更多工具"));
+        connect(m_moreButton, &QToolButton::toggled, this, &CaptureOverlay::toggleMorePanel);
+
+        m_morePanel = new QWidget(this);
+        m_morePanel->setObjectName(QStringLiteral("toolMorePanel"));
+        m_morePanel->setAttribute(Qt::WA_StyledBackground);
+        m_morePanel->setStyleSheet(QStringLiteral(
+            "#toolMorePanel{background:#18191d;border:1px solid #2b2d33;border-radius:8px;}"
+            "QToolButton{color:#f4f5f8;background:transparent;border:none;border-radius:4px;padding:5px;}"
+            "QToolButton:hover{background:#222326;}"
+            "QToolButton:pressed{background:#2b2d33;}"
+            "QToolButton#toolMoreAdjust{color:#f4f5f8;background:#222326;font-size:12px;"
+            "padding:0px 10px;border-radius:6px;}"
+            "QToolButton#toolMoreAdjust:hover{background:#2b2d33;}"));
+        auto *moreLayout = new QHBoxLayout(m_morePanel);
+        moreLayout->setContentsMargins(8, 7, 8, 7);
+        moreLayout->setSpacing(4);
+        m_morePanel->installEventFilter(this);
+        m_morePanel->hide();
+        m_moreButton->setProperty("lenssnipToolId", QStringLiteral("more"));
+        m_toolOrder << QStringLiteral("more");
+        m_toolSide.insert(QStringLiteral("more"), QStringLiteral("bottom"));
+        loadToolLayout();
+    }
 
     const QString optionsQss = barQss + QStringLiteral(
         "QLabel{color:#f4f5f8;font-size:13px;border:none;}"
@@ -430,8 +512,11 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     m_toolOptions->setCursor(Qt::ArrowCursor);
     m_toolOptions->hide();
     buildToolLayout();
-    m_tools->adjustSize();
-    m_tools->hide();
+    for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight}) {
+        if (!bar) continue;
+        bar->adjustSize();
+        bar->hide();
+    }
 
     if (m_embedded) {
         // Whole canvas is the committed selection; drawing works immediately.
@@ -484,7 +569,7 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
     const auto paintBars = [&] {
-        for (QWidget *glass : {m_tools, m_toolOptions}) {   // Rounded dark surface with a faint light rim.
+        for (QWidget *glass : {m_toolsTop, m_toolsLeft, m_toolsRight, m_tools, m_toolOptions}) {
             if (m_embedded) break;                   // Detached or unused bars paint themselves.
             if (!glass->isVisible()) continue;
             const QRectF bar = glass->geometry();
@@ -864,7 +949,7 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
         m_itemDrag = H_None;
         m_dragStarted = false;
         if (moved) {
-            placeToolbar();
+            placeToolBars();
             showToolBars();
         }
         update();
@@ -890,7 +975,7 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
     m_mode = Adjusting;
     m_hover = {};
     setCursor(Qt::SizeAllCursor);
-    placeToolbar();
+    placeToolBars();
     showToolBars();
     updateTip();
     updateInspector();
@@ -999,7 +1084,7 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
         if (m_lockAspect && m_sel.height() > 0) m_aspect = qreal(m_sel.width()) / m_sel.height();
         m_mode = Adjusting;
         m_hover = {};
-        placeToolbar(); showToolBars(); updateTip(); update();
+        placeToolBars(); showToolBars(); updateTip(); update();
         updateInspector();
         return;
     }
@@ -1025,7 +1110,7 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
             cancelDetection();
             m_sel.translate(delta);
             m_sel.moveTo(qBound(0,m_sel.x(),width()-m_sel.width()),qBound(0,m_sel.y(),height()-m_sel.height()));
-            placeToolbar(); showToolBars(); updateTip(); update();
+            placeToolBars(); showToolBars(); updateTip(); update();
             updateInspector();
             return;
         }
@@ -1330,7 +1415,7 @@ void CaptureOverlay::handleDetectedRect(const QRect &native, quint64 id)
             if (m_sel.width() >= 4 && m_sel.height() >= 4) {
                 m_mode = Adjusting;
                 showToolBars();
-                placeToolbar();
+                placeToolBars();
                 if (m_pinAfterDetection) { m_pinAfterDetection = false; pinCapture(); return; }
             } else resetSelection();
             m_hover = {};
@@ -1356,8 +1441,7 @@ void CaptureOverlay::updateInspector()
         || m_drag == H_Move
         || (m_mode == Adjusting && m_drag == H_None
             && (m_atool != ATool::None || m_selAnn >= 0 || !m_sel.contains(local)))
-        || (m_tools->isVisible() && m_tools->geometry().contains(local))
-        || (m_toolOptions->isVisible() && m_toolOptions->geometry().contains(local))) {
+        || overToolChrome(local)) {
         m_inspector->hide();
         return;
     }
@@ -1404,7 +1488,8 @@ void CaptureOverlay::resetSelection()
     m_mode = Selecting;                         // m_hover is kept: the next mouse move refreshes it.
     m_sel = QRect();
     m_drag = H_None;
-    m_tools->hide();
+    for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight})
+        if (bar) bar->hide();
     m_toolOptions->hide();
     m_sizeBar->hide();
     setCursor(Qt::CrossCursor);
@@ -1541,12 +1626,74 @@ void CaptureOverlay::updateTip()
     }
     m_sizeBar->adjustSize();
     const int gap = 6;
-    int x = r.center().x() - m_sizeBar->width() / 2;
-    x = qBound(0, x, qMax(0, width() - m_sizeBar->width()));
+    const QSize size = m_sizeBar->size();
     const bool fullScreen = (r == rect());
-    int y = fullScreen ? r.top() + gap : r.top() - m_sizeBar->height() - gap;
-    if (y < 0) y = r.top() + gap;
-    m_sizeBar->move(x, y);
+    const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(r.center()));
+    const QRect bounds = fullScreen ? rect()
+        : localScreenRect((screen ? screen : QGuiApplication::primaryScreen())
+            ->availableGeometry()).intersected(rect());
+    const bool hasTopBar = !m_pinEdit && m_toolsTop && m_toolsTop->isVisible();
+    const auto clear = [this, &bounds](const QRect &candidate) {
+        if (!bounds.contains(candidate)) return false;
+        if (!m_layoutCardRect.isNull() && candidate.intersects(m_layoutCardRect)) return false;
+        for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight})
+            if (bar && bar->isVisible() && candidate.intersects(bar->geometry())) return false;
+        if (m_toolOptions && m_toolOptions->isVisible()
+            && candidate.intersects(m_toolOptions->geometry())) return false;
+        if (m_morePanel && m_morePanel->isVisible()
+            && candidate.intersects(m_morePanel->geometry())) return false;
+        return true;
+    };
+    QVector<QRect> candidates;
+    if (hasTopBar) {
+        const QRect bar = m_toolsTop->geometry();
+        const int centerY = bar.top() + (bar.height() - size.height()) / 2;
+        candidates << QRect(QPoint(bar.left() - gap - size.width(), centerY), size)
+                   << QRect(QPoint(bar.left(), bar.top() - gap - size.height()), size)
+                   << QRect(QPoint(bar.left(), bar.bottom() + 1 + gap), size)
+                   << QRect(QPoint(bar.right() + 1 + gap, centerY), size);
+    } else {
+        const int centeredX = qBound(bounds.left(),
+                                     r.center().x() - size.width() / 2,
+                                     qMax(bounds.left(), bounds.right() + 1 - size.width()));
+        candidates << QRect(QPoint(centeredX,
+                                   fullScreen ? r.top() + gap
+                                              : r.top() - gap - size.height()), size)
+                   << QRect(QPoint(centeredX, r.bottom() + 1 + gap), size)
+                   << QRect(QPoint(centeredX, r.top() + gap), size);
+    }
+    QVector<int> xs{candidates.first().x(), bounds.left(), bounds.right() + 1 - size.width(),
+                    r.left() - gap - size.width(), r.right() + 1 + gap};
+    QVector<int> ys{candidates.first().y(), bounds.top(), bounds.bottom() + 1 - size.height(),
+                    r.top() - gap - size.height(), r.bottom() + 1 + gap};
+    for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight}) {
+        if (!bar || !bar->isVisible()) continue;
+        xs << bar->x() - gap - size.width() << bar->geometry().right() + 1 + gap;
+        ys << bar->y() - gap - size.height() << bar->geometry().bottom() + 1 + gap;
+    }
+    QRect chosen;
+    for (bool outsideSelection : {true, false}) {
+        const auto fits = [&](const QRect &candidate) {
+            return clear(candidate) && (!outsideSelection
+                || !candidate.intersects(r.adjusted(-4, -4, 4, 4)));
+        };
+        for (const QRect &candidate : candidates)
+            if (fits(candidate)) { chosen = candidate; break; }
+        if (!chosen.isNull()) break;
+        int distance = -1;
+        for (int x : xs) for (int y : ys) {
+            const QRect candidate(QPoint(x, y), size);
+            if (!fits(candidate)) continue;
+            const int cost = (candidate.topLeft() - candidates.first().topLeft()).manhattanLength();
+            if (distance < 0 || cost < distance) { chosen = candidate; distance = cost; }
+        }
+        if (!chosen.isNull()) break;
+    }
+    if (chosen.isNull()) {
+        m_sizeBar->hide();
+        return;
+    }
+    m_sizeBar->setGeometry(chosen);
     m_sizeBar->show();
     m_sizeBar->raise();
     if (m_customSizePopup && m_customSizePopup->isVisible() && !m_sel.isNull() && !m_updatingCustom) {
@@ -1556,54 +1703,688 @@ void CaptureOverlay::updateTip()
     }
 }
 
+QWidget *CaptureOverlay::barForSide(const QString &side) const
+{
+    if (side == QStringLiteral("top")) return m_toolsTop;
+    if (side == QStringLiteral("left")) return m_toolsLeft;
+    if (side == QStringLiteral("right")) return m_toolsRight;
+    return m_tools;
+}
+
+QWidget *CaptureOverlay::widgetForTool(const QString &id) const
+{
+    if (id == QStringLiteral("more")) return m_moreButton;
+    for (QWidget *button : m_toolButtons)
+        if (button->property("lenssnipToolId").toString() == id) return button;
+    return nullptr;
+}
+
+QString CaptureOverlay::toolSide(const QString &id) const
+{
+    const QString side = m_toolSide.value(id, QStringLiteral("bottom"));
+    return (side == QStringLiteral("top") || side == QStringLiteral("right")
+            || side == QStringLiteral("left") || side == QStringLiteral("hidden"))
+        ? side : QStringLiteral("bottom");
+}
+
+QStringList CaptureOverlay::toolsForSide(const QString &side) const
+{
+    QStringList result;
+    for (const QString &id : m_toolOrder)
+        if (toolSide(id) == side) result << id;
+    return result;
+}
+
+QString CaptureOverlay::activeToolSide() const
+{
+    QString id;
+    switch (m_atool) {
+    case ATool::Rect: case ATool::Ellipse: id = QStringLiteral("shape"); break;
+    case ATool::Arrow: id = QStringLiteral("arrow"); break;
+    case ATool::Pen: id = QStringLiteral("pen"); break;
+    case ATool::Marker: id = QStringLiteral("marker"); break;
+    case ATool::Mosaic: id = QStringLiteral("mosaic"); break;
+    case ATool::Text: id = QStringLiteral("text"); break;
+    case ATool::Number: id = QStringLiteral("number"); break;
+    case ATool::Eraser: id = QStringLiteral("eraser"); break;
+    default: break;
+    }
+    if (id.isEmpty()) return QString();
+    QString side = toolSide(id);
+    if (side == QStringLiteral("hidden")) side = toolSide(QStringLiteral("more"));
+    return side;
+}
+
+bool CaptureOverlay::isToolBarWidget(const QObject *object) const
+{
+    for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight})
+        if (object == bar) return true;
+    return false;
+}
+
+bool CaptureOverlay::overToolChrome(const QPoint &point) const
+{
+    for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight})
+        if (bar && bar->isVisible() && bar->geometry().contains(point)) return true;
+    return (m_toolOptions && m_toolOptions->isVisible()
+            && m_toolOptions->geometry().contains(point))
+        || (m_morePanel && m_morePanel->isVisible()
+            && m_morePanel->geometry().contains(point));
+}
+
+void CaptureOverlay::raiseToolBars()
+{
+    for (QWidget *bar : {m_toolsLeft, m_toolsRight, m_toolsTop, m_tools})
+        if (bar) bar->raise();
+    if (m_toolOptions) m_toolOptions->raise();
+    if (m_morePanel && m_morePanel->isVisible()) m_morePanel->raise();
+}
+
 void CaptureOverlay::buildToolLayout()
 {
-    if (m_tools->layout()) return;
-    auto *lay = new QHBoxLayout(m_tools);
-    lay->setContentsMargins(12, 7, 12, 7);        // 42px bar around 28px buttons.
-    lay->setSpacing(4);
-    for (int i = 0; i < m_toolButtons.size(); ++i) {
-        if (i == 9 || i == 11) lay->addWidget(barSeparator(true));   // Tools | undo, redo | outputs.
-        static_cast<QToolButton *>(m_toolButtons[i])->setFixedSize(Bar::button, Bar::button);
-        lay->addWidget(m_toolButtons[i]);
-    }
-    m_tools->adjustSize();
+    if (!m_tools) return;
+    relayoutToolButtons();
 }
 
-void CaptureOverlay::placeToolbar()
+void CaptureOverlay::relayoutToolButtons()
 {
-    if (m_embedded) return;   // The pin toolbar owns placement; the strip is top-level.
-    const QRect old = m_tools->geometry().united(m_toolOptions->geometry());
+    const QStringList sides{QStringLiteral("top"), QStringLiteral("right"),
+                            QStringLiteral("bottom"), QStringLiteral("left")};
+    for (const QString &side : sides) {
+        QWidget *bar = barForSide(side);
+        if (!bar) continue;
+        if (QLayout *old = bar->layout()) {
+            while (QLayoutItem *item = old->takeAt(0)) delete item;
+            delete old;
+        }
+        if (side == QStringLiteral("left") || side == QStringLiteral("right")) {
+            auto *lay = new QVBoxLayout(bar);
+            lay->setContentsMargins(7, 10, 7, 10);
+            lay->setSpacing(1);
+        } else {
+            auto *lay = new QHBoxLayout(bar);
+            lay->setContentsMargins(12, 7, 12, 7);
+            lay->setSpacing(4);
+        }
+    }
+    for (QWidget *button : m_toolButtons) button->hide();
+    if (m_moreButton) m_moreButton->hide();
+    for (const QString &id : m_toolOrder) {
+        QWidget *button = widgetForTool(id);
+        if (!button) continue;
+        const QString side = toolSide(id);
+        if (side == QStringLiteral("hidden")) continue;
+        QWidget *bar = barForSide(side);
+        auto *lay = bar ? qobject_cast<QBoxLayout *>(bar->layout()) : nullptr;
+        if (!lay) continue;
+        button->setParent(bar);
+        if (id == QStringLiteral("more")) {
+            const bool vertical = side == QStringLiteral("left") || side == QStringLiteral("right");
+            button->setFixedSize(vertical ? QSize(Bar::button, 16) : QSize(16, Bar::button));
+            static_cast<QToolButton *>(button)->setIcon(
+                barIcon(vertical ? Icon::ChevronRight : Icon::ChevronDown, 14));
+        } else {
+            button->setFixedSize(Bar::button, Bar::button);
+        }
+        lay->addWidget(button);
+        button->show();
+    }
+    for (const QString &side : sides) {
+        QWidget *bar = barForSide(side);
+        if (!bar) continue;
+        bar->adjustSize();
+        const bool hasItems = bar->layout() && bar->layout()->count() > 0;
+        bar->setVisible(hasItems);
+    }
+    if (m_morePanel && m_morePanel->isVisible()) rebuildMorePanel();
+}
+
+void CaptureOverlay::loadToolLayout()
+{
+    if (m_embedded || m_pinEdit) return;
+    LensSnipSettings settings;
+    QStringList order;
+    QHash<QString, QString> sides;
+    const QStringList saved = settings.value(QStringLiteral("Capture/toolLayoutV2")).toStringList();
+    if (!saved.isEmpty()) {
+        for (const QString &entry : saved) {
+            const QString id = entry.section(QLatin1Char('='), 0, 0);
+            QString side = entry.section(QLatin1Char('='), 1, 1);
+            if (id.isEmpty() || order.contains(id) || !widgetForTool(id)) continue;
+            if (side != QStringLiteral("top") && side != QStringLiteral("right")
+                && side != QStringLiteral("left") && side != QStringLiteral("hidden"))
+                side = QStringLiteral("bottom");
+            order << id;
+            sides.insert(id, side);
+        }
+    } else {
+        const QStringList old = settings.value(QStringLiteral("Capture/toolLayout")).toStringList();
+        if (!old.isEmpty()) {
+            for (const QString &entry : old) {
+                const QString id = entry.section(QLatin1Char('='), 0, 0);
+                bool ok = false;
+                const int visibility = entry.section(QLatin1Char('='), 1, 1).toInt(&ok);
+                if (id.isEmpty() || !ok || order.contains(id) || !widgetForTool(id)) continue;
+                order << id;
+                sides.insert(id, visibility == 0 ? QStringLiteral("bottom") : QStringLiteral("hidden"));
+            }
+        } else {
+            order = settings.value(QStringLiteral("Capture/toolOrder")).toStringList();
+            for (const QString &id : order)
+                if (widgetForTool(id)) sides.insert(id, QStringLiteral("bottom"));
+        }
+    }
+    QStringList all = m_defaultToolOrder;
+    if (m_moreButton) all << QStringLiteral("more");
+    if (order.isEmpty()) order = all;
+    for (const QString &id : all)
+        if (!order.contains(id)) {
+            order << id;
+            sides.insert(id, QStringLiteral("bottom"));
+        }
+    m_toolOrder.clear();
+    m_toolSide.clear();
+    for (const QString &id : order) {
+        if (!all.contains(id) || m_toolOrder.contains(id)) continue;
+        QString side = sides.value(id, QStringLiteral("bottom"));
+        if (id == QStringLiteral("more") && side == QStringLiteral("hidden"))
+            side = QStringLiteral("bottom");
+        m_toolOrder << id;
+        m_toolSide.insert(id, side);
+    }
+}
+
+void CaptureOverlay::saveToolLayout()
+{
+    if (m_embedded || m_pinEdit) return;
+    QStringList layout;
+    for (const QString &id : m_toolOrder)
+        layout << id + QLatin1Char('=') + toolSide(id);
+    LensSnipSettings settings;
+    settings.setValue(QStringLiteral("Capture/toolLayoutV2"), layout);
+    settings.remove(QStringLiteral("Capture/toolLayout"));
+    settings.remove(QStringLiteral("Capture/toolDock"));
+    settings.remove(QStringLiteral("Capture/toolOrder"));
+}
+
+QVector<ToolLayoutItem> CaptureOverlay::currentToolLayout() const
+{
+    QVector<ToolLayoutItem> result;
+    for (const QString &id : m_toolOrder) {
+        if (id == QStringLiteral("more")) {
+            result.append(ToolLayoutItem{id, tr("下拉"), Icon::ChevronDown,
+                                         toolSide(id), true});
+            continue;
+        }
+        if (!widgetForTool(id)) continue;
+        result.append(ToolLayoutItem{id, toolDisplayName(id), toolIcon(id),
+                                     toolSide(id), false});
+    }
+    return result;
+}
+
+void CaptureOverlay::applyToolLayout(const QVector<ToolLayoutItem> &items)
+{
+    QStringList order;
+    QHash<QString, QString> sides;
+    for (const ToolLayoutItem &item : items) {
+        if (!widgetForTool(item.id) || order.contains(item.id)) continue;
+        QString side = item.side;
+        if (side != QStringLiteral("top") && side != QStringLiteral("right")
+            && side != QStringLiteral("left") && side != QStringLiteral("hidden"))
+            side = QStringLiteral("bottom");
+        if (item.id == QStringLiteral("more") && side == QStringLiteral("hidden"))
+            side = QStringLiteral("bottom");
+        order << item.id;
+        sides.insert(item.id, side);
+    }
+    QStringList all = m_defaultToolOrder;
+    if (m_moreButton) all << QStringLiteral("more");
+    for (const QString &id : all)
+        if (!order.contains(id)) {
+            order << id;
+            sides.insert(id, QStringLiteral("bottom"));
+        }
+    m_toolOrder = order;
+    m_toolSide = sides;
+    relayoutToolButtons();
+    if (!m_embedded && !m_sel.isNull()) placeToolBars();
+}
+
+void CaptureOverlay::rebuildMorePanel()
+{
+    if (!m_morePanel) return;
+    auto *lay = qobject_cast<QHBoxLayout *>(m_morePanel->layout());
+    if (!lay) return;
+    while (QLayoutItem *item = lay->takeAt(0)) {
+        if (QWidget *widget = item->widget()) { widget->hide(); widget->deleteLater(); }
+        delete item;
+    }
+    for (const QString &id : toolsForSide(QStringLiteral("hidden"))) {
+        auto *button = qobject_cast<QToolButton *>(widgetForTool(id));
+        if (!button) continue;
+        auto *proxy = barButton(toolIcon(id), toolDisplayName(id));
+        proxy->setObjectName(QStringLiteral("toolMoreItem"));
+        proxy->setCheckable(button->isCheckable());
+        proxy->setChecked(button->isChecked());
+        proxy->setEnabled(button->isEnabled());
+        proxy->setFocusPolicy(Qt::NoFocus);
+        connect(proxy, &QToolButton::clicked, this, [this, button] { triggerToolButton(button); });
+        lay->addWidget(proxy);
+    }
+    auto *adjust = new QToolButton(m_morePanel);
+    adjust->setObjectName(QStringLiteral("toolMoreAdjust"));
+    adjust->setText(tr("调整"));
+    adjust->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    adjust->setFixedHeight(Bar::button);
+    adjust->setCursor(Qt::PointingHandCursor);
+    adjust->setFocusPolicy(Qt::NoFocus);
+    adjust->setToolTip(tr("调整工具栏"));
+    adjust->setAccessibleName(tr("调整工具栏"));
+    connect(adjust, &QToolButton::clicked, this, &CaptureOverlay::showToolLayoutDialog);
+    lay->addWidget(adjust);
+    m_morePanel->adjustSize();
+    placeMorePanel();
+}
+
+void CaptureOverlay::toggleMorePanel(bool open)
+{
+    if (!m_morePanel || !m_moreButton) return;
+    const QString side = toolSide(QStringLiteral("more"));
+    const bool vertical = side == QStringLiteral("left") || side == QStringLiteral("right");
+    if (vertical) m_moreButton->setIcon(barIcon(Icon::ChevronRight, 14));
+    else m_moreButton->setIcon(barIcon(open ? Icon::ChevronUp : Icon::ChevronDown, 14));
+    if (!open) {
+        m_morePanel->hide();
+        return;
+    }
+    rebuildMorePanel();
+    m_morePanel->show();
+    m_morePanel->raise();
+}
+
+void CaptureOverlay::placeMorePanel()
+{
+    if (!m_morePanel || !m_moreButton) return;
+    m_morePanel->adjustSize();
     const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(m_sel.center()));
     const QRect avail = localScreenRect((screen ? screen : QGuiApplication::primaryScreen())->availableGeometry());
-    const QSize main = m_tools->sizeHint();
-    const QSize options = optionsTool() == ATool::None ? QSize(0, 0) : m_toolOptions->sizeHint();
-    const int width = qMax(main.width(), options.width());
-    const int height = main.height() + (options.isEmpty() ? 0 : Bar::gap + options.height());
-    const int selRight = m_sel.right() + 1, selBottom = m_sel.bottom() + 1;
-    // A pin edit keeps the toolbar centered below the pin, the same spot the
-    // pin's own toolbar occupied; capture mode right-aligns under the selection.
-    const int x = m_pinEdit
-        ? qBound(avail.left(), m_sel.center().x() - width / 2, qMax(avail.left(), avail.right() + 1 - width))
-        : qBound(avail.left(), selRight - width, avail.right() + 1 - width);
-    const int y = selBottom + Bar::gap + height <= avail.bottom() + 1 ? selBottom + Bar::gap
-        : m_sel.top() - Bar::gap - height >= avail.top() ? m_sel.top() - Bar::gap - height
-        : qMax(avail.top(), avail.bottom() + 1 - height - 8);
-    m_tools->setGeometry(x + width - main.width(), y, main.width(), main.height());
-    positionToolOptions();
-    const QRect glass = m_toolOptions->isVisible()
-        ? m_tools->geometry().united(m_toolOptions->geometry()) : m_tools->geometry();
-    update(glass.united(old).adjusted(-4, -4, 4, 4));
+    QWidget *barWidget = m_moreButton->parentWidget();
+    const QRect bar = barWidget
+        ? QRect(barWidget->mapTo(this, QPoint(0, 0)), barWidget->size())
+        : QRect(m_moreButton->mapTo(this, QPoint(0, 0)), m_moreButton->size());
+    const bool vertical = toolSide(QStringLiteral("more")) == QStringLiteral("left")
+        || toolSide(QStringLiteral("more")) == QStringLiteral("right");
+    const QSize size = m_morePanel->size();
+    QVector<QRect> candidates;
+    if (vertical) {
+        candidates << QRect(QPoint(bar.left() - Bar::gap - size.width(), bar.top()), size)
+                   << QRect(QPoint(bar.right() + 1 + Bar::gap, bar.top()), size)
+                   << QRect(QPoint(bar.left() - Bar::gap - size.width(),
+                                   bar.bottom() + 1 - size.height()), size)
+                   << QRect(QPoint(bar.left(), bar.bottom() + 1 + Bar::gap), size);
+    } else {
+        candidates << QRect(QPoint(bar.right() + 1 - size.width(), bar.bottom() + 1 + Bar::gap), size)
+                   << QRect(QPoint(bar.right() + 1 - size.width(),
+                                   bar.top() - Bar::gap - size.height()), size)
+                   << QRect(QPoint(bar.left(), bar.bottom() + 1 + Bar::gap), size)
+                   << QRect(QPoint(bar.left(), bar.top() - Bar::gap - size.height()), size)
+                   << QRect(QPoint(bar.left() - Bar::gap - size.width(),
+                                   bar.top() + (bar.height() - size.height()) / 2), size)
+                   << QRect(QPoint(bar.right() + 1 + Bar::gap,
+                                   bar.top() + (bar.height() - size.height()) / 2), size);
+    }
+    if (!m_sel.isNull()) {
+        const int belowBar = bar.bottom() + 1 + Bar::gap;
+        const int besideSelectionY = qMax(avail.top(), qMin(belowBar, avail.bottom() + 1 - size.height()));
+        candidates << QRect(QPoint(m_sel.left() - Bar::gap - size.width(), besideSelectionY), size)
+                   << QRect(QPoint(m_sel.right() + 1 + Bar::gap, besideSelectionY), size)
+                   << QRect(QPoint(m_sel.left() - Bar::gap - size.width(), bar.top()), size)
+                   << QRect(QPoint(m_sel.right() + 1 + Bar::gap, bar.top()), size);
+    }
+    const auto clear = [this, &avail](const QRect &candidate) {
+        if (!avail.contains(candidate)) return false;
+        if (!m_layoutCardRect.isNull() && candidate.intersects(m_layoutCardRect)) return false;
+        if (!m_sel.isNull() && candidate.intersects(m_sel)) return false;
+        for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight})
+            if (bar && bar->isVisible() && candidate.intersects(bar->geometry())) return false;
+        if (m_sizeBar && m_sizeBar->isVisible()
+            && candidate.intersects(m_sizeBar->geometry())) return false;
+        if (m_toolOptions && m_toolOptions->isVisible()
+            && candidate.intersects(m_toolOptions->geometry())) return false;
+        return true;
+    };
+    QRect placed;
+    for (const QRect &candidate : candidates) {
+        if (clear(candidate)) {
+            placed = candidate;
+            break;
+        }
+    }
+    if (placed.isNull()) {
+        placed = candidates.value(0);
+        placed.moveLeft(qBound(avail.left(), placed.left(),
+                               qMax(avail.left(), avail.right() + 1 - placed.width())));
+        placed.moveTop(qBound(avail.top(), placed.top(),
+                              qMax(avail.top(), avail.bottom() + 1 - placed.height())));
+    }
+    m_morePanel->move(placed.topLeft());
 }
 
-void CaptureOverlay::positionToolOptions()                      // Option strip hugs the toolbar's bottom edge.
+void CaptureOverlay::showToolLayoutDialog()
+{
+    if (m_embedded || m_pinEdit) return;
+    if (m_moreButton) {
+        m_moreButton->setChecked(false);
+        if (m_morePanel) m_morePanel->hide();
+    }
+    const QVector<ToolLayoutItem> previous = currentToolLayout();
+    QVector<ToolLayoutItem> entries = previous;
+    QVector<ToolLayoutItem> defaults;
+    for (const QString &id : m_defaultToolOrder)
+        defaults.append(ToolLayoutItem{id, toolDisplayName(id), toolIcon(id),
+                                       QStringLiteral("bottom"), false});
+    if (m_moreButton)
+        defaults.append(ToolLayoutItem{QStringLiteral("more"), tr("下拉"), Icon::ChevronDown,
+                                       QStringLiteral("bottom"), true});
+
+    ToolLayoutDialog dialog(entries, defaults, this);
+    const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(m_sel.center()));
+    dialog.fitToScreen((screen ? screen : QGuiApplication::primaryScreen())->availableGeometry());
+    m_layoutCardWidget = &dialog;
+    updateLayoutCardRect();
+    connect(&dialog, &ToolLayoutDialog::layoutChanged, this,
+            [this](const QVector<ToolLayoutItem> &items) { applyToolLayout(items); });
+    placeToolBars();
+    const int result = dialog.exec();
+    const QVector<ToolLayoutItem> finalItems = dialog.items();
+    m_layoutCardWidget = nullptr;
+    m_layoutCardRect = QRect();
+    if (result != QDialog::Accepted) {
+        applyToolLayout(previous);
+        placeToolBars();
+        return;
+    }
+    applyToolLayout(finalItems);
+    saveToolLayout();
+    placeToolBars();
+}
+
+void CaptureOverlay::updateLayoutCardRect()
+{
+    if (!m_layoutCardWidget) {
+        m_layoutCardRect = QRect();
+        return;
+    }
+    const QRect global = m_layoutCardWidget->geometry();
+    m_layoutCardRect = QRect(mapFromGlobal(global.topLeft()), global.size());
+}
+
+void CaptureOverlay::triggerToolButton(QToolButton *button)
+{
+    if (!button) return;
+    if (button == m_refreshButton) refreshScreenshot();
+    else button->click();
+}
+
+QString CaptureOverlay::toolDisplayName(const QString &id) const
+{
+    if (id == QStringLiteral("shape")) return tr("形状");
+    if (id == QStringLiteral("arrow")) return tr("箭头");
+    if (id == QStringLiteral("pen")) return tr("画笔");
+    if (id == QStringLiteral("marker")) return tr("荧光笔");
+    if (id == QStringLiteral("mosaic")) return tr("马赛克");
+    if (id == QStringLiteral("text")) return tr("文字");
+    if (id == QStringLiteral("number")) return tr("序号");
+    if (id == QStringLiteral("eraser")) return tr("橡皮");
+    if (id == QStringLiteral("undo")) return tr("撤销");
+    if (id == QStringLiteral("redo")) return tr("重做");
+    if (id == QStringLiteral("scroll")) return tr("长截图");
+    if (id == QStringLiteral("ocr")) return tr("文字识别");
+    if (id == QStringLiteral("translate")) return tr("翻译");
+    if (id == QStringLiteral("barcode")) return tr("二维码");
+    if (id == QStringLiteral("pin")) return tr("贴图");
+    if (id == QStringLiteral("refresh")) return tr("刷新");
+    if (id == QStringLiteral("save")) return tr("保存");
+    if (id == QStringLiteral("copy")) return tr("复制");
+    if (id == QStringLiteral("done")) return tr("完成");
+    if (id == QStringLiteral("more")) return tr("下拉");
+    return id;
+}
+
+Icon CaptureOverlay::toolIcon(const QString &id) const
+{
+    if (id == QStringLiteral("shape")) return Icon::Rect;
+    if (id == QStringLiteral("arrow")) return Icon::Arrow;
+    if (id == QStringLiteral("pen")) return Icon::Pen;
+    if (id == QStringLiteral("marker")) return Icon::Marker;
+    if (id == QStringLiteral("mosaic")) return Icon::Mosaic;
+    if (id == QStringLiteral("text")) return Icon::Text;
+    if (id == QStringLiteral("number")) return Icon::Number;
+    if (id == QStringLiteral("eraser")) return Icon::Eraser;
+    if (id == QStringLiteral("undo")) return Icon::Undo;
+    if (id == QStringLiteral("redo")) return Icon::Redo;
+    if (id == QStringLiteral("scroll")) return Icon::LongShot;
+    if (id == QStringLiteral("ocr")) return Icon::Ocr;
+    if (id == QStringLiteral("translate")) return Icon::Translate;
+    if (id == QStringLiteral("barcode")) return Icon::Barcode;
+    if (id == QStringLiteral("pin")) return Icon::Pin;
+    if (id == QStringLiteral("refresh")) return Icon::Refresh;
+    if (id == QStringLiteral("save")) return Icon::Save;
+    if (id == QStringLiteral("copy")) return Icon::Copy;
+    if (id == QStringLiteral("done")) return Icon::Check;
+    if (id == QStringLiteral("more")) return Icon::ChevronDown;
+    return Icon::Rect;
+}
+
+void CaptureOverlay::placeToolBars()
+{
+    if (m_embedded) return;   // The pin toolbar owns placement; the strip is top-level.
+    const QRect old = [this] {
+        QRect result;
+        for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight})
+            if (bar && bar->isVisible()) result = result.isNull()
+                ? bar->geometry() : result.united(bar->geometry());
+        if (m_toolOptions && m_toolOptions->isVisible())
+            result = result.isNull() ? m_toolOptions->geometry()
+                                     : result.united(m_toolOptions->geometry());
+        return result;
+    }();
+    const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(m_sel.center()));
+    const QRect avail = localScreenRect((screen ? screen : QGuiApplication::primaryScreen())->availableGeometry());
+    const int gap = Bar::gap;
+    const int selRight = m_sel.right() + 1, selBottom = m_sel.bottom() + 1;
+
+    if (m_pinEdit) {
+        m_tools->show();
+        const QSize main = m_tools->sizeHint();
+        const int width = qMax(main.width(), optionsTool() == ATool::None ? 0 : m_toolOptions->sizeHint().width());
+        const int x = qBound(avail.left(), m_sel.center().x() - width / 2,
+                             qMax(avail.left(), avail.right() + 1 - width));
+        int y = selBottom + gap;
+        if (y + main.height() > avail.bottom() + 1) y = m_sel.top() - gap - main.height();
+        m_tools->setGeometry(x + width - main.width(), y, main.width(), main.height());
+        positionToolOptions();
+        const QRect glass = m_toolOptions->isVisible()
+            ? m_tools->geometry().united(m_toolOptions->geometry()) : m_tools->geometry();
+        update(glass.united(old).adjusted(-4, -4, 4, 4));
+        return;
+    }
+
+    QVector<QRect> placedBars;
+    for (const QString &side : QStringList{QStringLiteral("top"), QStringLiteral("right"),
+                                           QStringLiteral("bottom"), QStringLiteral("left")}) {
+        QWidget *bar = barForSide(side);
+        if (!bar || !bar->layout() || bar->layout()->count() == 0)
+            continue;
+        const QSize size = bar->sizeHint();
+        QPoint point;
+        if (side == QStringLiteral("top")) point = QPoint(selRight - size.width(), m_sel.top() - gap - size.height());
+        else if (side == QStringLiteral("bottom")) point = QPoint(selRight - size.width(), selBottom + gap);
+        else if (side == QStringLiteral("left")) point = QPoint(m_sel.left() - gap - size.width(),
+                                                                m_sel.top());
+        else point = QPoint(selRight + gap, m_sel.top());
+        const QRect preferred(QPoint(
+            qBound(avail.left(), point.x(), qMax(avail.left(), avail.right() + 1 - size.width())),
+            qBound(avail.top(), point.y(), qMax(avail.top(), avail.bottom() + 1 - size.height()))), size);
+        QVector<QRect> candidates{preferred};
+        if (!m_sel.isNull() && preferred.intersects(m_sel)) {
+            if (side == QStringLiteral("top")) {
+                candidates << QRect(QPoint(m_sel.left() - gap - size.width(), avail.top()), size)
+                             << QRect(QPoint(selRight + gap, avail.top()), size)
+                             << QRect(QPoint(selRight - size.width(), selBottom + gap), size);
+            } else if (side == QStringLiteral("bottom")) {
+                candidates << QRect(QPoint(m_sel.left() - gap - size.width(),
+                                             avail.bottom() + 1 - size.height()), size)
+                             << QRect(QPoint(selRight + gap,
+                                             avail.bottom() + 1 - size.height()), size)
+                             << QRect(QPoint(selRight - size.width(), m_sel.top() - gap - size.height()), size);
+            } else if (side == QStringLiteral("left")) {
+                candidates << QRect(QPoint(avail.left(), m_sel.top() - gap - size.height()), size)
+                             << QRect(QPoint(avail.left(), selBottom + gap), size)
+                             << QRect(QPoint(selRight + gap,
+                                             m_sel.center().y() - size.height() / 2), size);
+            } else {
+                candidates << QRect(QPoint(avail.right() + 1 - size.width(),
+                                             m_sel.top() - gap - size.height()), size)
+                             << QRect(QPoint(avail.right() + 1 - size.width(), selBottom + gap), size)
+                             << QRect(QPoint(m_sel.left() - gap - size.width(),
+                                             m_sel.center().y() - size.height() / 2), size);
+            }
+        }
+        QVector<int> xs{preferred.x(), avail.left(), avail.right() + 1 - size.width(),
+                        m_sel.left() - gap - size.width(), selRight + gap};
+        QVector<int> ys{preferred.y(), avail.top(), avail.bottom() + 1 - size.height(),
+                        m_sel.top() - gap - size.height(), selBottom + gap};
+        QVector<QRect> obstacles = placedBars;
+        if (!m_layoutCardRect.isNull()) obstacles << m_layoutCardRect;
+        const bool vertical = side == QStringLiteral("left") || side == QStringLiteral("right");
+        for (const QRect &obstacle : obstacles) {
+            const QRect before(QPoint(obstacle.left() - gap - size.width(), preferred.y()), size);
+            const QRect after(QPoint(obstacle.right() + 1 + gap, preferred.y()), size);
+            const QRect above(QPoint(preferred.x(), obstacle.top() - gap - size.height()), size);
+            const QRect below(QPoint(preferred.x(), obstacle.bottom() + 1 + gap), size);
+            if (vertical) candidates << below << above << before << after;
+            else candidates << before << after << above << below;
+            xs << before.x() << after.x();
+            ys << above.y() << below.y();
+        }
+        const auto fits = [&](const QRect &candidate, bool outsideSelection) {
+            if (candidate.isNull() || !avail.contains(candidate)) return false;
+            if (outsideSelection && candidate.intersects(m_sel.adjusted(-4, -4, 4, 4))) return false;
+            for (const QRect &obstacle : obstacles)
+                if (candidate.adjusted(-gap, -gap, gap, gap).intersects(obstacle)) return false;
+            return true;
+        };
+        QRect chosen;
+        // Only this layout pass owns occupied bounds; hidden or stale widgets cannot affect placement.
+        for (bool outsideSelection : {true, false}) {
+            for (const QRect &candidate : candidates) {
+                const QRect adjusted = avoidLayoutCard(candidate, avail, side);
+                if (fits(adjusted, outsideSelection)) { chosen = adjusted; break; }
+            }
+            if (!chosen.isNull()) break;
+            int distance = -1;
+            for (int x : xs) for (int y : ys) {
+                const QRect candidate(QPoint(x, y), size);
+                if (!fits(candidate, outsideSelection)) continue;
+                const int cost = (candidate.topLeft() - preferred.topLeft()).manhattanLength();
+                if (distance < 0 || cost < distance) { chosen = candidate; distance = cost; }
+            }
+            if (!chosen.isNull()) break;
+        }
+        // shortcut: a bar larger than the screen keeps clamped bounds until overflow rules are defined.
+        if (chosen.isNull()) chosen = preferred;
+        placedBars << chosen;
+        bar->setGeometry(chosen);
+        bar->show();
+        bar->raise();
+    }
+    positionToolOptions();
+    updateTip();
+    const QRect glass = [this] {
+        QRect result;
+        for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight})
+            if (bar && bar->isVisible()) result = result.isNull()
+                ? bar->geometry() : result.united(bar->geometry());
+        if (m_toolOptions && m_toolOptions->isVisible())
+            result = result.isNull() ? m_toolOptions->geometry()
+                                     : result.united(m_toolOptions->geometry());
+        return result;
+    }();
+    update(glass.united(old).adjusted(-4, -4, 4, 4));
+    if (m_morePanel && m_morePanel->isVisible()) placeMorePanel();
+}
+
+QRect CaptureOverlay::avoidLayoutCard(const QRect &bar, const QRect &avail, const QString &side) const
+{
+    if (m_layoutCardRect.isNull() || !bar.intersects(m_layoutCardRect)) return bar;
+    QRect candidate = bar;
+    if (side == QStringLiteral("top"))
+        candidate.moveTop(m_layoutCardRect.top() - Bar::gap - bar.height());
+    else if (side == QStringLiteral("bottom"))
+        candidate.moveTop(m_layoutCardRect.bottom() + 1 + Bar::gap);
+    else if (side == QStringLiteral("left"))
+        candidate.moveLeft(m_layoutCardRect.left() - Bar::gap - bar.width());
+    else
+        candidate.moveLeft(m_layoutCardRect.right() + 1 + Bar::gap);
+    if (avail.contains(candidate) && !candidate.intersects(m_layoutCardRect))
+        return candidate;
+    return QRect();
+}
+
+void CaptureOverlay::positionToolOptions()
 {
     if (m_embedded) return;                       // The pin positions the detached strip.
     if (!m_toolOptions->isVisible() && optionsTool() == ATool::None) return;
-    const QRect bar = m_tools->geometry();
-    const QSize hint = m_toolOptions->sizeHint();       // Strip width follows its own contents.
-    m_toolOptions->setGeometry(qBound(0, bar.left(), qMax(0, width() - hint.width())), bar.bottom() + 1 + Bar::gap,
-                               hint.width(), hint.height());   // Left-aligned 8px below the main bar.
+    QString side = activeToolSide();
+    if (side.isEmpty() || side == QStringLiteral("hidden")) side = toolSide(QStringLiteral("more"));
+    QWidget *barWidget = barForSide(side);
+    if (!barWidget || !barWidget->isVisible()) barWidget = m_tools;
+    const QRect bar = barWidget ? barWidget->geometry() : QRect();
+    const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(m_sel.center()));
+    const QRect avail = localScreenRect((screen ? screen : QGuiApplication::primaryScreen())->availableGeometry());
+    const QSize hint = m_toolOptions->sizeHint();
+    const int gap = Bar::gap;
+    const bool vertical = side == QStringLiteral("left") || side == QStringLiteral("right");
+    QVector<QRect> candidates;
+    if (vertical) {
+        const bool barOnRight = bar.center().x() > m_sel.center().x();
+        const int outsideX = barOnRight ? bar.left() - gap - hint.width() : bar.right() + 1 + gap;
+        const int insideX = barOnRight ? bar.right() + 1 + gap : bar.left() - gap - hint.width();
+        const int y = bar.top() + (bar.height() - hint.height()) / 2;
+        candidates << QRect(QPoint(outsideX, y), hint)
+                   << QRect(QPoint(insideX, y), hint)
+                   << QRect(QPoint(bar.left(), bar.bottom() + 1 + gap), hint)
+                   << QRect(QPoint(bar.left(), bar.top() - gap - hint.height()), hint);
+    } else {
+        const int x = qBound(avail.left(), bar.left(),
+                             qMax(avail.left(), avail.right() + 1 - hint.width()));
+        const int outsideY = bar.bottom() < m_sel.top()
+            ? bar.top() - gap - hint.height() : bar.bottom() + 1 + gap;
+        const int insideY = bar.bottom() < m_sel.top()
+            ? bar.bottom() + 1 + gap : bar.top() - gap - hint.height();
+        candidates << QRect(QPoint(x, outsideY), hint)
+                   << QRect(QPoint(x, insideY), hint)
+                   << QRect(QPoint(x, m_sel.top() - gap - hint.height()), hint)
+                   << QRect(QPoint(x, m_sel.bottom() + 1 + gap), hint);
+    }
+    QRect chosen;
+    for (const QRect &candidate : candidates) {
+        if (avail.contains(candidate)
+            && (m_layoutCardRect.isNull() || !candidate.intersects(m_layoutCardRect))) {
+            chosen = candidate;
+            break;
+        }
+    }
+    if (chosen.isNull()) {
+        chosen = candidates.value(0);
+        chosen.moveLeft(qBound(avail.left(), chosen.left(),
+                               qMax(avail.left(), avail.right() + 1 - chosen.width())));
+        chosen.moveTop(qBound(avail.top(), chosen.top(),
+                              qMax(avail.top(), avail.bottom() + 1 - chosen.height())));
+    }
+    m_toolOptions->setGeometry(chosen);
 }
 
 void CaptureOverlay::hideToolBars()
@@ -1613,15 +2394,28 @@ void CaptureOverlay::hideToolBars()
         update(m_toolOptions->geometry().adjusted(-4, -4, 4, 4));
         m_toolOptions->hide();
     }
-    if (m_tools->isVisible()) {
-        update(m_tools->geometry().adjusted(-4, -4, 4, 4));
-        m_tools->hide();
+    for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight}) {
+        if (bar && bar->isVisible()) {
+            update(bar->geometry().adjusted(-4, -4, 4, 4));
+            bar->hide();
+        }
+    }
+    if (m_morePanel) m_morePanel->hide();
+    if (m_moreButton && m_moreButton->isChecked()) {
+        const QSignalBlocker block(m_moreButton);
+        m_moreButton->setChecked(false);
+        const QString side = toolSide(QStringLiteral("more"));
+        const bool vertical = side == QStringLiteral("left") || side == QStringLiteral("right");
+        m_moreButton->setIcon(barIcon(vertical ? Icon::ChevronRight : Icon::ChevronDown, 14));
     }
 }
 
 void CaptureOverlay::showToolBars()
 {
-    if (!m_embedded) m_tools->show();              // Embedded pins use their own toolbar.
+    if (!m_embedded) {
+        for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight})
+            if (bar && bar->layout() && bar->layout()->count() > 0) bar->show();
+    }
     if (optionsTool() != ATool::None) {
         positionToolOptions();
         m_toolOptions->show();
@@ -1639,7 +2433,7 @@ void CaptureOverlay::presetSelection(const QRect &localSel, ATool tool)
     m_hover = {};
     m_drag = H_None;
     if (!m_pinEdit) setCursor(Qt::SizeAllCursor);   // Region moving is a capture-only gesture.
-    placeToolbar();
+    placeToolBars();
     showToolBars();
     updateTip();
     updateInspector();
@@ -2023,7 +2817,7 @@ void CaptureOverlay::customFieldsChanged()
     m_mode = Adjusting;
     m_hover = {};
     m_drag = H_None;
-    placeToolbar();
+    placeToolBars();
     showToolBars();
     updateTip();
     updateInspector();
@@ -2056,7 +2850,7 @@ void CaptureOverlay::applyCustomPreset(int index)
     m_hover = {};
     m_drag = H_None;
     updateCustomSizeInputs();
-    placeToolbar();
+    placeToolBars();
     showToolBars();
     updateTip();
     updateInspector();
@@ -2238,7 +3032,8 @@ void CaptureOverlay::refreshScreenshot()
     const bool excluded = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) != FALSE;
     if (excluded) {
         m_desktopPreview = true;
-        m_tools->show();
+        for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight})
+            if (bar && bar->layout() && bar->layout()->count() > 0) bar->show();
         update();
     } else {
         m_desktopPreview = false;
@@ -2257,7 +3052,7 @@ void CaptureOverlay::refreshScreenshot()
             m_desktopPreview = false;
             show(); raise(); activateWindow(); setFocus();
             if (!m_sel.isNull()) {
-                placeToolbar();
+                placeToolBars();
                 showToolBars();
                 updateTip();
                 updateInspector();
@@ -2276,7 +3071,7 @@ void CaptureOverlay::refreshScreenshot()
         if (!excluded) show();
         raise(); activateWindow(); setFocus();
         if (!m_sel.isNull()) {
-            placeToolbar();
+            placeToolBars();
             showToolBars();
             updateTip();
             updateInspector();
@@ -2426,7 +3221,9 @@ void CaptureOverlay::openTextCard(bool translate, bool barcode)
     const QRect captureRect=globalScreenRect(m_sel.normalized());
     cancelDetection();
     if (m_colorDialog) m_colorDialog->close();
-    m_tools->hide(); m_toolOptions->hide(); m_inspector->hide();
+    for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight})
+        if (bar) bar->hide();
+    m_toolOptions->hide(); m_inspector->hide();
     hide();
     auto *dialog = barcode ? showBarcode(image,this,captureRect)
                            : translate ? showTranslate(image,this,captureRect) : showOcr(image,this,captureRect);

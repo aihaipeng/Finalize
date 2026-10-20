@@ -178,7 +178,7 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     annotation.text=QStringLiteral("OCR2026");
     annotation.rect=QRect(overlay.m_sel.topLeft()+QPoint(24,153),QSize(300,35));
     overlay.m_anns.append(annotation);
-    overlay.placeToolbar(); overlay.showToolBars();
+    overlay.placeToolBars(); overlay.showToolBars();
     const QRect selection = overlay.m_sel;
     const QImage before = overlay.cropped().toImage();
     auto *button = overlay.m_tools->findChild<QToolButton *>(QStringLiteral("ocrButton"));
@@ -610,7 +610,7 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
     check(!overlay.isVisible() && overlay.m_sel==selection && overlay.cropped().toImage()==before,
           "closing OCR ends the capture and leaves the selection and output untouched");
-    overlay.show(); overlay.placeToolbar(); overlay.showToolBars();
+    overlay.show(); overlay.placeToolBars(); overlay.showToolBars();
     button->click();
     dialog = overlay.m_ocrDialog;
     QApplication::processEvents();
@@ -619,7 +619,7 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
     QThreadPool::globalInstance()->waitForDone();
     check(!engine.busy.load() && !overlay.isVisible(),"closing during recognition cancels cooperatively and releases the single-job slot");
-    overlay.show(); overlay.placeToolbar(); overlay.showToolBars();
+    overlay.show(); overlay.placeToolBars(); overlay.showToolBars();
     for (QScreen *screen:QGuiApplication::screens()) {
         const QRect area=screen->availableGeometry();
         const QRect anchor(area.topLeft()+QPoint(30,30),QSize(100,80));

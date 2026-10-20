@@ -323,13 +323,13 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
                            .translated(-overlay.geometry().topLeft());
     overlay.m_sel = QRect(avail.topLeft() + QPoint(60, 60), QSize(980, 120));
     overlay.m_mode = Adjusting;
-    overlay.placeToolbar();
+    overlay.placeToolBars();
     check(overlay.m_tools->y() >= overlay.m_sel.bottom() + 1
               && overlay.m_tools->x() + overlay.m_tools->width() == overlay.m_sel.right() + 1
               && overlay.m_tools->width() > overlay.m_tools->height(),
           "toolbar docks below the selection, flush with its right edge");
     overlay.m_sel = QRect(avail.left() + 40, avail.bottom() + 1 - 150, 300, 150);
-    overlay.placeToolbar();
+    overlay.placeToolBars();
     check(overlay.m_tools->y() + overlay.m_tools->height() <= overlay.m_sel.top()
               && overlay.m_tools->width() > overlay.m_tools->height(),
           "the horizontal toolbar moves above the selection at the screen bottom");
@@ -1137,7 +1137,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     overlay.setToolSize(0);
     check(overlay.toolSize() == 1 && overlay.m_sizeButton->text().toDouble() == 1,
           "width input cannot become zero or negative");
-    overlay.placeToolbar();
+    overlay.placeToolBars();
     overlay.showToolBars();
     check(overlay.m_toolOptions->x() == overlay.m_tools->x()
               && overlay.m_toolOptions->y() == overlay.m_tools->geometry().bottom() + 1 + Bar::gap

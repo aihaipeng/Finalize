@@ -378,11 +378,15 @@ int LongCapture::testOutput()
     for (QToolButton *b : session.m_bar->findChildren<QToolButton *>()) tips << b->toolTip();
     const QString ocrTip = session.m_ocrMissing.isEmpty() ? QStringLiteral("文字识别 (OCR)") : session.m_ocrMissing;
     const QString translateTip = session.m_ocrMissing.isEmpty() ? QStringLiteral("识别并翻译文字") : session.m_ocrMissing;
-    check(tips == QStringList{QStringLiteral("自动向上滚动截图"), QStringLiteral("自动向下滚动截图"),
+    check(tips == QStringList{QStringLiteral("切换纵向/横向截图"),
+                              QStringLiteral("自动向上滚动截图"), QStringLiteral("自动向下滚动截图"),
                               QStringLiteral("裁剪"), QStringLiteral("编辑"), ocrTip, translateTip,
                               QStringLiteral("识别二维码/条形码"),
                               QStringLiteral("贴图"), QStringLiteral("保存"), QStringLiteral("关闭"), QStringLiteral("复制并关闭")},
-          "long-capture bar lists both auto-scroll directions, crop, edit, OCR, translate, barcode, pin, save, close and copy-and-close in order");
+          "long-capture bar lists the direction toggle, both auto-scroll directions, crop, edit, OCR, translate, barcode, pin, save, close and copy-and-close in order");
+    check(session.m_bar->findChildren<QComboBox *>().isEmpty()
+              && session.m_autoUp->icon().cacheKey() != session.m_auto->icon().cacheKey(),
+          "the direction control has no dropdown and the two auto-scroll icons point in opposite directions");
     const QPoint cursorBeforeAuto = QCursor::pos();
     session.m_auto->click();
     check(session.m_autoScroll == 1 && session.m_auto->isChecked() && !session.m_autoUp->isChecked()
@@ -402,7 +406,7 @@ int LongCapture::testOutput()
     check(!session.m_crop->isEnabled() && session.m_cropStart->toolTip() == QStringLiteral("裁剪顶部")
               && session.m_cropEnd->toolTip() == QStringLiteral("裁剪底部"),
           "crop waits for a captured image and its panel crops top and bottom");
-    check(session.m_label->text() == QStringLiteral("400 × 300") && session.m_dir->currentText() == QStringLiteral("纵向"),
+    check(session.m_label->text() == QStringLiteral("400 × 300") && session.m_dir->text() == QStringLiteral("纵向"),
           "bar starts with the selection size and vertical direction");
     const QString sizeLabel = session.m_label->text();
     session.fail(QStringLiteral("保存失败，请重试"));
@@ -443,10 +447,13 @@ int LongCapture::testOutput()
               && session.m_bar->pos() == barBefore + QPoint(0, 40),
           "the move control shifts the selection and bar along the scroll axis only");
     check(session.moveRegion(QPoint(0, 5000)).isNull(), "a jump beyond a third of the screen is ignored");
-    session.m_dir->setCurrentIndex(1);
-    check(!session.m_vertical && session.logicalLength() == 0 && session.m_autoScroll == 0
+    session.m_dir->click();
+    check(!session.m_vertical && session.m_dir->text() == QStringLiteral("横向")
+              && session.logicalLength() == 0 && session.m_autoScroll == 0
               && session.m_label->text() == QStringLiteral("400 × 300"),
-          "switching direction restarts the capture");
+          "clicking the direction toggle switches and restarts the capture");
+    check(session.m_autoUp->icon().cacheKey() != session.m_auto->icon().cacheKey(),
+          "left and right auto-scroll icons remain distinct");
     check(session.moveRegion(QPoint(25, 25)) == QPoint(25, 0), "horizontal sessions move along x");
     check(session.m_cropStart->toolTip() == QStringLiteral("裁剪左侧") && session.m_cropEnd->toolTip() == QStringLiteral("裁剪右侧"),
           "horizontal sessions crop left and right");
