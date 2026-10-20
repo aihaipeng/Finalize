@@ -2103,11 +2103,13 @@ void CaptureOverlay::showToolLayoutDialog()
     if (result != QDialog::Accepted) {
         applyToolLayout(previous);
         placeToolBars();
+        showToolBars();
         return;
     }
     applyToolLayout(finalItems);
     saveToolLayout();
     placeToolBars();
+    showToolBars();
 }
 
 void CaptureOverlay::updateLayoutCardRect()
@@ -2293,6 +2295,10 @@ void CaptureOverlay::placeToolBars()
             }
             if (!chosen.isNull()) break;
         }
+        if (chosen.isNull() && !m_layoutCardRect.isNull()) {
+            bar->hide();   // The modal editor already previews tools when no external space remains.
+            continue;
+        }
         // shortcut: a bar larger than the screen keeps clamped bounds until overflow rules are defined.
         if (chosen.isNull()) chosen = preferred;
         placedBars << chosen;
@@ -2377,6 +2383,10 @@ void CaptureOverlay::positionToolOptions()
             break;
         }
     }
+    if (chosen.isNull() && !m_layoutCardRect.isNull()) {
+        m_toolOptions->hide();
+        return;
+    }
     if (chosen.isNull()) {
         chosen = candidates.value(0);
         chosen.moveLeft(qBound(avail.left(), chosen.left(),
@@ -2385,6 +2395,7 @@ void CaptureOverlay::positionToolOptions()
                               qMax(avail.top(), avail.bottom() + 1 - chosen.height())));
     }
     m_toolOptions->setGeometry(chosen);
+    if (!m_layoutCardRect.isNull() && optionsTool() != ATool::None) m_toolOptions->show();
 }
 
 void CaptureOverlay::hideToolBars()

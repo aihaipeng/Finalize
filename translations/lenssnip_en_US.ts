@@ -1876,6 +1876,34 @@ Enable recording to keep new screenshots here.</translation>
 <context>
     <name>ToolLayoutDialog</name>
     <message>
+        <source>拖动按钮调整位置，或点击按钮选择移动与排序。</source>
+        <translation>Drag to arrange, or click a tool to move and reorder it.</translation>
+    </message>
+    <message>
+        <source>点击选择移动与排序，也可拖动。</source>
+        <translation>Click to move and reorder, or drag.</translation>
+    </message>
+    <message>
+        <source>下拉中的工具</source>
+        <translation>Tools in dropdown</translation>
+    </message>
+    <message>
+        <source>拖到这里收起工具；下拉入口始终保留。</source>
+        <translation>Drop tools here to hide them. The dropdown entry stays visible.</translation>
+    </message>
+    <message>
+        <source>下拉入口不能隐藏</source>
+        <translation>The dropdown entry cannot be hidden</translation>
+    </message>
+    <message>
+        <source>向前移动</source>
+        <translation>Move earlier</translation>
+    </message>
+    <message>
+        <source>向后移动</source>
+        <translation>Move later</translation>
+    </message>
+    <message>
         <source>调整工具栏</source>
         <translation>Adjust toolbar</translation>
     </message>

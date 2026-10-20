@@ -99,9 +99,9 @@ int main(int argc, char **argv)
         const QString pinPending = QCoreApplication::translate("PinWindow", "文字识别中…");
         const QString historyEmpty = QCoreApplication::translate(
                 "HistoryDialog", "暂无历史截图\n新截图会自动记录在这里。");
-        const QString preview = QCoreApplication::translate("ToolLayoutDialog", "截图区域（默认黑色）");
+        const QString preview = QCoreApplication::translate("ToolLayoutDialog", "截图区域");
         const QString hiddenHint = QCoreApplication::translate(
-                "ToolLayoutDialog", "隐藏工具拖到这里 · 实际截图下拉末尾为“调整”");
+                "ToolLayoutDialog", "拖到这里收起工具；下拉入口始终保留。");
         const QString save = QCoreApplication::translate("ToolLayoutDialog", "保存");
         const QString dropdown = QCoreApplication::translate("CaptureOverlay", "下拉");
         const QString adjust = QCoreApplication::translate("CaptureOverlay", "调整");
@@ -113,8 +113,8 @@ int main(int argc, char **argv)
                                   && pinFail == QStringLiteral("Recognition failed. Right-click to retry.")
                                   && pinPending == QStringLiteral("Recognizing text…")
                                   && historyEmpty == QStringLiteral("No screenshots yet.\nNew screenshots will be recorded here automatically.")
-                                  && preview == QStringLiteral("Capture area (default black)")
-                                  && hiddenHint == QStringLiteral("Drag hidden tools here · The dropdown ends with Adjust")
+                                   && preview == QStringLiteral("Capture area")
+                                   && hiddenHint == QStringLiteral("Drop tools here to hide them. The dropdown entry stays visible.")
                                   && save == QStringLiteral("Save")
                                   && dropdown == QStringLiteral("Dropdown")
                                   && adjust == QStringLiteral("Adjust")
@@ -124,8 +124,8 @@ int main(int argc, char **argv)
                                   && pinFail == QStringLiteral("识别失败，右键重试")
                                   && pinPending == QStringLiteral("文字识别中…")
                                   && historyEmpty == QStringLiteral("暂无历史截图\n新截图会自动记录在这里。")
-                                  && preview == QStringLiteral("截图区域（默认黑色）")
-                                  && hiddenHint == QStringLiteral("隐藏工具拖到这里 · 实际截图下拉末尾为“调整”")
+                                   && preview == QStringLiteral("截图区域")
+                                   && hiddenHint == QStringLiteral("拖到这里收起工具；下拉入口始终保留。")
                                   && save == QStringLiteral("保存")
                                   && dropdown == QStringLiteral("下拉")
                                   && adjust == QStringLiteral("调整"));

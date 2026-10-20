@@ -41,7 +41,8 @@ QToolButton *iconButton(Icon icon, const QString &tip);
 namespace Bar {
 inline const QColor background{"#101114"}, surface{"#18191d"}, content{"#0c0d10"},
     field{"#111216"}, ink{"#f4f5f8"}, muted{"#9c9da1"}, dim{"#73757f"},
-    accent{"#5e6ad2"}, divider{"#2b2d33"}, hover{"#222326"}, selection{"#32345b"};
+    accent{"#5e6ad2"}, divider{"#2b2d33"}, hover{"#222326"}, selection{"#32345b"},
+    focusRing{"#828fff"}, primaryFill{"#e5e5e6"}, primaryInk{"#09090a"};
 constexpr int button = 28, icon = 18, radius = 8, gap = 8;
 }
 // Capture bar glyphs: light ink, accent when checked, dim when disabled.

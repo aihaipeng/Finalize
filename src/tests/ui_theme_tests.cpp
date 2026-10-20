@@ -5,6 +5,10 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QDialogButtonBox>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QMimeData>
 #include <QGraphicsTextItem>
 #include <QPushButton>
 #include "pin/pin_window.h"
@@ -18,6 +22,7 @@
 #include <QCursor>
 #include <QKeyEvent>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <algorithm>
 #include <climits>
 #include <QDir>
@@ -25,6 +30,7 @@
 #include <QFileDialog>
 #include <QEventLoop>
 #include <QTimer>
+#include <QTranslator>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
@@ -283,18 +289,35 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
     QPixmap liveCard;
     QPoint liveCardCenter;
     bool cardOverlapsToolbar = false;
+    const auto beforeCancel = overlay.currentToolLayout();
+    const QVariant settingsBeforeCancel = LensSnipSettings().value(QStringLiteral("Capture/toolLayoutV2"));
     QTimer::singleShot(100, [&] {
         auto *dialog = qobject_cast<ToolLayoutDialog *>(QApplication::activeModalWidget());
         if (!dialog) return;
         liveCard = dialog->grab();
+        review.save(QPixmap::fromImage(grabNative(nativeFromLogical(dialog->geometry()))),
+                    QStringLiteral("-tool-layout-desktop"));
         liveCardCenter = dialog->mapToGlobal(dialog->rect().center());
         for (QWidget *bar : {overlay.m_tools, overlay.m_toolsTop,
-                             overlay.m_toolsLeft, overlay.m_toolsRight})
+                             overlay.m_toolsLeft, overlay.m_toolsRight, overlay.m_toolOptions})
             if (bar && bar->isVisible() && bar->geometry().intersects(overlay.m_layoutCardRect))
                 cardOverlapsToolbar = true;
+        dialog->moveItem(QStringLiteral("pen"), QStringLiteral("left"), 0);
+        review.check(overlay.toolSide(QStringLiteral("pen")) == QStringLiteral("left"),
+                     "editing the card updates the actual toolbar preview");
         dialog->reject();
     });
     overlay.showToolLayoutDialog();
+    bool cancelRestored = true;
+    for (const ToolLayoutItem &item : beforeCancel)
+        cancelRestored = cancelRestored && overlay.toolSide(item.id) == item.side;
+    review.check(cancelRestored && LensSnipSettings().value(QStringLiteral("Capture/toolLayoutV2")) == settingsBeforeCancel,
+                 "cancel restores the live toolbar without writing layout settings");
+    bool barsRestored = true;
+    for (QWidget *bar : {overlay.m_tools, overlay.m_toolsTop, overlay.m_toolsLeft, overlay.m_toolsRight})
+        if (bar->layout()->count() > 0) barsRestored = barsRestored && bar->isVisible();
+    review.check(barsRestored && overlay.m_toolOptions->isVisible(),
+                 "closing a space-constrained editor restores preview toolbars and active options");
     const QRect liveAvailable = QGuiApplication::primaryScreen()->availableGeometry();
     review.check(!liveCard.isNull()
                      && qAbs(liveCardCenter.x() - liveAvailable.center().x()) <= 2
@@ -328,6 +351,29 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
                      && qAbs(layoutDialog.geometry().center().y() - screenAvailable.center().y()) <= 2,
                  "the adjustment card is centered on the capture screen");
     review.save(layoutDialog.grab(), QStringLiteral("-tool-layout-dialog"));
+    const auto controlVisible = [](QWidget &dialog, QWidget *control) {
+        const QRect bounds(control->mapTo(&dialog, QPoint()), control->size());
+        return control->isVisible() && dialog.rect().contains(bounds)
+            && dialog.childAt(bounds.center()) == control;
+    };
+    auto *closeLayout = layoutDialog.findChild<QToolButton *>(QStringLiteral("toolLayoutClose"));
+    auto *saveLayout = layoutDialog.findChild<QPushButton *>(QStringLiteral("toolLayoutSave"));
+    auto *cancelLayout = layoutDialog.findChild<QPushButton *>(QStringLiteral("toolLayoutCancel"));
+    for (const QSize &size : {QSize(640, 480), QSize(320, 480)}) {
+        layoutDialog.fitToScreen(QRect(screenAvailable.topLeft(), size));
+        QApplication::processEvents();
+        layoutDialog.m_scroll->verticalScrollBar()->setValue(layoutDialog.m_scroll->verticalScrollBar()->maximum());
+        layoutDialog.m_scroll->horizontalScrollBar()->setValue(layoutDialog.m_scroll->horizontalScrollBar()->maximum());
+        review.check(layoutDialog.width() <= size.width() - 24 && layoutDialog.height() <= size.height() - 24
+                         && controlVisible(layoutDialog, closeLayout) && controlVisible(layoutDialog, saveLayout)
+                         && controlVisible(layoutDialog, cancelLayout),
+                     "narrow and short screens keep close, cancel and save visible while the editor scrolls");
+        review.save(layoutDialog.grab(), QStringLiteral("-tool-layout-%1").arg(size.width()));
+    }
+    layoutDialog.fitToScreen(screenAvailable);
+    layoutDialog.m_scroll->verticalScrollBar()->setValue(0);
+    layoutDialog.m_scroll->horizontalScrollBar()->setValue(0);
+    QApplication::processEvents();
     int layoutSignals = 0;
     QObject::connect(&layoutDialog, &ToolLayoutDialog::layoutChanged,
                      &layoutDialog,
@@ -354,12 +400,190 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
                  "moving a button to a side updates the layout model");
     layoutDialog.moveItem(QStringLiteral("refresh"), QStringLiteral("hidden"), 0);
     review.check(sideOf(QStringLiteral("refresh")) == QStringLiteral("hidden"),
-                 "moving a button to the hidden tray updates the dropdown contents");
+                  "moving a button to the hidden tray updates the dropdown contents");
+    const auto layoutButton = [&layoutDialog](const QString &id) -> QToolButton * {
+        for (QToolButton *button : layoutDialog.findChildren<QToolButton *>())
+            if (button->property("lenssnipLayoutId").toString() == id) return button;
+        return nullptr;
+    };
+    bool menuMoved = false;
+    QTimer::singleShot(0, [&] {
+        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) return;
+        for (QAction *action : menu->actions()) {
+            if (action->data().toString() != QStringLiteral("top")) continue;
+            menuMoved = true;
+            menu->setActiveAction(action);
+            QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+            QApplication::sendEvent(menu, &enter);
+            return;
+        }
+        menu->close();
+    });
+    QKeyEvent openMenu(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(layoutButton(QStringLiteral("pen")), &openMenu);
+    QApplication::processEvents();
+    QApplication::processEvents();
+    review.check(menuMoved && sideOf(QStringLiteral("pen")) == QStringLiteral("top")
+                     && QApplication::focusWidget() == layoutButton(QStringLiteral("pen"))
+                     && layoutDialog.result() != QDialog::Accepted,
+                 "Enter opens the move menu instead of saving and restores focus to the moved tool");
+
+    layoutDialog.moveItem(QStringLiteral("ocr"), QStringLiteral("bottom"), 0);
+    layoutDialog.moveItem(QStringLiteral("pen"), QStringLiteral("bottom"), 0);
+    QApplication::processEvents();
+    bool menuReordered = false;
+    QTimer::singleShot(0, [&] {
+        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) return;
+        for (QAction *action : menu->actions()) if (action->text() == QStringLiteral("向后移动")) {
+            menuReordered = action->isEnabled();
+            menu->setActiveAction(action);
+            QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+            QApplication::sendEvent(menu, &enter);
+            return;
+        }
+        menu->close();
+    });
+    layoutButton(QStringLiteral("pen"))->click();
+    QApplication::processEvents();
+    QApplication::processEvents();
+    QStringList bottomOrder;
+    for (const ToolLayoutItem &item : layoutDialog.items())
+        if (item.side == QStringLiteral("bottom")) bottomOrder << item.id;
+    review.check(menuReordered && bottomOrder.indexOf(QStringLiteral("pen")) == 1,
+                 "the pointer menu reorders tools without dragging");
+
+    layoutDialog.m_dragId = QStringLiteral("pen");
+    QMimeData toolMime;
+    toolMime.setData("application/x-lenssnip-tool", "pen");
+    auto *targetButton = layoutButton(QStringLiteral("more"));
+    QDragEnterEvent dragEnter(targetButton->rect().center(), Qt::MoveAction, &toolMime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(targetButton, &dragEnter);
+    QDragMoveEvent dragMove(targetButton->rect().center(), Qt::MoveAction, &toolMime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(targetButton, &dragMove);
+    review.check(dragEnter.isAccepted() && layoutDialog.m_dropIndicator->isVisible()
+                     && layoutDialog.m_dropIndicator->width() == 2,
+                 "dragging over a child button shows the exact insertion marker");
+    review.save(layoutDialog.grab(), QStringLiteral("-tool-layout-drop"));
+    QDropEvent drop(targetButton->rect().center(), Qt::MoveAction, &toolMime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(targetButton, &drop);
+    review.check(layoutDialog.m_dropId == QStringLiteral("pen")
+                     && layoutDialog.m_dropSide == QStringLiteral("bottom")
+                     && !layoutDialog.m_dropIndicator->isVisible(),
+                 "a child-button drop records the owning side and clears its marker");
+    layoutDialog.m_dragId = QStringLiteral("more");
+    toolMime.setData("application/x-lenssnip-tool", "more");
+    QDragEnterEvent denied(QPoint(12, 12), Qt::MoveAction, &toolMime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(layoutDialog.m_hiddenTray, &denied);
+    review.check(!denied.isAccepted(), "the hidden tray rejects the dropdown before showing a valid drop target");
+    layoutDialog.m_dragId.clear();
+    layoutDialog.m_dropId.clear();
+    layoutDialog.moveItem(QStringLiteral("pen"), QStringLiteral("right"), 0);
+    layoutDialog.moveItem(QStringLiteral("ocr"), QStringLiteral("right"), 0);
+    QApplication::processEvents();
+    layoutDialog.m_dragId = QStringLiteral("refresh");
+    layoutDialog.showDropIndicator(QStringLiteral("right"), 1);
+    auto *verticalGroup = layoutDialog.m_groups.value(QStringLiteral("right"));
+    const auto verticalButtons = verticalGroup->findChildren<QToolButton *>();
+    const QPoint secondCenter = verticalButtons.at(1)->mapTo(verticalGroup, verticalButtons.at(1)->rect().center());
+    review.check(layoutDialog.m_dropIndicator->height() == 2
+                     && layoutDialog.dropIndex(verticalGroup, QStringLiteral("right"), secondCenter - QPoint(0, 2)) == 1,
+                 "vertical tool groups use a horizontal marker and the correct insertion index");
+    layoutDialog.m_dragId.clear();
+    layoutDialog.m_dropIndicator->hide();
     layoutDialog.moveItem(QStringLiteral("more"), QStringLiteral("hidden"), 0);
     review.check(sideOf(QStringLiteral("more")) == QStringLiteral("bottom")
                      && layoutSignals >= 3,
                  "the dropdown entry cannot be hidden and every move emits the live layout");
     layoutDialog.hide();
+
+    QVector<ToolLayoutItem> completeItems = overlay.currentToolLayout();
+    for (ToolLayoutItem &item : completeItems) item.side = QStringLiteral("bottom");
+    ToolLayoutDialog completeDialog(completeItems, completeItems);
+    completeDialog.fitToScreen(QRect(screenAvailable.topLeft(), QSize(1280, 900)));
+    completeDialog.show(); QApplication::processEvents();
+    review.check(completeDialog.m_scroll->horizontalScrollBar()->maximum() == 0
+                     && completeDialog.m_scroll->verticalScrollBar()->maximum() == 0,
+                 "all default tools fit the normal card without scrolling");
+    review.save(completeDialog.grab(), QStringLiteral("-tool-layout-default"));
+    for (const ToolLayoutItem &item : completeItems)
+        if (!item.special) completeDialog.moveItem(item.id, QStringLiteral("hidden"), completeItems.size());
+    QApplication::processEvents();
+    bool chipsFit = true;
+    bool stageFits = !completeDialog.m_stage->geometry().intersects(completeDialog.m_hiddenTray->geometry());
+    for (QWidget *zone : completeDialog.m_zones)
+        stageFits = stageFits && completeDialog.m_stage->rect().contains(zone->geometry())
+            && !zone->geometry().intersects(completeDialog.m_preview->geometry());
+    review.check(stageFits && completeDialog.m_stage->rect().contains(completeDialog.m_preview->geometry()),
+                 "growing the hidden tray preserves preview and zone bounds without overlap");
+    int firstY = -1, lastY = -1;
+    for (QToolButton *button : completeDialog.m_hiddenGroup->findChildren<QToolButton *>()) {
+        chipsFit = chipsFit && completeDialog.m_hiddenGroup->rect().contains(button->geometry());
+        if (firstY < 0) firstY = button->y();
+        lastY = button->y();
+    }
+    review.check(chipsFit && lastY > firstY && completeDialog.m_scroll->horizontalScrollBar()->maximum() == 0,
+                 "many hidden tools wrap into readable rows instead of widening the dialog");
+    const auto chips = completeDialog.m_hiddenGroup->findChildren<QToolButton *>();
+    completeDialog.m_dragId = QStringLiteral("more");
+    bool wrappedIndex = true;
+    for (int i = 0; i < chips.size(); ++i) {
+        const QPoint position = chips.at(i)->geometry().center() - QPoint(2, 0);
+        wrappedIndex = wrappedIndex
+            && completeDialog.dropIndex(completeDialog.m_hiddenGroup, QStringLiteral("hidden"), position) == i;
+    }
+    completeDialog.m_dragId.clear();
+    review.check(wrappedIndex, "wrapped hidden rows preserve the insertion order at each chip");
+    completeDialog.m_scroll->verticalScrollBar()->setValue(completeDialog.m_scroll->verticalScrollBar()->maximum());
+    review.save(completeDialog.grab(), QStringLiteral("-tool-layout-hidden"));
+    completeDialog.hide();
+
+    const QFont normalFont = QApplication::font();
+    QFont largeFont = normalFont;
+    largeFont.setPointSizeF(largeFont.pointSizeF() * 1.5);
+    QApplication::setFont(largeFont);
+    {
+        ToolLayoutDialog largeDialog(dialogItems, defaultItems);
+        largeDialog.fitToScreen(screenAvailable);
+        largeDialog.show(); QApplication::processEvents();
+        bool textFits = true;
+        for (QPushButton *button : largeDialog.findChildren<QPushButton *>())
+            textFits = textFits && button->width() >= button->fontMetrics().horizontalAdvance(button->text()) + 24
+                && button->height() >= button->fontMetrics().height() + 4;
+        review.check(textFits, "larger system text keeps action labels legible without shrinking the font");
+        review.save(largeDialog.grab(), QStringLiteral("-tool-layout-large-font"));
+        largeDialog.hide();
+    }
+    QApplication::setFont(normalFont);
+    {
+        QTranslator translator;
+        review.check(translator.load(QStringLiteral("language/lenssnip_en_US.qm"), QCoreApplication::applicationDirPath()),
+                     "load the packaged English translation for the adjustment card");
+        QApplication::installTranslator(&translator);
+        QVector<ToolLayoutItem> englishItems = dialogItems;
+        for (ToolLayoutItem &item : englishItems) item.name = item.id == QStringLiteral("ocr")
+            ? QStringLiteral("Text recognition") : QStringLiteral("Refresh");
+        ToolLayoutDialog englishDialog(englishItems, englishItems);
+        englishDialog.fitToScreen(screenAvailable);
+        englishDialog.show(); QApplication::processEvents();
+        review.check(englishDialog.findChild<QLabel *>(QStringLiteral("toolLayoutHiddenLabel"))->text()
+                         == QStringLiteral("Tools in dropdown")
+                         && englishDialog.findChild<QPushButton *>(QStringLiteral("toolLayoutSave"))->text() == QStringLiteral("Save"),
+                     "the revised adjustment labels use the shipped English translations");
+        review.save(englishDialog.grab(), QStringLiteral("-tool-layout-en"));
+        englishDialog.hide();
+        QApplication::removeTranslator(&translator);
+    }
+
+    const auto luminance = [](const QColor &color) {
+        const auto channel = [](qreal c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); };
+        return 0.2126 * channel(color.redF()) + 0.7152 * channel(color.greenF()) + 0.0722 * channel(color.blueF());
+    };
+    review.check((luminance(Bar::muted) + 0.05) / (luminance(Bar::hover) + 0.05) >= 4.5
+                     && (luminance(Bar::primaryFill) + 0.05) / (luminance(Bar::primaryInk) + 0.05) >= 4.5
+                     && (luminance(Bar::focusRing) + 0.05) / (luminance(Bar::surface) + 0.05) >= 3,
+                 "supporting text, primary action and keyboard focus meet their contrast targets");
 
     overlay.m_toolSide[QStringLiteral("pen")] = QStringLiteral("right");
     overlay.m_toolSide[QStringLiteral("refresh")] = QStringLiteral("hidden");

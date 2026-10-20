@@ -9,7 +9,6 @@
 
 class QLabel;
 class QLayout;
-class QResizeEvent;
 class QScrollArea;
 class QToolButton;
 class QVBoxLayout;
@@ -38,7 +37,6 @@ signals:
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
-    void resizeEvent(QResizeEvent *event) override;
 
 private:
     friend class CaptureOverlay;
@@ -49,6 +47,10 @@ private:
     void restoreDefaults();
     void emitChanged();
     int dropIndex(QWidget *zone, const QString &side, const QPoint &position) const;
+    void showItemMenu(const QString &id);
+    void focusItem(const QString &id);
+    void layoutHiddenItems();
+    void showDropIndicator(const QString &side, int index);
 
     QVector<ToolLayoutItem> m_items;
     QVector<ToolLayoutItem> m_defaults;
@@ -62,6 +64,7 @@ private:
     QLabel *m_preview = nullptr;
     QScrollArea *m_scroll = nullptr;
     QWidget *m_content = nullptr;
+    QWidget *m_dropIndicator = nullptr;
     QString m_dragId;
     QString m_dropId;
     QString m_dropSide;
