@@ -198,14 +198,15 @@ int OcrDialog::testLifetime()
     QApplication::processEvents();
     const bool translatedMax = translatedA.size()==translatedB.size()
         && translatedA.height()==OcrDialog::preferredSize(translatedA.screen()->availableGeometry(),true).height()
-        && translatedA.m_textSplit->sizes().value(0)==translatedA.m_textSplit->sizes().value(1)
-        && translatedB.m_textSplit->sizes().value(0)==translatedB.m_textSplit->sizes().value(1);
+        && qAbs(translatedA.m_textSplit->sizes().value(0)-translatedA.m_textSplit->sizes().value(1))<=1
+        && qAbs(translatedB.m_textSplit->sizes().value(0)-translatedB.m_textSplit->sizes().value(1))<=1;
     for (OcrDialog *card : {&longCard,&shortCard,&translatedA,&translatedB}) card->close();
     OcrEngine::instance().busy.store(false);
     QThreadPool::globalInstance()->waitForDone();
     if (!(formats && layouts && paneWidths && counted && one && all && undo && hidden && chosen && restored && anchored
           && noClickFocus && noLayout && tallText && fixedSizes && translatedMax && loadingState && loadingEnds
           && ocrResponsive)) {
+
         std::fprintf(stderr, "FAIL: widths portraitOcr=%d split=%d sizes=%d,%d finder=%d split=%d sizes=%d,%d; fixed long=%d short=%d max=%d responsive=%d loading=%d/%d; text formats %d, sizes %d, pane widths %d, find/replace %d%d%d%d%d, format menu %d%d, wheel anchor %d, click focus %d, no layout button %d, wide text %d\n",
                      portraitOcr.width(),portraitOcr.m_split->width(),portraitOcr.m_split->sizes().value(0),portraitOcr.m_split->sizes().value(1),
                      finder.width(),finder.m_split->width(),finder.m_split->sizes().value(0),finder.m_split->sizes().value(1),

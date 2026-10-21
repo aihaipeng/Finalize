@@ -848,6 +848,17 @@ int PinWindow::testPlacement()
     } else {
         std::puts("SKIP: pin live OCR selection (models unavailable)");
     }
+    {
+        // A pin dragged above the top edge must not take its toolbar off-screen.
+        const QRect available = QGuiApplication::primaryScreen()->availableGeometry();
+        editPin.setGeometry(QRect(available.left() + 40, available.top() - 200, 220, 120));
+        editPin.toggleToolbar(true);
+        QApplication::processEvents();
+        check(editPin.m_toolbar
+                  && editPin.m_toolbar->geometry().top() >= available.top(),
+              "the pin toolbar stays on screen when the pin is above the top edge");
+        editPin.toggleToolbar(false);
+    }
     QThreadPool::globalInstance()->waitForDone();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     std::puts("PASS: original-position pins, proportional long-capture fitting, DPI, wheel zoom, and context menu transforms");

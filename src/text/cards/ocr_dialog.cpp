@@ -28,6 +28,7 @@
 #include <QtMath>
 #include <QToolButton>
 #include <QAbstractButton>
+#include <algorithm>
 #include <QAbstractSlider>
 #include <QFontDatabase>
 #include <QVBoxLayout>
@@ -488,7 +489,13 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
         const QRectF box = QRectF(rect()).adjusted(1.5,1.5,-1.5,-1.5);
-        const QRectF ring(box.left()+48,box.center().y()-14,28,28);
+        QFont label = font();
+        label.setPointSizeF((std::max)(12.0,font().pointSizeF()));
+        painter.setFont(label);
+        const int textWidth = painter.fontMetrics().horizontalAdvance(m_text);
+        const qreal contentWidth = 28 + 20 + textWidth;
+        const qreal left = (std::max)(box.left() + 24, box.center().x() - contentWidth / 2);
+        const QRectF ring(left,box.center().y()-14,28,28);
         painter.setPen(QPen(Bar::divider,2.0));
         painter.setBrush(Qt::NoBrush);
         painter.drawEllipse(ring);
@@ -497,11 +504,8 @@ protected:
         painter.setPen(arc);
         painter.drawArc(ring,-m_angle*16,100*16);
 
-        QFont label = font();
-        label.setPointSizeF(qMax(12.0,font().pointSizeF()));
-        painter.setFont(label);
         painter.setPen(Bar::ink);
-        const QRectF text(box.left()+96,box.top(),box.width()-112,box.height());
+        const QRectF text(ring.right()+20,box.top(),box.right()-ring.right()-36,box.height());
         painter.drawText(text,Qt::AlignLeft|Qt::AlignVCenter,m_text);
     }
 private:
@@ -1401,6 +1405,7 @@ void OcrDialog::setStatus(const QString &text)
 
 void OcrDialog::showLoading(bool loading, const QString &text) {
     if (!m_loadingPage || !m_loadingBar || !m_content) return;
+    const bool wasLoading = !m_loadingPage->isHidden();
     if (loading) {
         m_busy->hide();m_emptyIcon->hide();m_emptyRetry->hide();
         m_loadingBar->setText(text);
@@ -1411,7 +1416,6 @@ void OcrDialog::showLoading(bool loading, const QString &text) {
         setMinimumSize(loadingSize());
         setGeometry(screenCentered(m_screenRect,loadingSize()));
     } else {
-        const bool wasLoading = !m_loadingPage->isHidden();
         m_loadingBar->setActive(false);
         m_loadingPage->hide();
         m_content->show();
@@ -1434,6 +1438,8 @@ void OcrDialog::showLoading(bool loading, const QString &text) {
     }
     layout()->activate();
     if (!loading) applyLayout(true);
+    if (!loading && wasLoading && !m_maximized)
+        setGeometry(screenCentered(m_screenRect, size()));
 }
 
 int OcrDialog::layoutClass() const {
@@ -1500,9 +1506,16 @@ void OcrDialog::applyLayout(bool force) {
 }
 
 QRect OcrDialog::screenCentered(const QRect &screen, const QSize &size) {
-    return QRect(screen.left() + (screen.width() - size.width())/2,
-                 screen.top() + (screen.height() - size.height())/2,
+    QRect result(screen.left() + (screen.width() - size.width()) / 2,
+                 screen.top() + (screen.height() - size.height()) / 2,
                  size.width(), size.height());
+    // QRect::center rounds toward zero for negative origins. Nudge by the
+    // one pixel that rounding can leave between the card and screen centers.
+    if (result.center().x() < screen.center().x()) result.moveLeft(result.left() + 1);
+    else if (result.center().x() > screen.center().x()) result.moveLeft(result.left() - 1);
+    if (result.center().y() < screen.center().y()) result.moveTop(result.top() + 1);
+    else if (result.center().y() > screen.center().y()) result.moveTop(result.top() - 1);
+    return result;
 }
 
 QSize OcrDialog::loadingSize() {

@@ -27,9 +27,10 @@ BarcodeResult BarcodeEngine::recognize(QImage image, const BarcodeCancel &cancel
             result.error = tr("识别失败：截图区域为空");
             return result;
         }
-        // zxing has no mid-call abort. Cap the work so one decode cannot run
-        // unbounded on a huge capture; the user can retry after resizing.
+        // shortcut: zxing has no mid-call abort. The 16 MP cap bounds one
+        // decode; use process isolation if a hard stop is ever required.
         constexpr qint64 kMaxPixels = 16000000;
+        const QSize originalSize = image.size();
         const qint64 pixels = qint64(image.width()) * image.height();
         if (pixels > kMaxPixels) {
             const double factor = std::sqrt(double(kMaxPixels) / double(pixels));
@@ -70,6 +71,13 @@ BarcodeResult BarcodeEngine::recognize(QImage image, const BarcodeCancel &cancel
                 QPointF(position.topRight().x, position.topRight().y),
                 QPointF(position.bottomRight().x, position.bottomRight().y),
                 QPointF(position.bottomLeft().x, position.bottomLeft().y)};
+            // Decoder positions use the image passed to zxing. Map them back
+            // when the large-image cap scaled that image down.
+            const qreal sx = qreal(originalSize.width()) / image.width();
+            const qreal sy = qreal(originalSize.height()) / image.height();
+            if (sx != 1 || sy != 1)
+                for (QPointF &point : item.quad)
+                    point = QPointF(point.x() * sx, point.y() * sy);
             item.box = item.quad.boundingRect();
             // A linear symbol's position is a line; keep a visible selection band.
             if (item.box.height() < 4) item.box.adjust(0, -6, 0, 6);

@@ -87,6 +87,21 @@ int OcrDialog::testBarcode(const QString &previewPath)
               && linearResult.items.first().text == code128Text
               && linearResult.items.first().format == QStringLiteral("Code 128"),
           "Code 128 fixture decodes to its exact payload");
+    {
+        // Large inputs are downscaled inside the engine; positions must still
+        // point at the original image, or the card highlights the wrong place.
+        QImage large(5000, 4000, QImage::Format_RGB32);
+        large.fill(Qt::white);
+        {
+            QPainter painter(&large);
+            painter.drawImage(QPoint(2000, 1500), qr);
+        }
+        const BarcodeResult largeResult = BarcodeEngine::recognize(large, cancel);
+        check(largeResult.items.size() == 1
+                  && largeResult.items.first().box.center().x() >= 1900
+                  && largeResult.items.first().box.right() <= large.width(),
+              "large-image barcode coordinates map back to the original capture");
+    }
     QImage blank(320, 180, QImage::Format_RGB32);
     blank.fill(Qt::white);
     const BarcodeResult empty = BarcodeEngine::recognize(blank, cancel);
@@ -199,7 +214,11 @@ int CaptureOverlay::testBarcode(const QString &previewPath)
     overlay.m_sel = overlay.localScreenRect(frame.logicalRect);
     overlay.placeToolBars();
     overlay.showToolBars();
-    auto *button = overlay.m_tools->findChild<QToolButton *>(QStringLiteral("barcodeButton"));
+    QToolButton *button = nullptr;
+    for (QWidget *bar : {overlay.m_tools, overlay.m_toolsTop,
+                         overlay.m_toolsLeft, overlay.m_toolsRight})
+        if (bar && !button)
+            button = bar->findChild<QToolButton *>(QStringLiteral("barcodeButton"));
     check(button && button->isEnabled() && button->toolTip() == QStringLiteral("识别二维码/条形码"),
           "capture toolbar exposes a usable barcode action");
     if (!previewPath.isEmpty()) overlay.grab().save(previewPath + QStringLiteral("-barcode-toolbar.png"));

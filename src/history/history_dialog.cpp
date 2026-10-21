@@ -18,6 +18,7 @@
 #include <QCursor>
 #include <QScreen>
 #include <QIcon>
+#include <QItemSelectionModel>
 #include <QLabel>
 #include <QListView>
 #include <QListWidget>
@@ -25,6 +26,8 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
+#include <QScrollBar>
+#include <QSet>
 #include <QSignalBlocker>
 #include <QSize>
 #include <QStandardPaths>
@@ -182,6 +185,13 @@ void HistoryDialog::setRecordingEnabled(bool enabled)
 
 void HistoryDialog::refresh()
 {
+    // Pending writes refresh this list; keep the user's selection and scroll.
+    QSet<qint64> selectedIds;
+    for (QListWidgetItem *item : m_list->selectedItems())
+        selectedIds.insert(item->data(Qt::UserRole).toLongLong());
+    const qint64 currentId = m_list->currentItem()
+        ? m_list->currentItem()->data(Qt::UserRole).toLongLong() : -1;
+    const int scroll = m_list->verticalScrollBar()->value();
     m_entries.clear();
     m_list->clear();
 
@@ -209,7 +219,10 @@ void HistoryDialog::refresh()
         QPixmap thumb(thumbPath);
         item->setIcon(thumb.isNull() ? makeIcon(Icon::Pin, 48, true) : QIcon(thumb));
         m_list->addItem(item);
+        if (selectedIds.contains(entry.id)) item->setSelected(true);
+        if (entry.id == currentId) m_list->setCurrentItem(item, QItemSelectionModel::NoUpdate);
     }
+    m_list->verticalScrollBar()->setValue(scroll);
 
     m_status->setText(!readError.isEmpty()
             ? tr("读取历史失败，请检查历史数据库后重试")
@@ -384,6 +397,13 @@ int HistoryDialog::testUi(const QString &previewPath)
             check(list->visualItemRect(list->item(0)).top() == list->visualItemRect(list->item(3)).top()
                       && list->visualItemRect(list->item(7)).bottom() < list->viewport()->height(),
                   "eight history items form four columns and remain visible without scrolling");
+            list->setCurrentRow(2);
+            const qint64 selectedId = list->currentItem()->data(Qt::UserRole).toLongLong();
+            dialog.refresh();
+            check(list->currentItem() && list->currentItem()->data(Qt::UserRole).toLongLong() == selectedId
+                      && list->currentItem()->isSelected(),
+                  "refreshing history keeps the selected item");
+            list->setCurrentRow(0);
             check(dialog.grab().save(previewPath + QStringLiteral("-history.png")), "save the populated history preview");
             { const QSignalBlocker blocker(enabled);enabled->setChecked(false); }
             check(dialog.grab().save(previewPath+QStringLiteral("-38-history-off.png")),"save history with recording disabled");

@@ -3236,7 +3236,9 @@ QPixmap CaptureOverlay::cropped() const
                                    qRound(frame.pixelRect.top() + (global.top() - frame.logicalRect.top()) * sy),
                                    qRound(global.width() * sx), qRound(global.height() * sy));
                 if (native.width() > 0 && native.height() > 0) {
-                    pix = QPixmap::fromImage(frame.image.copy(native));
+                    // ScreenFrame.image starts at the screen's native origin; pixelRect
+                    // is the global desktop origin, so remove it before copying.
+                    pix = QPixmap::fromImage(frame.image.copy(native.translated(-frame.pixelRect.topLeft())));
                     if (!pix.isNull()) {
                         pix.setDevicePixelRatio(1);
                         scale = qreal(pix.width()) / (std::max)(1, r.width());

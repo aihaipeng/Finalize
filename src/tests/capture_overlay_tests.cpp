@@ -185,6 +185,26 @@ int CaptureOverlay::testSelection()
                                               qRound(overlay.m_sel.width()*scale),qRound(overlay.m_sel.height()*scale)));
     expected.setDevicePixelRatio(1);
     check(overlay.cropped().toImage()==expected.toImage(),"output crops the adjusted region at the frozen image's native pixel scale");
+    {
+        // A mixed-DPI desktop stores each screen image at its own native origin.
+        // A selection on the low-DPI screen must not be upscaled by the combined shot.
+        const QPoint origin = QGuiApplication::primaryScreen()->geometry().topLeft();
+        QImage high(200, 200, QImage::Format_RGB32);
+        high.fill(Qt::red);
+        high.setDevicePixelRatio(2);
+        QImage low(100, 100, QImage::Format_RGB32);
+        low.fill(Qt::blue);
+        ScreenFrame highFrame = {QRect(origin, QSize(100, 100)), QRect(0, 0, 200, 200), high};
+        ScreenFrame lowFrame = {QRect(origin + QPoint(100, 0), QSize(100, 100)),
+                                QRect(200, 0, 100, 100), low};
+        CaptureOverlay mixed({highFrame, lowFrame});
+        mixed.setAttribute(Qt::WA_DeleteOnClose, false);
+        mixed.m_sel = QRect(QPoint(100, 0), QSize(100, 100));
+        const QImage mixedOut = mixed.cropped().toImage();
+        check(mixedOut.size() == QSize(100, 100)
+                  && mixedOut.pixelColor(50, 50) == QColor(Qt::blue),
+              "mixed-DPI crop uses the selected screen's local native pixels");
+    }
     failures += testCustomSize();
     overlay.m_toolSide[QStringLiteral("arrow")] = QStringLiteral("top");
     overlay.m_toolSide[QStringLiteral("ocr")] = QStringLiteral("left");

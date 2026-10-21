@@ -535,8 +535,8 @@ void PinWindow::toggleTextSelectable(bool enabled)
         // The I-beam appears only while the pointer is over copyable text;
         // everywhere else the native cursor is kept.
         setCursor(Qt::ArrowCursor);
-        // Tall pins are recognized on first click: starting a chunked OCR run
-        // for every long pin on creation would load the machine for no reason.
+        // shortcut: tall pins are recognized on first click. Starting a chunked
+        // OCR run for every long pin on creation would load the machine for no reason.
         if (m_charBoxes.isEmpty() && !m_ocrRunning && m_pix.height() <= 1440) {
             runOcrForTextSelection();
         }
@@ -1112,7 +1112,8 @@ void PinWindow::updateToolbarPosition()
         const QRect avail = scr->availableGeometry();
         const int x = qBound(avail.left(), geom.left() + (geom.width() - tSize.width()) / 2,
                              qMax(avail.left(), avail.right() + 1 - tSize.width()));
-        const int y = qMin(geom.bottom() + Bar::gap, avail.bottom() - tSize.height());
+        const int y = (std::clamp)(geom.bottom() + Bar::gap, avail.top(),
+                                   (std::max)(avail.top(), avail.bottom() + 1 - tSize.height()));
         m_toolbar->move(x, y);
     }
     updateSelToolbar();   // The selection toolbar follows window moves and zoom too.

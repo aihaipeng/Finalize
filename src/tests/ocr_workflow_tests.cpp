@@ -72,7 +72,11 @@ int CaptureOverlay::testOcr(const QString &previewPath)
         const QRect screen=QGuiApplication::primaryScreen()->geometry();
         CaptureOverlay overlay({ScreenFrame{QRect(screen.topLeft(),image.size()),QRect(QPoint(),image.size()),image}});
         overlay.setAttribute(Qt::WA_DeleteOnClose,false);
-        auto *button=overlay.m_tools->findChild<QToolButton *>(QStringLiteral("ocrButton"));
+        QToolButton *button = nullptr;
+        for (QWidget *bar : {overlay.m_tools, overlay.m_toolsTop,
+                             overlay.m_toolsLeft, overlay.m_toolsRight})
+            if (bar && !button)
+                button = bar->findChild<QToolButton *>(QStringLiteral("ocrButton"));
         check(button && !button->isEnabled() && button->toolTip()==missing,
               "missing OCR assets disable the toolbar button with an actionable explanation");
         overlay.close();
@@ -181,7 +185,11 @@ int CaptureOverlay::testOcr(const QString &previewPath)
     overlay.placeToolBars(); overlay.showToolBars();
     const QRect selection = overlay.m_sel;
     const QImage before = overlay.cropped().toImage();
-    auto *button = overlay.m_tools->findChild<QToolButton *>(QStringLiteral("ocrButton"));
+    QToolButton *button = nullptr;
+    for (QWidget *bar : {overlay.m_tools, overlay.m_toolsTop,
+                         overlay.m_toolsLeft, overlay.m_toolsRight})
+        if (bar && !button)
+            button = bar->findChild<QToolButton *>(QStringLiteral("ocrButton"));
     check(button && button->isEnabled() && !button->toolTip().isEmpty(),"capture toolbar exposes a named usable OCR button");
     button->click();
     std::puts("OCR phase: card opened");

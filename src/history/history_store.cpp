@@ -39,6 +39,8 @@ std::atomic<int> &pendingQueue()
     return count;
 }
 
+// shortcut: cap the pending image copies; a full queue drops history entries
+// instead of growing memory without limit.
 constexpr int kMaxPendingWrites = 8;
 
 QString historyRoot()
@@ -75,16 +77,20 @@ QString pathForRelative(const QString &relative)
     return path;
 }
 
-bool removeHistoryFile(const QString &relative)
+bool removeFileAt(const QString &path)
 {
-    const QString path = pathForRelative(relative);
     if (path.isEmpty() || !QFileInfo::exists(path)) return true;
     if (QFile::remove(path)) return true;
     qWarning() << "history: cannot delete" << path;
     return false;
 }
 
-void sweepOrphans(QSqlDatabase &db)
+bool removeHistoryFile(const QString &relative)
+{
+    return removeFileAt(pathForRelative(relative));
+}
+
+void sweepOrphans(QSqlDatabase &db, bool onlyOld = false)
 {
     QSet<QString> referenced;
     {
@@ -95,12 +101,18 @@ void sweepOrphans(QSqlDatabase &db)
             referenced.insert(query.value(1).toString());
         }
     }
+    constexpr qint64 kGraceMs = 10 * 60 * 1000;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const QDir root(historyRoot());
     for (const QString &sub : {QStringLiteral("images"), QStringLiteral("thumbs")}) {
         const QDir dir(root.filePath(sub));
         for (const QFileInfo &file : dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot)) {
             const QString relative = sub + QLatin1Char('/') + file.fileName();
-            if (!referenced.contains(relative)) removeHistoryFile(relative);
+            if (referenced.contains(relative)) continue;
+            // Do not race another instance that has written a PNG but not yet
+            // committed its row. Failed leftovers are still swept later.
+            if (onlyOld && file.lastModified().toMSecsSinceEpoch() + kGraceMs > now) continue;
+            removeHistoryFile(relative);
         }
     }
 }
@@ -231,7 +243,7 @@ void prune(QSqlDatabase &db)
     }
     if (!deleted) return;
     for (const QString &relative : removeFiles) removeHistoryFile(relative);
-    sweepOrphans(db);
+    sweepOrphans(db, true);
 }
 
 } // namespace
@@ -295,15 +307,15 @@ bool HistoryStore::writeItem(const QImage &source, const QString &kind)
         thumbnail = thumbnail.scaled(240, 160, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     thumbnail.setDevicePixelRatio(1.0);
     if (!saveImageAtomic(thumbnail, thumbPath)) {
-        QFile::remove(imagePath);
+        removeFileAt(imagePath);
         qWarning() << "history: cannot write" << thumbPath;
         return false;
     }
 
     HistoryDb db;
     if (!db.open(&error)) {
-        QFile::remove(imagePath);
-        QFile::remove(thumbPath);
+        removeFileAt(imagePath);
+        removeFileAt(thumbPath);
         qWarning() << "history:" << error;
         return false;
     }
@@ -328,8 +340,9 @@ bool HistoryStore::writeItem(const QImage &source, const QString &kind)
     if (inserted) prune(db.db());
 
     if (!inserted) {
-        QFile::remove(imagePath);
-        QFile::remove(thumbPath);
+        removeFileAt(imagePath);
+        removeFileAt(thumbPath);
+        sweepOrphans(db.db(), true);
     }
     return inserted;
 }
