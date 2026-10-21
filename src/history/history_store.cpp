@@ -12,6 +12,7 @@
 #include <QSqlQuery>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QThreadPool>
 #include <QTimeZone>
@@ -19,6 +20,7 @@
 #include <QVariant>
 #include <QDebug>
 
+#include <atomic>
 #include <cstdio>
 
 namespace {
@@ -30,6 +32,14 @@ QThreadPool &historyPool()
     Q_UNUSED(configured);
     return pool;
 }
+
+std::atomic<int> &pendingQueue()
+{
+    static std::atomic<int> count{0};
+    return count;
+}
+
+constexpr int kMaxPendingWrites = 8;
 
 QString historyRoot()
 {
@@ -63,6 +73,36 @@ QString pathForRelative(const QString &relative)
     const QString path = QDir::cleanPath(root.absoluteFilePath(relative));
     if (path == rootPath || !path.startsWith(rootPath + QLatin1Char('/'))) return {};
     return path;
+}
+
+bool removeHistoryFile(const QString &relative)
+{
+    const QString path = pathForRelative(relative);
+    if (path.isEmpty() || !QFileInfo::exists(path)) return true;
+    if (QFile::remove(path)) return true;
+    qWarning() << "history: cannot delete" << path;
+    return false;
+}
+
+void sweepOrphans(QSqlDatabase &db)
+{
+    QSet<QString> referenced;
+    {
+        QSqlQuery query(db);
+        if (!query.exec(QStringLiteral("SELECT image_rel,thumb_rel FROM item"))) return;
+        while (query.next()) {
+            referenced.insert(query.value(0).toString());
+            referenced.insert(query.value(1).toString());
+        }
+    }
+    const QDir root(historyRoot());
+    for (const QString &sub : {QStringLiteral("images"), QStringLiteral("thumbs")}) {
+        const QDir dir(root.filePath(sub));
+        for (const QFileInfo &file : dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot)) {
+            const QString relative = sub + QLatin1Char('/') + file.fileName();
+            if (!referenced.contains(relative)) removeHistoryFile(relative);
+        }
+    }
 }
 
 class HistoryDb
@@ -190,10 +230,8 @@ void prune(QSqlDatabase &db)
         if (!deleted) db.rollback();
     }
     if (!deleted) return;
-    for (const QString &relative : removeFiles) {
-        const QString path = pathForRelative(relative);
-        if (!path.isEmpty()) QFile::remove(path);
-    }
+    for (const QString &relative : removeFiles) removeHistoryFile(relative);
+    sweepOrphans(db);
 }
 
 } // namespace
@@ -215,8 +253,16 @@ void HistoryStore::record(const QImage &image, const QString &kind)
 {
     if (image.isNull() || !enabled() || !QSqlDatabase::isDriverAvailable(QStringLiteral("QSQLITE")))
         return;
+    if (pendingQueue().load() >= kMaxPendingWrites) {
+        qWarning() << "history: queue full, dropping screenshot";
+        return;
+    }
     const QString normalizedKind = kind.isEmpty() ? QStringLiteral("capture") : kind;
+    pendingQueue().fetch_add(1);
     historyPool().start([image, normalizedKind] {
+        struct Done {
+            ~Done() { pendingQueue().fetch_sub(1); }
+        } done;
         if (!HistoryStore::enabled()) return;
         HistoryStore::writeItem(image, normalizedKind);
     });
@@ -367,10 +413,8 @@ bool HistoryStore::remove(qint64 id)
         removed = query.exec() && query.numRowsAffected() > 0;
     }
     if (removed) {
-        for (const QString &relative : files) {
-            const QString path = pathForRelative(relative);
-            if (!path.isEmpty()) QFile::remove(path);
-        }
+        for (const QString &relative : files) removeHistoryFile(relative);
+        sweepOrphans(db.db());
     }
     return removed;
 }
@@ -397,10 +441,8 @@ bool HistoryStore::clear()
         cleared = query.exec(QStringLiteral("DELETE FROM item"));
     }
     if (cleared) {
-        for (const QString &relative : files) {
-            const QString path = pathForRelative(relative);
-            if (!path.isEmpty()) QFile::remove(path);
-        }
+        for (const QString &relative : files) removeHistoryFile(relative);
+        sweepOrphans(db.db());
     }
     return cleared;
 }
@@ -418,6 +460,11 @@ QString HistoryStore::absoluteImagePath(const HistoryEntry &entry)
 QString HistoryStore::absoluteThumbPath(const HistoryEntry &entry)
 {
     return pathForRelative(entry.thumbRel);
+}
+
+int HistoryStore::pendingWrites()
+{
+    return pendingQueue().load();
 }
 
 void HistoryStore::waitForPending()
@@ -512,6 +559,18 @@ int HistoryStore::testHistory()
     check(entries().size() == 1 && prunedFilesGone, "prune removes every old row and file");
     check(clear(), "clear history");
     check(entries().isEmpty(), "history empty after clear");
+    check(pendingWrites() == 0, "pending writes drain after the queue");
+    QDir historyDir(rootPath());
+    check(historyDir.mkpath(QStringLiteral("images")), "history image directory exists");
+    const QString orphan = historyDir.filePath(QStringLiteral("images/orphan.png"));
+    QFile orphanFile(orphan);
+    if (!orphanFile.open(QIODevice::WriteOnly)) {
+        check(false, "create an orphan history file");
+    } else {
+        orphanFile.write("orphan");
+        orphanFile.close();
+    }
+    check(clear() && !QFileInfo::exists(orphan), "clear removes unreferenced history files");
 
     if (oldEnabled.isValid()) settings.setValue(QStringLiteral("History/enabled"), oldEnabled);
     else settings.remove(QStringLiteral("History/enabled"));

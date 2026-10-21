@@ -35,6 +35,7 @@ public:
     static QString rootPath();
     static QString absoluteImagePath(const HistoryEntry &entry);
     static QString absoluteThumbPath(const HistoryEntry &entry);
+    static int pendingWrites();
     static void waitForPending();
 
     static int testHistory();

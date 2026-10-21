@@ -29,6 +29,7 @@
 #include <QSize>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <cstdio>
@@ -181,7 +182,6 @@ void HistoryDialog::setRecordingEnabled(bool enabled)
 
 void HistoryDialog::refresh()
 {
-    HistoryStore::waitForPending();
     m_entries.clear();
     m_list->clear();
 
@@ -222,6 +222,10 @@ void HistoryDialog::refresh()
                              ? tr("暂无历史截图\n新截图会自动记录在这里。")
                              : tr("截图历史为空\n开启记录后，新截图将显示在这里。"));
     updateActions();
+    if (HistoryStore::pendingWrites() > 0)
+        QTimer::singleShot(200, this, [this] {
+            if (HistoryStore::pendingWrites() > 0) refresh();
+        });
 }
 
 void HistoryDialog::updateActions()

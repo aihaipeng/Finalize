@@ -68,6 +68,7 @@ public:
     void armTool(ATool tool);                 // Arm / disarm and rebuild the strip.
     ATool armedTool() const { return m_atool; }
     QPixmap composited() const;               // Pin pixels with annotations painted in.
+    void commitText();                        // Commit active text before external output.
     void setImage(const QImage &image);       // Refresh canvas pixels after a bake.
     void clearAll();                          // Drop annotations and history after a bake.
     bool hasAnnotations() const { return !m_anns.isEmpty() || editorActive(); }
@@ -160,7 +161,9 @@ private:
     // Corner anchors for area shapes, endpoint anchors for arrows; strokes and text move only.
     QVector<QPoint> annAnchors(const Annotation &ann) const;
     Handle annHandleAt(const Annotation &ann, const QPoint &pos) const;
-    static QPoint rotateAnchor(const Annotation &ann);
+    QPoint rotateAnchor(const Annotation &ann) const;
+    QPoint rotateKnobLocal(const Annotation &ann) const;
+    bool textKnobAbove(const Annotation &ann) const;
     void paintMosaicBorder(QPainter &p, const Annotation &ann, bool selected) const;
     static void paintHandle(QPainter &p, const QPointF &center);
     static int testSelectionBorders();

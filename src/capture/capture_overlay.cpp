@@ -62,6 +62,7 @@
 #include <qt_windows.h>
 #include <dwmapi.h>
 #include <imm.h>
+#include <algorithm>
 
 namespace {
 // Keep the normal combo popup behavior while painting the current text centered.
@@ -662,9 +663,9 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         for (const QPoint &anchor : annAnchors(ann))
             paintHandle(p, anchor);
         if (ann.tool != ATool::Mosaic) {          // Mosaic regions move and resize without rotation.
-            const bool text = ann.tool == ATool::Text;
-            const QPoint base(box.center().x(), text ? box.top() - 2 : box.bottom() + 2);
-            const QPoint knob(box.center().x(), text ? box.top() - 12 : box.bottom() + 22);
+            const QPoint knob = rotateKnobLocal(ann);
+            const QPoint base(box.center().x(),
+                              knob.y() < box.center().y() ? box.top() - 2 : box.bottom() + 2);
             p.setPen(QPen(Bar::accent, 1));
             p.drawLine(base, knob);
             paintHandle(p, knob);
@@ -685,8 +686,8 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         const QFontMetrics fm(f);
         const QSize size(fm.horizontalAdvance(label) + 16, fm.height() + 10);
         QPoint at = rotateAnchor(m_anns[m_selAnn]) + QPoint(14, -size.height() - 4);
-        at.setX(qBound(4, at.x(), width() - size.width() - 4));
-        at.setY(qBound(4, at.y(), height() - size.height() - 4));
+        at.setX(std::clamp(at.x(), 4, (std::max)(4, width() - size.width() - 4)));
+        at.setY(std::clamp(at.y(), 4, (std::max)(4, height() - size.height() - 4)));
         const QRect badge(at, size);
         p.save();
         p.setRenderHint(QPainter::Antialiasing);
@@ -740,6 +741,8 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
             m_selAnn = index;
             m_pressAnn = m_anns[index];
             m_itemDrag = editingHandle;
+            m_pressPos = e->pos();               // Rotate from the knob press, not the old text click.
+            m_dragStarted = false;
             syncToolButtons();
             if (m_toolOptions && m_toolOptions->findChild<QComboBox *>(QStringLiteral("annotationFont")))
                 syncTextOptions();
@@ -963,7 +966,7 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
             hideToolBars();
             m_inspector->hide();
         }
-        const int margin = m_itemDrag == H_Rotate ? 64 : 24;   // Angle badge sits outside the box.
+        const int margin = m_itemDrag == H_Rotate ? 128 : 24;  // Angle badge sits outside the box.
         const QRect dirty = rotatedBounds(m_anns[m_selAnn]).adjusted(-margin, -margin, margin, margin);
         applyItemDrag(pos, e->modifiers());
         update(dirty.united(rotatedBounds(m_anns[m_selAnn])).adjusted(-margin, -margin, margin, margin));
@@ -3207,11 +3210,47 @@ void CaptureOverlay::applyRefreshFrames(const QVector<ScreenFrame> &frames)
 QPixmap CaptureOverlay::cropped() const
 {
     if (m_sel.isEmpty() || m_shot.isNull()) return {};
-    const qreal scale = m_shot.devicePixelRatio();
+    qreal scale = m_shot.devicePixelRatio();
     const QRect r = m_sel.normalized();
-    QPixmap pix = m_shot.copy(QRect(qRound(r.x() * scale), qRound(r.y() * scale),
-                                   qRound(r.width() * scale), qRound(r.height() * scale)));
-    pix.setDevicePixelRatio(1);
+    QPixmap pix;
+    // A selection inside one screen keeps that screen's native pixels when the
+    // desktop mixes DPI. The combined shot uses the largest DPR, which would
+    // upscale lower-DPI screens.
+    qreal firstScale = 0;
+    bool mixedDpi = false;
+    for (const ScreenFrame &frame : m_frames) {
+        if (frame.logicalRect.isEmpty() || frame.image.size() != frame.pixelRect.size()) continue;
+        const qreal frameScale = qreal(frame.pixelRect.width()) / frame.logicalRect.width();
+        if (firstScale <= 0) firstScale = frameScale;
+        else if (qAbs(frameScale - firstScale) > 0.01) mixedDpi = true;
+    }
+    const QRect global = globalScreenRect(r);
+    if (mixedDpi) {
+        for (const ScreenFrame &frame : m_frames) {
+            if (!global.isNull() && frame.logicalRect.contains(global)
+                && frame.image.size() == frame.pixelRect.size()
+                && !frame.logicalRect.isEmpty()) {
+                const qreal sx = qreal(frame.pixelRect.width()) / frame.logicalRect.width();
+                const qreal sy = qreal(frame.pixelRect.height()) / frame.logicalRect.height();
+                const QRect native(qRound(frame.pixelRect.left() + (global.left() - frame.logicalRect.left()) * sx),
+                                   qRound(frame.pixelRect.top() + (global.top() - frame.logicalRect.top()) * sy),
+                                   qRound(global.width() * sx), qRound(global.height() * sy));
+                if (native.width() > 0 && native.height() > 0) {
+                    pix = QPixmap::fromImage(frame.image.copy(native));
+                    if (!pix.isNull()) {
+                        pix.setDevicePixelRatio(1);
+                        scale = qreal(pix.width()) / (std::max)(1, r.width());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (pix.isNull()) {
+        pix = m_shot.copy(QRect(qRound(r.x() * scale), qRound(r.y() * scale),
+                                qRound(r.width() * scale), qRound(r.height() * scale)));
+        pix.setDevicePixelRatio(1);
+    }
     const bool rounded = m_roundEnabled && m_roundRadius > 0 && !m_embedded && !m_pinEdit;
     if (rounded) {
         // Render through a rounded clip so save/copy/pin keep transparent corners.

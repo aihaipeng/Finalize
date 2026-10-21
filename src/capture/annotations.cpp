@@ -67,6 +67,7 @@
 #include <imm.h>
 #include <array>
 #include <functional>
+#include <algorithm>
 
 namespace {
 // Chord-weighted Catmull-Rom (tension 1/2) through the sampled points, matching the
@@ -373,9 +374,10 @@ bool CaptureOverlay::textInnerHit(const Annotation &ann, const QPoint &pos) // T
 int CaptureOverlay::textAnnotationAt(const QPoint &pos) const
 {
     // Text stays directly editable after it loses selection; other items stay locked.
-    for (int i = m_anns.size() - 1; i >= 0; --i)
-        if (m_anns[i].tool == ATool::Text
-            && annotationHit(m_anns[i], mapToLocal(m_anns[i], pos))) return i;
+    for (int i = m_anns.size() - 1; i >= 0; --i) {
+        if (!annotationHit(m_anns[i], mapToLocal(m_anns[i], pos))) continue;
+        return m_anns[i].tool == ATool::Text ? i : -1;   // Never reach text through a covering item.
+    }
     return -1;
 }
 
@@ -422,11 +424,25 @@ CaptureOverlay::Handle CaptureOverlay::annHandleAt(const Annotation &ann, const 
     return H_None;
 }
 
-QPoint CaptureOverlay::rotateAnchor(const Annotation &ann)  // Text rotates from above; other items from below.
+bool CaptureOverlay::textKnobAbove(const Annotation &ann) const
+{
+    if (ann.tool != ATool::Text) return false;
+    const QRect r = annotationRect(ann);
+    const QPoint above = mapFromLocal(ann, QPoint(r.center().x(), r.top() - 12));
+    return rect().adjusted(6, 6, -6, -6).contains(above);
+}
+
+QPoint CaptureOverlay::rotateKnobLocal(const Annotation &ann) const
 {
     const QRect r = annotationRect(ann);
-    const int y = ann.tool == ATool::Text ? r.top() - 12 : r.bottom() + 22;
-    return mapFromLocal(ann, QPoint(r.center().x(), y));
+    if (ann.tool == ATool::Text && !textKnobAbove(ann))
+        return QPoint(r.center().x(), r.bottom() + 22);   // Flip below when the top edge is off screen.
+    return QPoint(r.center().x(), ann.tool == ATool::Text ? r.top() - 12 : r.bottom() + 22);
+}
+
+QPoint CaptureOverlay::rotateAnchor(const Annotation &ann) const
+{
+    return mapFromLocal(ann, rotateKnobLocal(ann));
 }
 
 void CaptureOverlay::paintHandle(QPainter &p, const QPointF &center)
@@ -575,10 +591,12 @@ QVector<CaptureOverlay::Annotation> CaptureOverlay::annotationSnapshot() const
 {
     QVector<Annotation> snapshot = m_anns;
     for (Annotation &ann : snapshot) {
+        // Keep undo snapshots semantic. Full-size effect layers are rebuilt on
+        // demand; retaining one per snapshot can cost several GB on 4K captures.
         ann.mosaicCache = {};
         ann.mosaicCacheStrength = 0;
-        // A finished erase is shared (implicitly) so undo/redo shows it without re-running.
-        if (!ann.mosaicSmart || ann.smartResult.isNull()) ann.mosaicSource = {};
+        ann.smartResult = {};
+        ann.mosaicSource = {};
         ann.smartPending = ann.smartFailed = false;
     }
     return snapshot;
@@ -761,11 +779,18 @@ void CaptureOverlay::syncTextEditorGeometry()
                         .adjusted(-2, -2, 2, 2).intersected(rect());
     if (!m_sel.isNull()) viewRect = viewRect.intersected(m_sel);
     if (viewRect.isEmpty())
-        viewRect = QRect(qBound(0, qRound(m_editor->pos().x()), width() - 1),
-                         qBound(0, qRound(m_editor->pos().y()), height() - 1), 1, 1);
-    m_textView->clearMask();
+        viewRect = QRect(std::clamp(qRound(m_editor->pos().x()), 0, (std::max)(0, width() - 1)),
+                         std::clamp(qRound(m_editor->pos().y()), 0, (std::max)(0, height() - 1)), 1, 1);
     m_textView->setGeometry(viewRect);
     m_textView->setSceneRect(QRectF(viewRect));
+    const QPoint knob = rotateAnchor(editorAnnotation()) - viewRect.topLeft();
+    const QRect view = m_textView->rect();
+    if (view.contains(knob)) {                   // Leave the visible rotate knob clickable through the view.
+        const QRect hole = QRect(knob - QPoint(8, 8), QSize(16, 16)) & view;
+        m_textView->setMask(QRegion(view) - QRegion(hole));
+    } else {
+        m_textView->clearMask();
+    }
     update();
 }
 
@@ -1014,6 +1039,11 @@ void CaptureOverlay::beginTextEdit(const QPoint &pos, int existing)
     update();
 }
 
+void CaptureOverlay::commitText()
+{
+    commitTextEdit();
+}
+
 void CaptureOverlay::commitTextEdit()
 {
     if (m_colorDialog) m_colorDialog->close();
@@ -1038,14 +1068,10 @@ void CaptureOverlay::commitTextEdit()
         ++m_smartEpoch;                          // In-flight erases must not land on shifted indexes.
         if (text.trimmed().isEmpty()) {         // Clearing the text deletes the annotation.
             m_anns.removeAt(m_editAnn);
-            if (m_selAnn == m_editAnn) m_selAnn = -1;
-            else if (m_selAnn > m_editAnn) --m_selAnn;
         } else if (replace) {
             m_anns[m_editAnn] = edited;
-            m_selAnn = m_editAnn;
         } else {
             m_anns.append(edited);
-            m_selAnn = m_anns.size() - 1;        // Auto-select fresh annotations.
         }
     }
     m_editAnn = -1;
@@ -1909,6 +1935,17 @@ void CaptureOverlay::syncTextOptions()
     }
     if (m_colorBoard) m_colorBoard->setCurrentColor(editing ? m_editColor : ann ? ann->color : m_acolor);
     syncSizeInput();
+    // Reusing the strip still has to show it: updateToolOptions() hides it for the
+    // None tool but leaves the Text children alive for this fast path.
+    if (m_embedded) {
+        m_toolOptions->show();
+        m_toolOptions->adjustSize();
+        emit stripRebuilt();
+    } else {
+        m_toolOptions->show();
+        placeToolBars();
+        m_toolOptions->raise();
+    }
 }
 
 void CaptureOverlay::updateToolOptions()

@@ -10,6 +10,7 @@
 #include <QRectF>
 #include <QString>
 #include <algorithm>
+#include <cmath>
 #include <exception>
 
 BarcodeResult BarcodeEngine::recognize(QImage image, const BarcodeCancel &cancel)
@@ -25,6 +26,24 @@ BarcodeResult BarcodeEngine::recognize(QImage image, const BarcodeCancel &cancel
         if (image.isNull() || image.width() <= 0 || image.height() <= 0) {
             result.error = tr("识别失败：截图区域为空");
             return result;
+        }
+        // zxing has no mid-call abort. Cap the work so one decode cannot run
+        // unbounded on a huge capture; the user can retry after resizing.
+        constexpr qint64 kMaxPixels = 16000000;
+        const qint64 pixels = qint64(image.width()) * image.height();
+        if (pixels > kMaxPixels) {
+            const double factor = std::sqrt(double(kMaxPixels) / double(pixels));
+            image = image.scaled((std::max)(1, int(image.width() * factor)),
+                                 (std::max)(1, int(image.height() * factor)),
+                                 Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            if (image.isNull()) {
+                result.error = tr("识别失败：图像过大，无法缩小");
+                return result;
+            }
+            if (cancel && cancel->load()) {
+                result.cancelled = true;
+                return result;
+            }
         }
         // zxing reads luminance rows directly; QImage's row padding is passed
         // explicitly so grayscale rows are not interpreted as packed pixels.

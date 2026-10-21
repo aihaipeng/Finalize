@@ -39,7 +39,6 @@ bool PixelInspector::setSample(const ScreenFrame &frame, const QPoint &globalPix
         return false;
     const QPoint pixel = globalPixel - frame.pixelRect.topLeft();
     m_color = frame.image.pixelColor(pixel);
-    m_position = globalPixel;
     const QPoint origin = pixel - QPoint(12, 8);
     m_patch = frame.image.copy(QRect(origin, QSize(25, 17)));
     m_patch.setDevicePixelRatio(1);

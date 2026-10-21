@@ -214,6 +214,10 @@ int CaptureOverlay::testSmartErase(const QString &previewPath)
             };
             settle();
             const QImage erased = overlay.cropped().toImage();
+            const QVector<CaptureOverlay::Annotation> snapshot = overlay.annotationSnapshot();
+            check(snapshot.size() == 1 && snapshot[0].smartResult.isNull()
+                      && snapshot[0].mosaicSource.isNull(),
+                  "smart undo snapshots keep annotations but drop full-size effect layers");
             const QRect hole(QPoint(qRound((150 - 40) * dpr), qRound((100 - 40) * dpr)),
                              QPoint(qRound((250 - 40) * dpr), qRound((180 - 40) * dpr)));
             int changed = 0;

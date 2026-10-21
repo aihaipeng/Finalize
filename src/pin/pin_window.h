@@ -92,6 +92,7 @@ private:
     void positionStrip();                 // Option strip under the pin toolbar, left-aligned.
     void bakeAnnotations();               // Composite marks into pixels before processing/select/OCR.
     QPixmap annotatedPix() const;         // Display pixels including live annotations.
+    QPixmap outputPix();                  // Commit active text, then return annotatedPix().
     QImage displayImage() const;          // m_pix at the current window size.
     // Text markup over the OCR selection, stored per character: highlight keeps
     // its own slot while the three line marks share one (they replace each

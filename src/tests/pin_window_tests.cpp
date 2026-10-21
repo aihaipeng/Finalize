@@ -281,6 +281,7 @@ int PinWindow::testPlacement()
     }
     // Verify text box hit test and selection
     longPin.m_textSelectable = true;
+    longPin.m_ocrImgSize = QSizeF(longPin.m_pix.size());
     const double sx = double(longPin.m_pix.width()) / longPin.imageRect().width();
     const double sy = double(longPin.m_pix.height()) / longPin.imageRect().height();
     const QPoint io = longPin.imageRect().topLeft();   // Event positions are window coordinates.
@@ -847,6 +848,8 @@ int PinWindow::testPlacement()
     } else {
         std::puts("SKIP: pin live OCR selection (models unavailable)");
     }
+    QThreadPool::globalInstance()->waitForDone();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     std::puts("PASS: original-position pins, proportional long-capture fitting, DPI, wheel zoom, and context menu transforms");
     std::fflush(stdout);
     return 0;

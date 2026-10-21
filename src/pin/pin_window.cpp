@@ -175,7 +175,7 @@ void PinWindow::applyProcessedImage()
     m_selLead = -1;
     m_decoHighlight.clear();
     m_decoLine.clear();
-    if (m_textSelectable) {
+    if (m_textSelectable && m_pix.height() <= 1440) {
         runOcrForTextSelection();
     }
 
@@ -186,6 +186,10 @@ void PinWindow::applyProcessedImage()
     QRect r(0, 0, newSize.width(), newSize.height());
     r.moveCenter(c);
     setImageGeometry(r);
+    if (m_canvas) {
+        m_canvas->setGeometry(imageRect());
+        m_canvas->setImage(displayImage());
+    }
     update();
 }
 
@@ -531,7 +535,9 @@ void PinWindow::toggleTextSelectable(bool enabled)
         // The I-beam appears only while the pointer is over copyable text;
         // everywhere else the native cursor is kept.
         setCursor(Qt::ArrowCursor);
-        if (m_charBoxes.isEmpty() && !m_ocrRunning) {
+        // Tall pins are recognized on first click: starting a chunked OCR run
+        // for every long pin on creation would load the machine for no reason.
+        if (m_charBoxes.isEmpty() && !m_ocrRunning && m_pix.height() <= 1440) {
             runOcrForTextSelection();
         }
     } else {
@@ -618,7 +624,7 @@ void PinWindow::runOcrForTextSelection()
     });
 
     watcher->setFuture(QtConcurrent::run([img, cancel]() -> OcrResult {
-        return OcrEngine::instance().recognize(img, cancel);
+        return recognizeChunked(img, cancel);
     }));
 }
 
@@ -1011,25 +1017,26 @@ void PinWindow::toggleToolbar(bool enabled)
 
             auto *copyBtn = pinButton(Icon::Copy, tr("复制图片"));
             connect(copyBtn, &QToolButton::clicked, this, [this] {
-                if (!copyImageToClipboard(annotatedPix().toImage()))
+                if (!copyImageToClipboard(outputPix().toImage()))
                     QMessageBox::warning(this, QStringLiteral("LensSnip"), tr("复制失败，剪贴板可能被占用，请重试"));
             });
             lay->addWidget(copyBtn);
 
             auto *saveBtn = pinButton(Icon::Save, tr("保存图片"));
             connect(saveBtn, &QToolButton::clicked, this, [this] {
+                const QPixmap pix = outputPix();
                 const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
                 const QString path = QFileDialog::getSaveFileName(
                     this, tr("保存图片"), dir + QStringLiteral("/pin.png"),
                     QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
-                if (!path.isEmpty() && !saveImageAtomic(annotatedPix().toImage(), path))
+                if (!path.isEmpty() && !saveImageAtomic(pix.toImage(), path))
                     QMessageBox::warning(this, QStringLiteral("LensSnip"), tr("保存失败，请检查路径或磁盘空间后重试"));
             });
             lay->addWidget(saveBtn);
 
             auto *ocrBtn = pinButton(Icon::Ocr, tr("文字识别 (OCR)"));
             connect(ocrBtn, &QToolButton::clicked, this, [this] {
-                showOcr(annotatedPix().toImage(), this, imageGeometry());
+                showOcr(outputPix().toImage(), this, imageGeometry());
             });
             lay->addWidget(ocrBtn);
 
@@ -1076,8 +1083,8 @@ void PinWindow::openBarcode() { openTextCard(true); }
 void PinWindow::openTextCard(bool barcode)
 {
     const QRect pin = imageGeometry();
-    OcrDialog *card = barcode ? showBarcode(annotatedPix().toImage(), nullptr, pin)
-                              : showTranslate(annotatedPix().toImage(), nullptr, pin);
+    OcrDialog *card = barcode ? showBarcode(outputPix().toImage(), nullptr, pin)
+                              : showTranslate(outputPix().toImage(), nullptr, pin);
     if (!card) return;
     // The card opens at the screen centre; the pin and its bars step aside until it closes.
 
@@ -1170,7 +1177,9 @@ void PinWindow::positionStrip()
 
 void PinWindow::bakeAnnotations()
 {
-    if (!m_canvas || !m_canvas->hasAnnotations()) return;
+    if (!m_canvas) return;
+    m_canvas->commitText();
+    if (!m_canvas->hasAnnotations()) return;
     const QImage baked = m_canvas->composited().toImage();
     m_canvas->clearAll();
     // Baked pixels are display-sized and already carry processing.
@@ -1194,6 +1203,12 @@ QImage PinWindow::displayImage() const
 QPixmap PinWindow::annotatedPix() const
 {
     return (m_canvas && m_canvas->hasAnnotations()) ? m_canvas->composited() : m_pix;
+}
+
+QPixmap PinWindow::outputPix()
+{
+    if (m_canvas) m_canvas->commitText();
+    return annotatedPix();
 }
 
 QMenu *PinWindow::createContextMenu()
@@ -1259,17 +1274,18 @@ QMenu *PinWindow::createContextMenu()
 
     QAction *copy = m->addAction(tr("复制图片"));
     connect(copy, &QAction::triggered, this, [this] {
-        if (!copyImageToClipboard(m_pix.toImage()))
+        if (!copyImageToClipboard(outputPix().toImage()))
             QMessageBox::warning(this, QStringLiteral("LensSnip"), tr("复制失败，剪贴板可能被占用，请重试"));
     });
 
     QAction *save = m->addAction(tr("保存图片"));
     connect(save, &QAction::triggered, this, [this] {
+        const QPixmap pix = outputPix();
         const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
         const QString path = QFileDialog::getSaveFileName(
             this, tr("保存图片"), dir + QStringLiteral("/pin.png"),
             QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
-        if (!path.isEmpty() && !saveImageAtomic(m_pix.toImage(), path))
+        if (!path.isEmpty() && !saveImageAtomic(pix.toImage(), path))
             QMessageBox::warning(this, QStringLiteral("LensSnip"), tr("保存失败，请检查路径或磁盘空间后重试"));
     });
 
@@ -1296,7 +1312,8 @@ void PinWindow::contextMenuEvent(QContextMenuEvent *e)
         QMenu m;
         m.setObjectName(QStringLiteral("selCopyMenu"));
         m.setStyleSheet(darkMenuQss);
-        if (m.exec(e->globalPos()) == m.addAction(tr("复制"))) {
+        QAction *copyAction = m.addAction(tr("复制"));
+        if (m.exec(e->globalPos()) == copyAction) {
             if (!copyTextToClipboard(selectedText()))
                 QMessageBox::warning(this, QStringLiteral("LensSnip"), tr("复制失败，剪贴板可能被占用，请重试"));
             m_selBarOpen = false;

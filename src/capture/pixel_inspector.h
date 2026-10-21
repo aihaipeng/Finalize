@@ -31,7 +31,6 @@ protected:
 private:
     QImage m_patch;
     QColor m_color;
-    QPoint m_position;
     bool m_hex = false;
 };
 

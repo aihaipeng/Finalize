@@ -312,7 +312,7 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
         const QImage selectedBrush = overlay.grab(brushPreview).toImage();
         overlay.m_selAnn = -1;
         check(overlay.grab(brushPreview).toImage() == selectedBrush
-                  && overlay.annHandleAt(brush, rotateAnchor(brush)) == H_None,
+                  && overlay.annHandleAt(brush, overlay.rotateAnchor(brush)) == H_None,
               "selected mosaic brushes show no dashed bounds or invisible rotation handles");
         overlay.m_selAnn = 0;
         const QRect rectanglePreview = annotationRect(overlay.m_anns.first()).adjusted(-30, -30, 30, 30);
@@ -436,7 +436,7 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
                   && overlay.m_anns[1].mosaicCache != redacted,
               "editing lower annotations invalidates the effect cache");
         overlay.m_anns.removeLast();
-        check(overlay.annHandleAt(overlay.m_anns[1], rotateAnchor(overlay.m_anns[1])) == H_None
+        check(overlay.annHandleAt(overlay.m_anns[1], overlay.rotateAnchor(overlay.m_anns[1])) == H_None
                   && overlay.annAnchors(overlay.m_anns[1]).size() == 4,
               "mosaic regions retain resize handles but expose no rotation handle");
         const QRect beforeMove = overlay.m_anns[1].rect;
@@ -699,8 +699,8 @@ int CaptureOverlay::testTextAnnotation()
     check(overlay.cropped().toImage() == liveCapture,
           "text pixels do not jump or wrap differently when editing ends at 150 percent DPI");
     const Annotation saved = overlay.m_anns[0];
-    check(rotateAnchor(saved).y() < saved.rect.top()
-              && overlay.annHandleAt(saved, rotateAnchor(saved)) == H_Rotate,
+    check(overlay.rotateAnchor(saved).y() < saved.rect.top()
+              && overlay.annHandleAt(saved, overlay.rotateAnchor(saved)) == H_Rotate,
           "the text rotate knob sits above the frame");
     // The control ring selects for adjustment without opening the editor.
     const QPoint ring = saved.rect.topLeft() + QPoint(2, saved.rect.height() / 2);
@@ -734,6 +734,17 @@ int CaptureOverlay::testTextAnnotation()
               && overlay.m_textView->hasFocus()
               && overlay.m_textView->geometry() != overlay.rect(),
           "clicking locked text opens the focused editor without creating a duplicate");
+    overlay.commitTextEdit();
+    overlay.selectTool(ATool::None);
+    check(!overlay.m_toolOptions->isVisible(), "disarming the text tool hides its option strip");
+    QMouseEvent hiddenPress(QEvent::MouseButtonPress, click, overlay.mapToGlobal(click),
+                            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent hiddenRelease(QEvent::MouseButtonRelease, click, overlay.mapToGlobal(click),
+                              Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&overlay, &hiddenPress);
+    QApplication::sendEvent(&overlay, &hiddenRelease);
+    check(overlay.editorActive() && overlay.m_toolOptions->isVisible(),
+          "clicking text with no tool reopens the editor and its option strip");
     cur = overlay.m_editor->textCursor();
     cur.setPosition(1);
     overlay.m_editor->setTextCursor(cur);
@@ -750,7 +761,8 @@ int CaptureOverlay::testTextAnnotation()
     QMouseEvent knobPress(QEvent::MouseButtonPress, editKnob, overlay.mapToGlobal(editKnob),
                           Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
     QApplication::sendEvent(&overlay, &knobPress);
-    check(!overlay.editorActive() && overlay.m_selAnn == 0 && overlay.m_itemDrag == H_Rotate,
+    check(!overlay.editorActive() && overlay.m_selAnn == 0 && overlay.m_itemDrag == H_Rotate
+              && overlay.m_pressPos == editKnob && !overlay.m_dragStarted,
           "the rotate knob still works while the text editor is open");
     QMouseEvent knobRelease(QEvent::MouseButtonRelease, editKnob, overlay.mapToGlobal(editKnob),
                             Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
@@ -774,6 +786,12 @@ int CaptureOverlay::testTextAnnotation()
     overlay.m_editor->setPlainText(QStringLiteral("旋转文字"));
     check(overlay.m_editor->rotation() == 30,
           "re-editing rotated text retains its native scene rotation");
+    const QPoint editorKnob = overlay.rotateAnchor(overlay.editorAnnotation())
+                            - overlay.m_textView->geometry().topLeft();
+    check(overlay.m_textView->rect().contains(editorKnob)
+              && !overlay.m_textView->mask().isEmpty()
+              && !overlay.m_textView->mask().contains(editorKnob),
+          "the rotated editor leaves the rotate knob clickable");
     overlay.commitTextEdit();
     check(QLineF(rotatedOrigin, mapFromLocal(overlay.m_anns[0], overlay.m_anns[0].rect.topLeft())).length() < 2,
           "changing rotated text keeps its scene origin stable");
@@ -784,6 +802,22 @@ int CaptureOverlay::testTextAnnotation()
     overlay.undoAnnotation();
     check(overlay.m_anns.size() == 1 && overlay.m_anns[0].text == QStringLiteral("旋转文字"),
           "undo restores deleted text with its formatting and rotation");
+    Annotation topText;
+    topText.tool = ATool::Text;
+    topText.text = QStringLiteral("顶边");
+    topText.rect = QRect(QPoint(origin.x() + 600, -6), QSize(80, 30));
+    const QPoint topKnob = overlay.rotateAnchor(topText);
+    check(overlay.rect().contains(topKnob)
+              && overlay.annHandleAt(topText, topKnob) == H_Rotate,
+          "the text rotate knob stays reachable at the top edge");
+    Annotation cover;
+    cover.tool = ATool::Marker;
+    cover.fill = true;
+    cover.rect = QRect(overlay.m_anns[0].rect.center() - QPoint(30, 20), QSize(60, 40));
+    overlay.m_anns.append(cover);
+    check(overlay.textAnnotationAt(overlay.m_anns[0].rect.center()) < 0,
+          "text under a later annotation is not opened through it");
+    overlay.m_anns.removeLast();
     for (ATool tool : {ATool::Arrow, ATool::Marker}) {
         Annotation previous;
         previous.tool = tool;

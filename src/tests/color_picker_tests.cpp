@@ -660,7 +660,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     QApplication::sendEvent(&overlay, &keyW);
     check(overlay.m_anns.last().stroke.first() == beforeNudge + QPointF(-1, -1),
           "WASD keys nudge the selected annotation one pixel");
-    const QPoint knob = CaptureOverlay::rotateAnchor(overlay.m_anns.last());
+    const QPoint knob = overlay.rotateAnchor(overlay.m_anns.last());
     mouse(QEvent::MouseButtonPress, knob);
     mouse(QEvent::MouseMove, knob + QPoint(30, 0));
     mouse(QEvent::MouseButtonRelease, knob + QPoint(30, 0));

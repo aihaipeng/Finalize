@@ -39,6 +39,12 @@ int main(int argc, char **argv)
 {
     QSettings::setDefaultFormat(QSettings::IniFormat);   // User settings live in %APPDATA%/LensSnip/LensSnip.ini.
     QApplication app(argc, argv);
+    // Test modes return without entering the event loop. Drain OCR/erase work
+    // here so their workers never outlive the static OCR engine.
+    struct PoolDrain {
+        ~PoolDrain() { QThreadPool::globalInstance()->waitForDone(); }
+    } poolDrain;
+    Q_UNUSED(poolDrain);
     app.setApplicationName(QStringLiteral("LensSnip"));
     QFont baseFont = QApplication::font();
     baseFont.setPointSizeF(10.5);                              // 96 dpi ≈ 14 px standard UI body.

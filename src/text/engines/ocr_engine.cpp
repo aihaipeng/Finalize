@@ -31,7 +31,12 @@
 
 OcrEngine &OcrEngine::instance() { static OcrEngine engine; return engine; }
 
-OcrEngine::~OcrEngine() { reset(); }
+OcrEngine::~OcrEngine()
+{
+    // Deliberately leave the ORT DLL and sessions to process exit. FreeLibrary
+    // during static destruction can run TLS callbacks after Qt's thread pool
+    // has gone away; reset() still handles explicit reloads and load failures.
+}
 
 QString OcrEngine::assetError(const QString &root) {
     for (const QString &file : {QStringLiteral("onnxruntime.dll"), QStringLiteral("models/PP-OCRv6_det_small.onnx"),
