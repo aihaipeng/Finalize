@@ -139,8 +139,9 @@ private:
         bool dashed = false;                         // Arrow shaft dashing, independent of the path.
         int numberStyle = 0;                         // 0 filled disc, 1 ring, 2 bare label.
         int numberFormat = 0;                        // 0 "1 2 3", 1 "I II III", 2 "A B C", 3 "a b c", 4 Chinese numerals.
-        bool bold = false;                           // Text weight / slant.
+        bool bold = false;                           // Text weight / slant / underline.
         bool italic = false;
+        bool underline = false;
         qreal rot = 0;                               // Rotation around the box center (degrees).
         bool fill = false;                           // Rect / Ellipse solid fill; Marker / Eraser rectangle mode.
     };
@@ -153,7 +154,9 @@ private:
     // ---- object editing: hit tests, selection anchors, move/resize, undo/redo ----
     static qreal distToSegment(const QPointF &p, const QPointF &a, const QPointF &b);
     static bool annotationHit(const Annotation &ann, const QPoint &pos);
+    static bool textInnerHit(const Annotation &ann, const QPoint &pos);
     int annotationAt(const QPoint &pos) const;
+    int textAnnotationAt(const QPoint &pos) const;
     // Corner anchors for area shapes, endpoint anchors for arrows; strokes and text move only.
     QVector<QPoint> annAnchors(const Annotation &ann) const;
     Handle annHandleAt(const Annotation &ann, const QPoint &pos) const;
@@ -174,6 +177,7 @@ private:
     void normalizeNumbers();
     void deleteSelected();
     static QFont textFont(const Annotation &ann);
+    static constexpr int TextMargin = 6;
     static int numberDiameter(const Annotation &ann);
     static void setupTextDocument(QTextDocument &doc, const Annotation &ann);
     static void fitTextAnnotation(Annotation &ann);
@@ -230,7 +234,9 @@ private:
     void showSizePopup(QToolButton *anchor, int minimum, int maximum);
     void setTextBold(bool on);
     void setTextItalic(bool on);
+    void setTextUnderline(bool on);
     void setTextFamily(const QFont &font);
+    void syncTextOptions();
     // Options strip under the toolbar: contents follow the armed tool.
     void updateToolOptions();
     // Shared by the overlay (logical coords, origin 0, scale 1) and cropped() (native crop
@@ -449,6 +455,6 @@ private:
     bool m_arrowDashed = false;
     int m_numberStyle = 0, m_numberFormat = 0;       // See Annotation::numberStyle / numberFormat.
     bool m_markerFill = false;                       // Marker drags a translucent rectangle.
-    bool m_abold = false, m_aitalic = false;         // Text tool defaults.
-    bool m_editBold = false, m_editItalic = false;   // Live editor weight / slant.
+    bool m_abold = false, m_aitalic = false, m_aunderline = false;       // Text tool defaults.
+    bool m_editBold = false, m_editItalic = false, m_editUnderline = false; // Live editor style.
 };

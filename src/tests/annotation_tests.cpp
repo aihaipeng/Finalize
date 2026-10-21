@@ -537,8 +537,13 @@ int CaptureOverlay::testTextAnnotation()
               && static_cast<const QDoubleValidator *>(overlay.m_sizeInput->validator())->top() == 1638
               && overlay.m_sizeInput->findText(QStringLiteral("12")) >= 0 && overlay.isVisible(),
           "the editable font control accepts fractional point sizes without pinning the capture");
+    QComboBox *fontBeforeEdit = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("annotationFont"));
+    if (fontBeforeEdit) fontBeforeEdit->setProperty("reuseProbe", true);
     overlay.beginTextEdit(origin + QPoint(20, 20));
     QApplication::processEvents();
+    QComboBox *fontAfterEdit = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("annotationFont"));
+    check(fontBeforeEdit && fontAfterEdit && fontAfterEdit->property("reuseProbe").toBool(),
+          "re-entering text reuses the existing option strip instead of rebuilding it");
     {   // Editing shows one hairline frame: no blue dashed box, no native placeholder dashes.
         overlay.hideToolBars();
         QImage edit(overlay.size(), QImage::Format_ARGB32);
@@ -559,7 +564,9 @@ int CaptureOverlay::testTextAnnotation()
         for (int y = scan.top(); y <= scan.bottom(); ++y)
             for (int x = scan.left(); x <= scan.right(); ++x) {
                 if (edit.pixelColor(x, y) == bg) continue;
-                if (y > box.bottom() && qAbs(x - box.center().x()) <= 2) continue;   // Rotation stalk.
+                if (y > box.bottom() || y < box.top()) {               // Rotation stalk, above text.
+                    if (qAbs(x - box.center().x()) <= 2) continue;
+                }
                 const bool onFrame = nearCorner(x, y)
                     || (frameBand.contains(x, y)
                         && (qAbs(x - box.left()) <= 1 || qAbs(x - box.right()) <= 1
@@ -624,7 +631,8 @@ int CaptureOverlay::testTextAnnotation()
           "editing the size keeps live text and its selection, then returns keyboard focus");
     for (QToolButton *button : overlay.m_toolOptions->findChildren<QToolButton *>()) {
         check(button->focusPolicy() == Qt::NoFocus, "text options do not steal keyboard focus");
-        if (button->toolTip() == QStringLiteral("粗体") || button->toolTip() == QStringLiteral("斜体"))
+        if (button->toolTip() == QStringLiteral("粗体") || button->toolTip() == QStringLiteral("斜体")
+            || button->toolTip() == QStringLiteral("下划线"))
             button->click();
     }
     check(overlay.m_colorBoard && overlay.m_colorBoard->focusPolicy() == Qt::NoFocus,
@@ -639,6 +647,7 @@ int CaptureOverlay::testTextAnnotation()
     }
     overlay.editorFontStep(1);
     check(overlay.editorActive() && overlay.m_editor->font().bold() && overlay.m_editor->font().italic()
+              && overlay.m_editor->font().underline()
               && overlay.m_editFont == 12.5 && overlay.m_sizeInput->currentText().toDouble() == 12.5
               && overlay.m_editor->defaultTextColor() == QColor("#00a2e8")
               && overlay.m_editor->textCursor().anchor() == anchor
@@ -683,12 +692,32 @@ int CaptureOverlay::testTextAnnotation()
     key(Qt::Key_Escape);
     check(!overlay.editorActive() && overlay.isVisible() && overlay.m_anns.size() == 1
               && overlay.m_atool == ATool::Text && overlay.m_anns[0].bold && overlay.m_anns[0].italic
+              && overlay.m_anns[0].underline && overlay.m_selAnn == -1
               && overlay.m_anns[0].family == QStringLiteral("Arial")
               && overlay.m_anns[0].color == QColor("#00a2e8"),
-          "Escape finishes text input in one transaction and keeps the capture open");
+          "Escape finishes text input, leaves the tool armed, and drops the selection handles");
     check(overlay.cropped().toImage() == liveCapture,
           "text pixels do not jump or wrap differently when editing ends at 150 percent DPI");
     const Annotation saved = overlay.m_anns[0];
+    check(rotateAnchor(saved).y() < saved.rect.top()
+              && overlay.annHandleAt(saved, rotateAnchor(saved)) == H_Rotate,
+          "the text rotate knob sits above the frame");
+    // The control ring selects for adjustment without opening the editor.
+    const QPoint ring = saved.rect.topLeft() + QPoint(2, saved.rect.height() / 2);
+    QMouseEvent ringPress(QEvent::MouseButtonPress, ring, overlay.mapToGlobal(ring),
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent ringRelease(QEvent::MouseButtonRelease, ring, overlay.mapToGlobal(ring),
+                            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&overlay, &ringPress);
+    QApplication::sendEvent(&overlay, &ringRelease);
+    QToolButton *boldButton = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("textBold"));
+    QToolButton *italicButton = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("textItalic"));
+    QToolButton *underlineButton = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("textUnderline"));
+    check(!overlay.editorActive() && overlay.m_selAnn == 0
+              && boldButton && boldButton->isChecked()
+              && italicButton && italicButton->isChecked()
+              && underlineButton && underlineButton->isChecked(),
+          "clicking the text frame selects it for adjustment and syncs B/I/U state");
     const int undoCount = overlay.m_undoStack.size();
     overlay.beginTextEdit(saved.rect.center(), 0);
     overlay.commitTextEdit();
@@ -701,8 +730,10 @@ int CaptureOverlay::testTextAnnotation()
                         Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(&overlay, &press);
     QApplication::sendEvent(&overlay, &release);
-    check(overlay.editorActive() && overlay.m_editAnn == 0 && overlay.m_anns.size() == 1,
-          "the text tool edits an existing item instead of creating an overlapping duplicate");
+    check(overlay.editorActive() && overlay.m_editAnn == 0 && overlay.m_anns.size() == 1
+              && overlay.m_textView->hasFocus()
+              && overlay.m_textView->geometry() != overlay.rect(),
+          "clicking locked text opens the focused editor without creating a duplicate");
     cur = overlay.m_editor->textCursor();
     cur.setPosition(1);
     overlay.m_editor->setTextCursor(cur);
@@ -714,6 +745,16 @@ int CaptureOverlay::testTextAnnotation()
     check(overlay.m_anns[0].text == saved.text, "one undo restores the entire text-edit transaction");
     overlay.redoAnnotation();
     check(overlay.m_anns[0].text != saved.text, "redo restores the edited multiline text");
+    overlay.beginTextEdit(overlay.m_anns[0].rect.center(), 0);
+    const QPoint editKnob = overlay.rotateAnchor(overlay.editorAnnotation());
+    QMouseEvent knobPress(QEvent::MouseButtonPress, editKnob, overlay.mapToGlobal(editKnob),
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&overlay, &knobPress);
+    check(!overlay.editorActive() && overlay.m_selAnn == 0 && overlay.m_itemDrag == H_Rotate,
+          "the rotate knob still works while the text editor is open");
+    QMouseEvent knobRelease(QEvent::MouseButtonRelease, editKnob, overlay.mapToGlobal(editKnob),
+                            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&overlay, &knobRelease);
     const Annotation beforeResize = overlay.m_anns[0];
     overlay.pushUndo();
     overlay.m_selAnn = 0;

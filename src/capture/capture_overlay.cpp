@@ -26,6 +26,7 @@
 #include <QScreen>
 #include <QPainter>
 #include <QPainterPath>
+#include <QFontMetrics>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QKeyEvent>
@@ -644,6 +645,9 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         const QRect box = annotationRect(ann);
         if (ann.tool == ATool::Text) {
             // Reference text frame: one hairline accent rect at the bounds, nothing dashed.
+            // A rotated cosmetic 1px line must be antialiased or it rasterizes into
+            // disconnected segments; an unrotated one stays crisp for free.
+            p.setRenderHint(QPainter::Antialiasing, !qFuzzyIsNull(ann.rot));
             QPen frame(Bar::accent, 0);
             p.setPen(frame);
             p.setBrush(Qt::NoBrush);
@@ -658,14 +662,41 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         for (const QPoint &anchor : annAnchors(ann))
             paintHandle(p, anchor);
         if (ann.tool != ATool::Mosaic) {          // Mosaic regions move and resize without rotation.
-            const QPoint base(box.center().x(), box.bottom() + 2);
-            const QPoint knob(box.center().x(), box.bottom() + 22);
+            const bool text = ann.tool == ATool::Text;
+            const QPoint base(box.center().x(), text ? box.top() - 2 : box.bottom() + 2);
+            const QPoint knob(box.center().x(), text ? box.top() - 12 : box.bottom() + 22);
             p.setPen(QPen(Bar::accent, 1));
             p.drawLine(base, knob);
             paintHandle(p, knob);
         }
         p.restore();
         }
+    }
+    if (m_mode == Adjusting && m_itemDrag == H_Rotate
+        && m_selAnn >= 0 && m_selAnn < m_anns.size()
+        && m_anns[m_selAnn].tool == ATool::Text) {   // Keep the live angle next to the rotate knob.
+        int angle = qRound(m_anns[m_selAnn].rot) % 360;
+        if (angle > 180) angle -= 360;
+        else if (angle <= -180) angle += 360;
+        const QString label = QStringLiteral("%1°").arg(angle);
+        QFont f = font();
+        f.setPointSizeF(9.5);
+        f.setBold(true);
+        const QFontMetrics fm(f);
+        const QSize size(fm.horizontalAdvance(label) + 16, fm.height() + 10);
+        QPoint at = rotateAnchor(m_anns[m_selAnn]) + QPoint(14, -size.height() - 4);
+        at.setX(qBound(4, at.x(), width() - size.width() - 4));
+        at.setY(qBound(4, at.y(), height() - size.height() - 4));
+        const QRect badge(at, size);
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(QColor("#2b2d33"), 1));
+        p.setBrush(QColor(24, 25, 29, 235));
+        p.drawRoundedRect(QRectF(badge).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6);
+        p.setFont(f);
+        p.setPen(QColor("#f4f5f8"));
+        p.drawText(badge, Qt::AlignCenter, label);
+        p.restore();
     }
     if (m_mode == Adjusting && !m_sel.isNull() && m_hover.isNull() && !m_pinEdit)  // Eight resize handles.
         for (const QRect &h : handleRects(m_sel))
@@ -682,6 +713,10 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
     cancelDetection();
     m_nudging = false;
     const bool wasEditing = editorActive();
+    const int editingAnn = m_editAnn;
+    const Annotation editingState = wasEditing ? editorAnnotation() : Annotation{};
+    const Handle editingHandle = wasEditing && editingState.tool == ATool::Text
+        && !editingState.text.trimmed().isEmpty() ? annHandleAt(editingState, e->pos()) : H_None;
     if (wasEditing) commitTextEdit();           // Canvas clicks finish input; controls keep it live.
     if (e->button() == Qt::RightButton) {       // Right click ends input, then the ladder.
         m_eatContextMenu = m_live || wasEditing || m_selAnn >= 0 || m_atool != ATool::None;
@@ -698,6 +733,21 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
     }
     if (e->button() != Qt::LeftButton)
         return;
+    if (editingHandle != H_None) {               // The knob outside the editor still rotates committed text.
+        const int index = editingAnn >= 0 ? editingAnn : m_anns.size() - 1;
+        if (index >= 0 && index < m_anns.size() && m_anns[index].tool == ATool::Text) {
+            m_atool = ATool::Text;
+            m_selAnn = index;
+            m_pressAnn = m_anns[index];
+            m_itemDrag = editingHandle;
+            syncToolButtons();
+            if (m_toolOptions && m_toolOptions->findChild<QComboBox *>(QStringLiteral("annotationFont")))
+                syncTextOptions();
+            updateAnnotationCursor(e->pos());
+            update();
+            return;
+        }
+    }
     if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {   // Polyline: each click fixes a vertex.
         m_ann.stroke.last() = e->pos();
         m_ann.stroke << e->pos();
@@ -743,19 +793,50 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
         updateToolOptions();
         update();
     }
-    if (m_mode == Adjusting && m_atool == ATool::Text && !m_spaceHeld) {
+    if (m_mode == Adjusting && !m_spaceHeld
+        && (m_atool == ATool::Text || m_atool == ATool::None)) {
+        // Text is directly re-openable even after it was locked: click the body to
+        // edit, click the control ring to select it for move/resize/rotate.
         if (m_selAnn >= 0 && m_selAnn < m_anns.size()
             && m_anns[m_selAnn].tool == ATool::Text) {
             const Handle h = annHandleAt(m_anns[m_selAnn], e->pos());
             if (h != H_None) {
                 m_itemDrag = h;
                 m_pressAnn = m_anns[m_selAnn];
+                updateAnnotationCursor(e->pos());
                 return;
             }
         }
-        const int hit = annotationAt(e->pos());
-        if (hit >= 0 && m_anns[hit].tool == ATool::Text) {
-            beginTextEdit(e->pos(), hit);
+        const int hit = textAnnotationAt(e->pos());
+        if (hit >= 0) {
+            const Annotation &ann = m_anns[hit];
+            const Handle h = annHandleAt(ann, e->pos());
+            if (hit == m_selAnn && h != H_None) {
+                m_itemDrag = h;
+                m_pressAnn = ann;
+                updateAnnotationCursor(e->pos());
+                return;
+            }
+            if (textInnerHit(ann, e->pos())) {
+                beginTextEdit(e->pos(), hit);
+                return;
+            }
+            const bool needStrip = m_atool != ATool::Text || !m_toolOptions
+                || !m_toolOptions->findChild<QComboBox *>(QStringLiteral("annotationFont"));
+            m_atool = ATool::Text;
+            m_selAnn = hit;
+            m_pressAnn = ann;
+            m_itemDrag = H_Move;
+            m_acolor = ann.color;
+            m_afont = ann.font;
+            m_afamily = ann.family;
+            m_abold = ann.bold;
+            m_aitalic = ann.italic;
+            m_aunderline = ann.underline;
+            syncToolButtons();
+            if (needStrip) updateToolOptions(); else syncTextOptions();
+            updateAnnotationCursor(e->pos());
+            update();
             return;
         }
     }
@@ -882,9 +963,10 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
             hideToolBars();
             m_inspector->hide();
         }
-        const QRect dirty = rotatedBounds(m_anns[m_selAnn]).adjusted(-24, -24, 24, 24);
+        const int margin = m_itemDrag == H_Rotate ? 64 : 24;   // Angle badge sits outside the box.
+        const QRect dirty = rotatedBounds(m_anns[m_selAnn]).adjusted(-margin, -margin, margin, margin);
         applyItemDrag(pos, e->modifiers());
-        update(dirty.united(rotatedBounds(m_anns[m_selAnn])).adjusted(-24, -24, 24, 24));
+        update(dirty.united(rotatedBounds(m_anns[m_selAnn])).adjusted(-margin, -margin, margin, margin));
         return;
     }
     if (m_drag == H_None) {                     // Hover: cursor shape, size hint, window detection.
@@ -1041,8 +1123,8 @@ void CaptureOverlay::mouseDoubleClickEvent(QMouseEvent *e)
     if (editorActive()) return;                  // A text double-click never pins the capture.
     if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) return;   // Its first press already placed the vertex.
     if (m_mode == Adjusting && (m_atool == ATool::None || m_atool == ATool::Text)) {
-        const int hit = annotationAt(e->pos());  // Double-click re-opens a text annotation.
-        if (hit >= 0 && m_anns[hit].tool == ATool::Text) {
+        const int hit = textAnnotationAt(e->pos());  // Double-click also reopens locked text.
+        if (hit >= 0) {
             m_selAnn = hit;
             m_itemDrag = H_None;
             beginTextEdit(e->pos(), hit);

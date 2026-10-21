@@ -362,6 +362,23 @@ int CaptureOverlay::annotationAt(const QPoint &pos) const        // Topmost anno
     return -1;
 }
 
+bool CaptureOverlay::textInnerHit(const Annotation &ann, const QPoint &pos) // Text body vs. control ring.
+{
+    const QRect r = ann.rect.normalized();
+    const QRect inner = r.adjusted(TextMargin, TextMargin, -TextMargin, -TextMargin);
+    if (inner.width() <= 0 || inner.height() <= 0) return false;
+    return inner.contains(mapToLocal(ann, pos));
+}
+
+int CaptureOverlay::textAnnotationAt(const QPoint &pos) const
+{
+    // Text stays directly editable after it loses selection; other items stay locked.
+    for (int i = m_anns.size() - 1; i >= 0; --i)
+        if (m_anns[i].tool == ATool::Text
+            && annotationHit(m_anns[i], mapToLocal(m_anns[i], pos))) return i;
+    return -1;
+}
+
 QVector<QPoint> CaptureOverlay::annAnchors(const Annotation &ann) const
 {
     if (ann.tool == ATool::Mosaic && ann.mosaicBrush) return {};
@@ -405,10 +422,11 @@ CaptureOverlay::Handle CaptureOverlay::annHandleAt(const Annotation &ann, const 
     return H_None;
 }
 
-QPoint CaptureOverlay::rotateAnchor(const Annotation &ann)  // Rotate stalk sits below the item.
+QPoint CaptureOverlay::rotateAnchor(const Annotation &ann)  // Text rotates from above; other items from below.
 {
     const QRect r = annotationRect(ann);
-    return mapFromLocal(ann, QPoint(r.center().x(), r.bottom() + 22));
+    const int y = ann.tool == ATool::Text ? r.top() - 12 : r.bottom() + 22;
+    return mapFromLocal(ann, QPoint(r.center().x(), y));
 }
 
 void CaptureOverlay::paintHandle(QPainter &p, const QPointF &center)
@@ -464,6 +482,17 @@ void CaptureOverlay::updateAnnotationCursor(const QPoint &pos)
     if (overToolChrome(pos)) {
         setCursor(Qt::ArrowCursor);
         return;
+    }
+    if (!m_live && (m_atool == ATool::Text || m_atool == ATool::None)) {
+        const int hit = textAnnotationAt(pos);
+        if (hit >= 0) {
+            if (hit == m_selAnn) {
+                const Handle handle = annHandleAt(m_anns[hit], pos);
+                if (handle != H_None) { setCursor(cursorForHandle(handle)); return; }
+            }
+            setCursor(textInnerHit(m_anns[hit], pos) ? Qt::IBeamCursor : Qt::SizeAllCursor);
+            return;
+        }
     }
     if (!m_live && m_selAnn >= 0 && m_selAnn < m_anns.size() && regionItem(m_anns[m_selAnn])) {
         const Handle handle = annHandleAt(m_anns[m_selAnn], pos);
@@ -539,7 +568,7 @@ void CaptureOverlay::applyItemDrag(const QPoint &pos, Qt::KeyboardModifiers mods
         }
     }
     m_anns[m_selAnn] = ann;
-    syncSizeInput();
+    if (m_itemDrag != H_Rotate) syncSizeInput();   // Rotation does not change font or width.
 }
 
 QVector<CaptureOverlay::Annotation> CaptureOverlay::annotationSnapshot() const
@@ -670,6 +699,7 @@ QFont CaptureOverlay::textFont(const Annotation &ann)
     font.setPointSizeF(ann.font);
     font.setBold(ann.bold);
     font.setItalic(ann.italic);
+    font.setUnderline(ann.underline);
     return font;
 }
 
@@ -681,7 +711,7 @@ int CaptureOverlay::numberDiameter(const Annotation &ann)
 void CaptureOverlay::setupTextDocument(QTextDocument &doc, const Annotation &ann)
 {
     doc.setDefaultFont(textFont(ann));
-    doc.setDocumentMargin(6);
+    doc.setDocumentMargin(TextMargin);
     QTextOption option;
     option.setWrapMode(QTextOption::NoWrap);
     doc.setDefaultTextOption(option);
@@ -711,6 +741,7 @@ CaptureOverlay::Annotation CaptureOverlay::editorAnnotation() const
     ann.color = m_editColor;
     ann.bold = m_editBold;
     ann.italic = m_editItalic;
+    ann.underline = m_editUnderline;
     ann.rot = m_editor->rotation();
     const QSizeF size = m_editor->boundingRect().size();
     // shortcut: Text geometry rounds to logical pixels; use fractional bounds for exact subpixel rotation.
@@ -724,9 +755,17 @@ void CaptureOverlay::syncTextEditorGeometry()
     const QPointF origin = m_editor->mapToScene(QPointF());
     m_editor->setTransformOriginPoint(m_editor->boundingRect().center());
     m_editor->setPos(m_editor->pos() + origin - m_editor->mapToScene(QPointF()));
-    const QPolygon mask = m_textView->mapFromScene(
-        m_editor->mapToScene(m_editor->boundingRect()));
-    m_textView->setMask(QRegion(mask).intersected(QRegion(m_sel)));
+    // Keep the editor widget as small as the text. A full-screen mask rebuild on
+    // every keystroke made typing and re-entering text visibly stutter.
+    QRect viewRect = m_editor->mapRectToScene(m_editor->boundingRect()).toAlignedRect()
+                        .adjusted(-2, -2, 2, 2).intersected(rect());
+    if (!m_sel.isNull()) viewRect = viewRect.intersected(m_sel);
+    if (viewRect.isEmpty())
+        viewRect = QRect(qBound(0, qRound(m_editor->pos().x()), width() - 1),
+                         qBound(0, qRound(m_editor->pos().y()), height() - 1), 1, 1);
+    m_textView->clearMask();
+    m_textView->setGeometry(viewRect);
+    m_textView->setSceneRect(QRectF(viewRect));
     update();
 }
 
@@ -874,7 +913,8 @@ bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
             }
             const QPointF local = m_editor->mapFromScene(m_textView->mapToScene(me->pos()));
             if (me->button() == Qt::LeftButton
-                && !m_editor->boundingRect().adjusted(6, 6, -6, -6).contains(local)) {
+                && !m_editor->boundingRect().adjusted(TextMargin, TextMargin,
+                                                      -TextMargin, -TextMargin).contains(local)) {
                 m_textMoving = true;
                 m_textMovePress = me->globalPosition().toPoint();
                 m_textMoveOrigin = m_editor->pos();
@@ -907,6 +947,7 @@ void CaptureOverlay::beginTextEdit(const QPoint &pos, int existing)
     m_editColor = existing >= 0 ? m_anns[existing].color : m_acolor;
     m_editBold = existing >= 0 ? m_anns[existing].bold : m_abold;
     m_editItalic = existing >= 0 ? m_anns[existing].italic : m_aitalic;
+    m_editUnderline = existing >= 0 ? m_anns[existing].underline : m_aunderline;
     m_atool = ATool::Text;
     m_selAnn = existing;
     m_acolor = m_editColor;
@@ -914,8 +955,14 @@ void CaptureOverlay::beginTextEdit(const QPoint &pos, int existing)
     m_afamily = m_editFamily;
     m_abold = m_editBold;
     m_aitalic = m_editItalic;
+    m_aunderline = m_editUnderline;
     syncToolButtons();
-    updateToolOptions();
+    // The strip is already live for the text tool on the normal click path;
+    // rebuilding its 200+ font items there made every re-entry feel sticky.
+    if (m_toolOptions && m_toolOptions->findChild<QComboBox *>(QStringLiteral("annotationFont")))
+        syncTextOptions();
+    else
+        updateToolOptions();
     if (!m_editor) {
         m_textView = new QGraphicsView(this);
         auto *scene = new QGraphicsScene(m_textView);
@@ -933,7 +980,7 @@ void CaptureOverlay::beginTextEdit(const QPoint &pos, int existing)
         scene->addItem(m_editor);
         m_editor->setTextInteractionFlags(Qt::TextEditorInteraction);
         m_editor->setTextWidth(-1);
-        m_editor->document()->setDocumentMargin(6);
+        m_editor->document()->setDocumentMargin(TextMargin);
         QTextOption option;
         option.setWrapMode(QTextOption::NoWrap);
         m_editor->document()->setDefaultTextOption(option);
@@ -947,7 +994,7 @@ void CaptureOverlay::beginTextEdit(const QPoint &pos, int existing)
     m_editor->setRotation(0);
     m_editor->setPlainText(existing >= 0 ? m_anns[existing].text : QString());
     m_editor->setTransformOriginPoint(m_editor->boundingRect().center());
-    m_editor->setPos(existing >= 0 ? m_anns[existing].rect.topLeft() : pos - QPoint(6, 6));
+    m_editor->setPos(existing >= 0 ? m_anns[existing].rect.topLeft() : pos - QPoint(TextMargin, TextMargin));
     if (existing >= 0) m_editor->setRotation(m_anns[existing].rot);
     QTextCursor cur = m_editor->textCursor();
     const int hit = m_editor->document()->documentLayout()->hitTest(
@@ -984,7 +1031,7 @@ void CaptureOverlay::commitTextEdit()
         const Annotation &old = m_anns[m_editAnn];
         changed = old.text != text || old.rect != edited.rect || old.font != edited.font || old.family != edited.family
             || old.color != edited.color || old.bold != edited.bold || old.italic != edited.italic
-            || old.rot != edited.rot;
+            || old.underline != edited.underline || old.rot != edited.rot;
     }
     if (changed) {
         pushUndo();
@@ -1002,13 +1049,14 @@ void CaptureOverlay::commitTextEdit()
         }
     }
     m_editAnn = -1;
+    m_selAnn = -1;                               // Committing ends the text selection; a later click re-opens it.
     m_committingText = false;
     setFocus();
     syncSizeInput();
     update();
 }
 
-void CaptureOverlay::applyEditorFont()                          // Size, weight, and slant in one place.
+void CaptureOverlay::applyEditorFont()                          // Size, weight, slant, and underline in one place.
 {
     if (!m_editor) return;
     Annotation ann;
@@ -1016,6 +1064,7 @@ void CaptureOverlay::applyEditorFont()                          // Size, weight,
     ann.family = m_editFamily;
     ann.bold = m_editBold;
     ann.italic = m_editItalic;
+    ann.underline = m_editUnderline;
     m_editor->setFont(textFont(ann));
     m_editor->setDefaultTextColor(m_editColor);
     syncTextEditorGeometry();
@@ -1808,6 +1857,19 @@ void CaptureOverlay::setTextItalic(bool on)
     }
 }
 
+void CaptureOverlay::setTextUnderline(bool on)
+{
+    m_aunderline = on;
+    if (editorActive()) { m_editUnderline = on; applyEditorFont(); }
+    else if (m_selAnn >= 0 && m_selAnn < m_anns.size()
+             && m_anns[m_selAnn].tool == ATool::Text) {
+        pushUndo();
+        m_anns[m_selAnn].underline = on;
+        fitTextAnnotation(m_anns[m_selAnn]);
+        update();
+    }
+}
+
 void CaptureOverlay::setTextFamily(const QFont &font)
 {
     m_afamily = font.family();
@@ -1821,6 +1883,32 @@ void CaptureOverlay::setTextFamily(const QFont &font)
         fitTextAnnotation(m_anns[m_selAnn]);
         update();
     }
+}
+
+void CaptureOverlay::syncTextOptions()
+{
+    if (!m_toolOptions) return;
+    const bool editing = editorActive();
+    const bool selected = !editing && m_selAnn >= 0 && m_selAnn < m_anns.size()
+                          && m_anns[m_selAnn].tool == ATool::Text;
+    const Annotation *ann = selected ? &m_anns[m_selAnn] : nullptr;
+    const auto state = [&](const char *name, bool value) {
+        if (auto *button = m_toolOptions->findChild<QToolButton *>(QString::fromLatin1(name))) {
+            const QSignalBlocker lock(button);
+            button->setChecked(value);
+        }
+    };
+    state("textBold", editing ? m_editBold : ann ? ann->bold : m_abold);
+    state("textItalic", editing ? m_editItalic : ann ? ann->italic : m_aitalic);
+    state("textUnderline", editing ? m_editUnderline : ann ? ann->underline : m_aunderline);
+    const QString family = editing ? m_editFamily : ann ? ann->family : m_afamily;
+    if (auto *font = m_toolOptions->findChild<QComboBox *>(QStringLiteral("annotationFont"))) {
+        const QSignalBlocker lock(font);
+        font->setCurrentText(family);
+        font->setToolTip(tr("字体：%1").arg(font->currentText()));
+    }
+    if (m_colorBoard) m_colorBoard->setCurrentColor(editing ? m_editColor : ann ? ann->color : m_acolor);
+    syncSizeInput();
 }
 
 void CaptureOverlay::updateToolOptions()
@@ -2036,21 +2124,32 @@ void CaptureOverlay::updateToolOptions()
         break;
     }
     case ATool::Text: {
+        const bool selected = !editorActive() && m_selAnn >= 0 && m_selAnn < m_anns.size()
+                              && m_anns[m_selAnn].tool == ATool::Text;
+        const Annotation *ann = selected ? &m_anns[m_selAnn] : nullptr;
         auto *bold = barButton(Icon::Bold, tr("粗体"));
         auto *italic = barButton(Icon::Italic, tr("斜体"));
-        for (auto *b : {bold, italic}) {
+        auto *underline = barButton(Icon::Underline, tr("下划线"));
+        for (auto *b : {bold, italic, underline}) {
             b->setFocusPolicy(Qt::NoFocus);
             b->setCheckable(true);
             b->setCursor(Qt::PointingHandCursor);
         }
-        bold->setChecked(editorActive() ? m_editBold : m_abold);
-        italic->setChecked(editorActive() ? m_editItalic : m_aitalic);
+        bold->setObjectName(QStringLiteral("textBold"));
+        italic->setObjectName(QStringLiteral("textItalic"));
+        underline->setObjectName(QStringLiteral("textUnderline"));
+        bold->setChecked(editorActive() ? m_editBold : ann ? ann->bold : m_abold);
+        italic->setChecked(editorActive() ? m_editItalic : ann ? ann->italic : m_aitalic);
+        underline->setChecked(editorActive() ? m_editUnderline : ann ? ann->underline : m_aunderline);
         bold->setToolTip(tr("粗体"));
         italic->setToolTip(tr("斜体"));
+        underline->setToolTip(tr("下划线"));
         connect(bold, &QToolButton::toggled, this, &CaptureOverlay::setTextBold);
         connect(italic, &QToolButton::toggled, this, &CaptureOverlay::setTextItalic);
+        connect(underline, &QToolButton::toggled, this, &CaptureOverlay::setTextUnderline);
         lay->addWidget(bold);
         lay->addWidget(italic);
+        lay->addWidget(underline);
         auto *font = new FlatComboBox;               // Closed state names the family, as a standard combo.
         font->setObjectName(QStringLiteral("annotationFont"));
         font->setEditable(false);
@@ -2394,8 +2493,11 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         setupTextDocument(doc, ann);
         QAbstractTextDocumentLayout::PaintContext context;
         context.palette.setColor(QPalette::Text, ann.color);
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing, false);   // Keep the underline a crisp 1px line.
         p.translate(ann.rect.topLeft());
         doc.documentLayout()->draw(&p, context);
+        p.restore();
         break;
     }
     case ATool::Number: {                        // Filled circle with a sequence digit.

@@ -241,6 +241,10 @@
         <translation>Italic</translation>
     </message>
     <message>
+        <source>下划线</source>
+        <translation>Underline</translation>
+    </message>
+    <message>
         <location line="+12"/>
         <source>字体</source>
         <translation>Font</translation>

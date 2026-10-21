@@ -197,6 +197,10 @@
         <translation>斜体</translation>
     </message>
     <message>
+        <source>下划线</source>
+        <translation>下划线</translation>
+    </message>
+    <message>
         <location line="+12"/>
         <source>字体</source>
         <translation>字体</translation>
