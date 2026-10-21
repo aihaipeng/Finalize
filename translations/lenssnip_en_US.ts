@@ -628,6 +628,18 @@
         <source>默认关闭。开启后，未保存的截图也会复制到本机历史。</source>
         <translation>Off by default. When enabled, unsaved screenshots are also copied to local history.</translation>
     </message>
+    <message>
+        <source>关于 LensSnip</source>
+        <translation>About LensSnip</translation>
+    </message>
+    <message>
+        <source>F1 或左键单击托盘图标开始截图。
+右键单击托盘图标打开此菜单。
+贴图、长截图与 OCR 可在截图工具栏中使用。</source>
+        <translation>Press F1 or left-click the tray icon to take a screenshot.
+Right-click the tray icon to open this menu.
+Pin, scrolling capture, and OCR are available from the capture toolbar.</translation>
+    </message>
 </context>
 <context>
     <name>I18n</name>

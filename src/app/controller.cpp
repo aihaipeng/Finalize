@@ -23,8 +23,38 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QInputDialog>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPointer>
 #include <qt_windows.h>
+
+namespace {
+// Tray and taskbar identity: white crop marks on the application accent.
+QIcon lensSnipIcon()
+{
+    QIcon icon;
+    for (int size : {16, 20, 24, 32, 48, 64}) {
+        QPixmap pixmap(size, size);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(Bar::accent);
+        painter.drawRoundedRect(QRectF(0, 0, size, size), size * 0.24, size * 0.24);
+        const qreal inset = size * 0.28, arm = size * 0.17;
+        QPainterPath marks;
+        marks.moveTo(inset, inset + arm); marks.lineTo(inset, inset); marks.lineTo(inset + arm, inset);
+        marks.moveTo(size - inset - arm, inset); marks.lineTo(size - inset, inset); marks.lineTo(size - inset, inset + arm);
+        marks.moveTo(size - inset, size - inset - arm); marks.lineTo(size - inset, size - inset); marks.lineTo(size - inset - arm, size - inset);
+        marks.moveTo(inset + arm, size - inset); marks.lineTo(inset, size - inset); marks.lineTo(inset, size - inset - arm);
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(Qt::white, qMax(1.0, size * 0.095), Qt::SolidLine, Qt::SquareCap));
+        painter.drawPath(marks);
+        icon.addPixmap(pixmap);
+    }
+    return icon;
+}
+}
 
 bool HotkeyFilter::nativeEventFilter(const QByteArray &, void *message, qintptr *)
 {
@@ -36,8 +66,16 @@ bool HotkeyFilter::nativeEventFilter(const QByteArray &, void *message, qintptr 
 
 Controller::Controller()
 {
-    m_tray.setIcon(QApplication::windowIcon());
+    const QIcon icon = lensSnipIcon();
+    QApplication::setWindowIcon(icon);
+    m_tray.setIcon(icon);
     m_tray.setToolTip(tr("LensSnip · F1 截图"));
+    connect(&m_tray, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
+        // Left click starts a capture; the hovered menu stays on right click.
+        if ((reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
+            && !QApplication::activeModalWidget())
+            startCapture();
+    });
     QMenu *m = &m_menu;
     m->setStyleSheet(darkMenuQss);
     m->addAction(tr("截图 (F1)"), this, &Controller::startCapture);
@@ -95,10 +133,16 @@ Controller::Controller()
     for (const QString &locale : I18n::availableLocales())
         if (locale != QLatin1String("system")) addLanguage(locale);
     m->addSeparator();
+    QAction *about = m->addAction(tr("关于 LensSnip"));
+    connect(about, &QAction::triggered, this, [this] {
+        showNotice(nullptr, tr("关于 LensSnip"),
+                   tr("F1 或左键单击托盘图标开始截图。\n右键单击托盘图标打开此菜单。\n"
+                      "贴图、长截图与 OCR 可在截图工具栏中使用。"));
+    });
     m->addAction(tr("退出"), qApp, &QApplication::quit);
     const QList<QAction *> actions=m->actions();
     actions[0]->setIcon(barIcon(Icon::Crop));actions[0]->setText(tr("截图")+QStringLiteral("\tF1"));
-    actions[1]->setIcon(barIcon(Icon::LongShot));
+    actions[1]->setIcon(barIcon(Icon::Clock));
     detection->setIcon(barIcon(Icon::View));language->setIcon(barIcon(Icon::Translate));
     actions.last()->setIcon(barIcon(Icon::Cancel));
     m_tray.setContextMenu(m);

@@ -734,6 +734,9 @@ int LongCapture::testThemeUi(const QString &previewPath)
 int Controller::testThemeUi(const QString &previewPath)
 {
     Review review{previewPath};Controller controller;
+    review.check(!controller.m_tray.icon().isNull(), "the tray exposes the application icon");
+    review.check(controller.m_tray.contextMenu() == &controller.m_menu, "the tray keeps the menu on right click");
+    review.save(controller.m_tray.icon().pixmap(64, 64),QStringLiteral("-40-tray-icon"));
     controller.m_menu.popup(QGuiApplication::primaryScreen()->availableGeometry().center());QApplication::processEvents();
     review.save(controller.m_menu.grab(),QStringLiteral("-40-tray"));
     int index=0;

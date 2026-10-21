@@ -46,7 +46,7 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
         "card-zoom-in", "card-zoom-out", "card-actual", "card-pin", "card-minimize", "card-maximize",
         "card-restore", "card-close", "card-search", "card-up", "card-down", "card-right", "card-format",
         "back", "crop", "crop_start", "crop_end", "barcode", "card-link", "round_rect",
-        "corner_square", "corner_rounded", "aspect_lock", "warning", "sliders"};
+        "corner_square", "corner_rounded", "aspect_lock", "warning", "sliders", "clock"};
     // A shared stroke grid keeps primary tools and card actions visually aligned.
     const char *path = nullptr;
     const char *markup = nullptr;
@@ -89,6 +89,7 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
     case Icon::Warning: path = "M12 3L2 21h20z M12 9v6 M12 18v.1"; break;
     case Icon::Sliders: path = "M4 7h6 M14 7h6 M12 4v6 M4 12h10 M18 12h2 M16 9v6 M4 17h4 M12 17h8 M10 14v6"; break;
     case Icon::Check: path = "M4 12l5 5L20 6"; break;
+    case Icon::Clock: path = "M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0 M12 7v5l3 2"; break;
     default: break;
     }
     QSvgRenderer svg;

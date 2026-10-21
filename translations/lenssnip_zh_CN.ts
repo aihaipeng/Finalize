@@ -572,6 +572,18 @@
         <source>无法读取屏幕像素</source>
         <translation>无法读取屏幕像素</translation>
     </message>
+    <message>
+        <source>关于 LensSnip</source>
+        <translation>关于 LensSnip</translation>
+    </message>
+    <message>
+        <source>F1 或左键单击托盘图标开始截图。
+右键单击托盘图标打开此菜单。
+贴图、长截图与 OCR 可在截图工具栏中使用。</source>
+        <translation>F1 或左键单击托盘图标开始截图。
+右键单击托盘图标打开此菜单。
+贴图、长截图与 OCR 可在截图工具栏中使用。</translation>
+    </message>
 </context>
 <context>
     <name>I18n</name>
