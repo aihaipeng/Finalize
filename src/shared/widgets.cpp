@@ -46,7 +46,7 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
         "card-zoom-in", "card-zoom-out", "card-actual", "card-pin", "card-minimize", "card-maximize",
         "card-restore", "card-close", "card-search", "card-up", "card-down", "card-right", "card-format",
         "back", "crop", "crop_start", "crop_end", "barcode", "card-link", "round_rect",
-        "corner_square", "corner_rounded", "aspect_lock", "warning", "sliders", "clock"};
+        "corner_square", "corner_rounded", "aspect_lock", "warning", "sliders", "clock", "picker"};
     // A shared stroke grid keeps primary tools and card actions visually aligned.
     const char *path = nullptr;
     const char *markup = nullptr;
@@ -90,6 +90,7 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
     case Icon::Sliders: path = "M4 7h6 M14 7h6 M12 4v6 M4 12h10 M18 12h2 M16 9v6 M4 17h4 M12 17h8 M10 14v6"; break;
     case Icon::Check: path = "M4 12l5 5L20 6"; break;
     case Icon::Clock: path = "M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0 M12 7v5l3 2"; break;
+    case Icon::Picker: path = "M14 3l7 7 M17 3l4 4 M13 6l5 5-9 9H4v-5z"; break;
     default: break;
     }
     QSvgRenderer svg;
@@ -192,10 +193,10 @@ QToolButton *colorButton(const QColor &color, const QString &tip, int size)
     chip.fill(Qt::transparent);
     QPainter painter(&chip);
     painter.setRenderHint(QPainter::Antialiasing);
-    const QRectF box(2, 2, size - 4, size - 4);
-    painter.setPen(Qt::NoPen);
+    const QRectF box(2.5, 2.5, size - 5, size - 5);
+    painter.setPen(QPen(QColor("#777980"), 1));
     painter.setBrush(color);
-    painter.drawRoundedRect(box, 4, 4);
+    painter.drawRect(box);
     painter.end();
     button->setIcon(QIcon(chip));
     button->setIconSize(chip.size());
@@ -233,22 +234,24 @@ ColorBoard::ColorBoard(const QColor &current, QWidget *parent)
     : QWidget(parent), m_current(current)
 {
     setObjectName(QStringLiteral("colorBoard"));
-    setFixedSize(90, 30);
+    setFixedSize(187, 28);
     setMouseTracking(true);
     setCursor(Qt::PointingHandCursor);
     setFocusPolicy(Qt::NoFocus);
     setAccessibleName(tr("颜色"));
+    setAccessibleDescription(tr("当前颜色，点击打开调色板"));
+    setToolTip(tr("当前颜色，点击打开调色板"));
 }
 
 QRect ColorBoard::swatchRect(int index)
 {
     if (index < 0 || index >= CommonCount) return {};
-    return QRect(30 + 15 * (index % 4), 1 + 15 * (index / 4), 12, 12);
+    return QRect(35 + 26 * index, 4, 20, 20);   // After the current chip and 1px divider; 6px gaps.
 }
 
 const QColor &ColorBoard::swatchColor(int index) const
 {
-    static constexpr int common[] = {0, 10, 3, 4, 5, 6, 7, 8};
+    static constexpr int common[] = {0, 10, 3, 5, 6, 7};   // Black, white, red, yellow, green, blue.
     return preset(common[qBound(0, index, CommonCount - 1)]);
 }
 
@@ -270,26 +273,23 @@ void ColorBoard::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
-    const QRectF big = QRectF(currentRect()).adjusted(0.5, 0.5, -0.5, -0.5);
-    // A rainbow ring marks the button that opens the full color dialog; the color sits inside a 1px gap.
+    // Same chip size as the presets; a rainbow ring marks the entry to the full palette.
+    const QRectF big = currentRect();
     QConicalGradient rainbow(big.center(), 90);
     for (int k = 0; k <= 6; ++k) rainbow.setColorAt(k / 6.0, QColor::fromHsv((360 - 60 * k) % 360, 255, 255));
     p.setPen(QPen(QBrush(rainbow), 2));
-    p.setBrush(Qt::NoBrush);
-    p.drawRoundedRect(big.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6);
-    p.setPen(Qt::NoPen);
     p.setBrush(m_current);
-    p.drawRoundedRect(big.adjusted(2.5, 2.5, -2.5, -2.5), 4, 4);
+    p.drawRect(big.adjusted(1, 1, -1, -1));
+    p.setPen(QPen(QColor("#3a3c42"), 1));
+    p.drawLine(QPointF(28.5, 6), QPointF(28.5, 21));
     for (int i = 0; i < CommonCount; ++i) {
         const QColor &c = swatchColor(i);
-        QRectF r = swatchRect(i);
-        if (i == m_hover) r.adjust(-1, -1, 1, 1);
-        // Rounded chip; a faint outline keeps dark chips visible on the dark bar, brighter when hovered.
-        p.setPen(QPen(i == m_hover ? Bar::muted : QColor(0x4b, 0x4b, 0x4b), 1));
+        const bool hovered = i == m_hover;
+        const QRectF r = swatchRect(i);
+        p.setPen(QPen(hovered ? Bar::muted : QColor("#777980"), hovered ? 2 : 1));
         p.setBrush(c);
-        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
+        p.drawRect(hovered ? r.adjusted(1, 1, -1, -1) : r.adjusted(0.5, 0.5, -0.5, -0.5));
     }
-
 }
 
 void ColorBoard::mouseMoveEvent(QMouseEvent *e)

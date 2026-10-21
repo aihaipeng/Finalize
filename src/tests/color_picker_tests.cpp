@@ -387,13 +387,13 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         }
         QApplication::processEvents();
     };
-    clickBoard(ColorBoard::swatchRect(7).center());
-    check(overlay.m_anns[0].color == QColor("#3f48cc") && overlay.m_undoStack.size() == beforeColorUndo + 1
-              && overlay.m_acolor == QColor("#3f48cc") && overlay.m_colorBoard->currentColor() == QColor("#3f48cc"),
+    clickBoard(ColorBoard::swatchRect(5).center());
+    check(overlay.m_anns[0].color == QColor("#00a2e8") && overlay.m_undoStack.size() == beforeColorUndo + 1
+              && overlay.m_acolor == QColor("#00a2e8") && overlay.m_colorBoard->currentColor() == QColor("#00a2e8"),
           "a preset click recolors the selected annotation as one undo step");
     overlay.undoAnnotation();
-    check(overlay.m_anns[0].color == originalShapeColor && overlay.m_acolor == QColor("#3f48cc")
-              && overlay.m_colorBoard && overlay.m_colorBoard->currentColor() == QColor("#3f48cc"),
+    check(overlay.m_anns[0].color == originalShapeColor && overlay.m_acolor == QColor("#00a2e8")
+              && overlay.m_colorBoard && overlay.m_colorBoard->currentColor() == QColor("#00a2e8"),
           "undo restores the object color while the current color stays");
     overlay.m_selAnn = 0;
     overlay.updateToolOptions();
@@ -404,7 +404,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
               && colorDialog->windowTitle() == QStringLiteral("选择颜色")
               && colorDialog->testOption(QColorDialog::ShowAlphaChannel)
               && colorDialog->testOption(QColorDialog::DontUseNativeDialog)
-              && colorDialog->currentColor() == QColor("#3f48cc"),
+              && colorDialog->currentColor() == QColor("#00a2e8"),
           "the current color square opens the standard color dialog with the current color");
     const QRect available = colorDialog->screen()->availableGeometry();
     {
@@ -422,7 +422,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     colorDialog->reject();
     QApplication::processEvents();
     check(!overlay.m_colorDialog && overlay.m_anns[0].color == originalShapeColor
-              && overlay.m_acolor == QColor("#3f48cc") && overlay.m_colorBoard->currentColor() == QColor("#3f48cc")
+              && overlay.m_acolor == QColor("#00a2e8") && overlay.m_colorBoard->currentColor() == QColor("#00a2e8")
               && overlay.m_undoStack.size() == beforeDialogUndo,
           "cancel restores the previous colors with no undo entry");
     clickBoard(overlay.m_colorBoard->currentRect().center());

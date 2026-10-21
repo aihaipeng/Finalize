@@ -120,9 +120,10 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
     overlay.selectTool(ATool::Pen);
     const QRect bars = overlay.m_tools->geometry().united(overlay.m_toolOptions->geometry());
     review.save(overlay.grab(bars), QStringLiteral("-capture-bars"));
-    review.check(overlay.m_colorBoard && overlay.m_colorBoard->width() == 90
-                     && ColorBoard::CommonCount == 8 && !ColorBoard::swatchRect(8).isValid(),
-                 "the strip exposes only eight common colors without an extra entry");
+    review.check(overlay.m_colorBoard && overlay.m_colorBoard->width() == 187
+                     && overlay.m_colorBoard->height() == 28
+                     && ColorBoard::CommonCount == 6 && !ColorBoard::swatchRect(6).isValid(),
+                 "the strip exposes only six square colors without an extra entry");
     overlay.showSizePopup(overlay.m_sizeButton, 1, 50);
     QApplication::processEvents();
     auto *label = overlay.m_sizePopup->findChild<QLabel *>(QStringLiteral("sizePopupLabel"));
@@ -187,17 +188,38 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
     review.save(overlay.m_colorDialog->grab(), QStringLiteral("-color-dialog"));
     auto *hex=overlay.m_colorDialog->findChild<QLineEdit *>(QStringLiteral("colorHex"));
     auto *alpha=overlay.m_colorDialog->findChild<QSpinBox *>(QStringLiteral("colorAlpha"));
+    auto *opacity=overlay.m_colorDialog->findChild<QSlider *>(QStringLiteral("colorOpacity"));
+    auto *hueField=overlay.m_colorDialog->findChild<QSpinBox *>(QStringLiteral("colorH"));
+    auto *pick=overlay.m_colorDialog->findChild<QPushButton *>(QStringLiteral("colorPickScreen"));
+    auto *custom=overlay.m_colorDialog->findChild<QToolButton *>(QStringLiteral("colorCustom0"));
     auto *colorScroll=overlay.m_colorDialog->findChild<QScrollArea *>(QStringLiteral("colorScroll"));
     const QRect alphaVisible=colorScroll&&alpha
         ? QRect(alpha->mapTo(colorScroll->viewport(),QPoint()),alpha->size()) : QRect();
-    review.check(hex&&alpha,"the color surface exposes editable hex and alpha fields");
+    review.check(hex&&alpha&&opacity&&hueField&&pick&&custom,
+                 "the color surface exposes hex, opacity, HSV, screen picking and custom colors");
     review.check(colorScroll&&colorScroll->viewport()->rect().contains(alphaVisible),
                  "color fields fit without scrolling at this DPI");
     hex->setText(QStringLiteral("#123ABC"));QMetaObject::invokeMethod(hex,"editingFinished");
     review.check(overlay.m_colorDialog->currentColor().name()==QStringLiteral("#123abc"),"hex input updates the real current color");
     const QColor beforeInvalid=overlay.m_colorDialog->currentColor();hex->setText(QStringLiteral("invalid"));QMetaObject::invokeMethod(hex,"editingFinished");
     review.check(overlay.m_colorDialog->currentColor()==beforeInvalid,"invalid hex cannot overwrite the selected color");
-    alpha->setValue(80);review.check(overlay.m_colorDialog->currentColor().alpha()==80,"alpha input is retained in the QColorDialog contract");
+    alpha->setValue(80);review.check(overlay.m_colorDialog->currentColor().alpha()==80&&opacity->value()==80,"alpha input is retained in the QColorDialog contract and moves the slider");
+    bool pickerOpened=false,pickerEscaped=false;
+    QTimer fallback;fallback.setSingleShot(true);fallback.setInterval(3000);
+    QObject::connect(&fallback,&QTimer::timeout,[]{if(QWidget *modal=QApplication::activeModalWidget())modal->close();});
+    fallback.start();
+    QTimer::singleShot(150,[&]{
+        QWidget *modal=QApplication::activeModalWidget();
+        if(!modal||modal==overlay.m_colorDialog)return;
+        pickerOpened=true;
+        QKeyEvent esc(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);
+        QApplication::sendEvent(modal,&esc);
+        pickerEscaped=true;
+    });
+    pick->click();
+    fallback.stop();
+    review.check(pickerOpened&&pickerEscaped&&overlay.m_colorDialog&&overlay.m_colorDialog->isVisible(),
+                 "the screen sampler opens over the frozen capture and Esc returns to the palette");
     overlay.m_colorDialog->reject();
 
     review.check(overlay.m_tools && overlay.m_tools->isVisible()

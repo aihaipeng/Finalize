@@ -27,7 +27,7 @@ enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, 
                   CardFit, CardTranslate, CardReload, CardCopy, CardZoomIn,
                   CardZoomOut, CardActual, CardPin, CardMinimize, CardMaximize, CardRestore, CardClose, CardSearch,
                   CardUp, CardDown, CardRight, CardFormat, Back, Crop, CropStart, CropEnd, Barcode, CardLink,
-                  RoundRect, CornerSquare, CornerRounded, AspectLock, Warning, Sliders, Clock };
+                  RoundRect, CornerSquare, CornerRounded, AspectLock, Warning, Sliders, Clock, Picker };
 
 // dark: glyphs for a dark surface (light ink) instead of the light bars.
 QIcon makeIcon(Icon icon, int size = 16, bool dark = false);
@@ -73,10 +73,10 @@ public:
     explicit ColorBoard(const QColor &current, QWidget *parent = nullptr);
     void setCurrentColor(const QColor &color);
     QColor currentColor() const { return m_current; }
-    QRect currentRect() const { return QRect(1, 3, 24, 24); }
+    QRect currentRect() const { return QRect(2, 4, 20, 20); }
     static QRect swatchRect(int index);
     static const QColor &preset(int index);
-    static constexpr int PresetCount = 20, CommonCount = 8;
+    static constexpr int PresetCount = 20, CommonCount = 6;
     static int testRendering();
 signals:
     void presetPicked(const QColor &color);

@@ -1,4 +1,5 @@
 #include "shared/dialog_chrome.h"
+#include "shared/settings.h"
 #include "shared/widgets.h"
 #include <QApplication>
 #include <QDialog>
@@ -22,7 +23,9 @@
 #include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QVector>
 #include <functional>
+#include <memory>
 
 namespace {
 class DialogTitle : public QWidget
@@ -270,10 +273,27 @@ void showAlert(QWidget *parent,const QString &heading,const QString &detail)
     showMessageCard(parent,heading,detail,true);
 }
 
+namespace {
+QIcon colorSwatchIcon(const QColor &color)
+{
+    QPixmap pixmap(22,22);pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    if(color.isValid()){
+        painter.setPen(QPen(QColor("#777980"),1));painter.setBrush(color);
+        painter.drawRect(QRectF(0.5,0.5,21,21));
+    }else{
+        painter.setPen(QPen(QColor("#4b4b4b"),1,Qt::DashLine));painter.setBrush(Qt::NoBrush);
+        painter.drawRect(QRectF(1.5,1.5,19,19));
+    }
+    return QIcon(pixmap);
+}
+}
+
 ColorDialog::ColorDialog(const QColor &initial,QWidget *parent):QColorDialog(initial,parent)
 {
+    const auto text=[](const char *source){return QCoreApplication::translate("CaptureOverlay",source);};
     setOption(DontUseNativeDialog);setOption(ShowAlphaChannel);setOption(NoButtons);
-    setWindowTitle(QCoreApplication::translate("CaptureOverlay","选择颜色"));
+    setWindowTitle(text("选择颜色"));
     auto *native=new QWidget(this);native->setObjectName(QStringLiteral("nativeColorControls"));
     if(layout())native->setLayout(layout());
     native->hide();
@@ -283,40 +303,151 @@ ColorDialog::ColorDialog(const QColor &initial,QWidget *parent):QColorDialog(ini
     auto *content=new QWidget;
     auto *root=new QVBoxLayout(content);root->setContentsMargins(0,0,0,0);root->setSpacing(18);
     auto *fields=new QHBoxLayout;fields->setSpacing(28);
-    auto *left=new QVBoxLayout;left->setSpacing(16);
-    auto *plane=new ColorPlane(this);plane->setObjectName(QStringLiteral("colorPlane"));plane->setFixedHeight(380);left->addWidget(plane);
+    auto section=[this](const QString &value){
+        auto *label=new QLabel(value,this);label->setStyleSheet(QStringLiteral("color:#d0d6e0;font-size:13px;background:transparent;"));
+        return label;
+    };
+    auto tiny=[](const QString &value){
+        auto *label=new QLabel(value);label->setAlignment(Qt::AlignHCenter);
+        label->setStyleSheet(QStringLiteral("color:#9c9da1;font-size:12px;background:transparent;"));
+        return label;
+    };
+    auto *left=new QVBoxLayout;left->setSpacing(14);
+    auto *plane=new ColorPlane(this);plane->setObjectName(QStringLiteral("colorPlane"));plane->setFixedHeight(340);left->addWidget(plane);
     auto *hue=new QSlider(Qt::Horizontal,this);hue->setObjectName(QStringLiteral("colorHue"));hue->setRange(0,359);hue->setFixedHeight(20);
     hue->setStyleSheet(QStringLiteral("QSlider::groove:horizontal{height:12px;border-radius:6px;background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #ff0000,stop:.17 #ffff00,stop:.33 #00ff00,stop:.5 #00ffff,stop:.67 #0000ff,stop:.83 #ff00ff,stop:1 #ff0000);}QSlider::handle:horizontal{width:10px;margin:-2px 0;background:white;border:1px solid #9c9da1;border-radius:4px;}"));left->addWidget(hue);
-    fields->addLayout(left,3);
-    auto *form=new QVBoxLayout;form->setSpacing(8);
-    auto *hex=new QLineEdit(this);hex->setObjectName(QStringLiteral("colorHex"));
-    auto *hexLabel=new QLabel(QStringLiteral("HEX"),this);form->addWidget(hexLabel);form->addWidget(hex);
+    auto *pick=new QPushButton(text("屏幕取色"),this);
+    pick->setObjectName(QStringLiteral("colorPickScreen"));
+    pick->setIcon(makeIcon(Icon::Picker,16,true));pick->setIconSize(QSize(16,16));
+    pick->setFixedHeight(32);pick->setCursor(Qt::PointingHandCursor);
+    pick->setAccessibleName(text("屏幕取色"));pick->setToolTip(text("从冻结画面取色，Esc 取消"));
+    connect(pick,&QPushButton::clicked,this,&ColorDialog::screenPickRequested);
+    left->addWidget(pick,0,Qt::AlignLeft);left->addStretch();
+    fields->addLayout(left,1);
+
+    auto *form=new QVBoxLayout;form->setSpacing(10);
+    auto *hex=new QLineEdit(this);hex->setObjectName(QStringLiteral("colorHex"));hex->setFixedHeight(34);hex->setMaxLength(9);
+    form->addWidget(section(QStringLiteral("HEX")));form->addWidget(hex);
     QList<QSpinBox *> channels;
-    for(const QString &name:{QStringLiteral("R"),QStringLiteral("G"),QStringLiteral("B"),QStringLiteral("Alpha")}){
-        form->addWidget(new QLabel(name,this));auto *spin=new QSpinBox(this);spin->setObjectName(QStringLiteral("color")+name);
-        spin->setRange(0,255);spin->setButtonSymbols(QAbstractSpinBox::NoButtons);spin->setFixedHeight(36);channels.append(spin);form->addWidget(spin);
+    const char *channelNames[]={"R","G","B"};
+    const char *channelObjects[]={"R","G","B"};
+    const char *channelAccessible[]={"红色","绿色","蓝色"};
+    auto *rgbGrid=new QGridLayout;rgbGrid->setHorizontalSpacing(6);rgbGrid->setVerticalSpacing(3);
+    for(int i=0;i<3;++i){
+        rgbGrid->addWidget(tiny(QString::fromLatin1(channelNames[i])),0,i);
+        auto *spin=new QSpinBox(this);spin->setObjectName(QStringLiteral("color")+QString::fromLatin1(channelObjects[i]));
+        spin->setRange(0,255);spin->setButtonSymbols(QAbstractSpinBox::NoButtons);spin->setKeyboardTracking(false);
+        spin->setAlignment(Qt::AlignCenter);spin->setFixedHeight(32);
+        spin->setAccessibleName(text(channelAccessible[i]));channels.append(spin);rgbGrid->addWidget(spin,1,i);
     }
-    hex->setFixedHeight(36);auto *fieldWidget=new QWidget(this);fieldWidget->setLayout(form);fieldWidget->setFixedWidth(200);fields->addWidget(fieldWidget);root->addLayout(fields);root->addStretch();
+    form->addWidget(section(QStringLiteral("RGB")));form->addLayout(rgbGrid);
+    QList<QSpinBox *> hsv;
+    const char *hsvNames[]={"H","S","V"};
+    const char *hsvAccessible[]={"色相","饱和度","明度"};
+    auto *hsvGrid=new QGridLayout;hsvGrid->setHorizontalSpacing(6);hsvGrid->setVerticalSpacing(3);
+    for(int i=0;i<3;++i){
+        hsvGrid->addWidget(tiny(QString::fromLatin1(hsvNames[i])),0,i);
+        auto *spin=new QSpinBox(this);spin->setObjectName(QStringLiteral("color")+QString::fromLatin1(hsvNames[i]));
+        spin->setRange(0,i==0?359:100);spin->setButtonSymbols(QAbstractSpinBox::NoButtons);spin->setKeyboardTracking(false);
+        spin->setAlignment(Qt::AlignCenter);spin->setFixedHeight(32);
+        spin->setAccessibleName(text(hsvAccessible[i]));hsv.append(spin);hsvGrid->addWidget(spin,1,i);
+    }
+    form->addWidget(section(QStringLiteral("HSV")));form->addLayout(hsvGrid);
+    auto *alphaSpin=new QSpinBox(this);alphaSpin->setObjectName(QStringLiteral("colorAlpha"));
+    alphaSpin->setRange(0,255);alphaSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);alphaSpin->setKeyboardTracking(false);
+    alphaSpin->setAlignment(Qt::AlignCenter);alphaSpin->setFixedSize(56,32);
+    alphaSpin->setAccessibleName(text("不透明度"));alphaSpin->setToolTip(text("不透明度：0 为全透明，255 为不透明"));
+    channels.append(alphaSpin);
+    auto *opacity=new QSlider(Qt::Horizontal,this);opacity->setObjectName(QStringLiteral("colorOpacity"));
+    opacity->setRange(0,255);opacity->setFixedHeight(20);opacity->setStyleSheet(darkSliderQss);
+    opacity->setAccessibleName(text("不透明度"));opacity->setToolTip(text("不透明度：0 为全透明，255 为不透明"));
+    form->addWidget(section(text("不透明度")));
+    auto *alphaRow=new QHBoxLayout;alphaRow->setSpacing(8);
+    alphaRow->addWidget(opacity,1);alphaRow->addWidget(alphaSpin);form->addLayout(alphaRow);
+
+    auto *customHead=new QHBoxLayout;customHead->setSpacing(8);
+    customHead->addWidget(section(text("自定义颜色")));customHead->addStretch();
+    auto *add=new QPushButton(text("保存当前颜色"),this);
+    add->setObjectName(QStringLiteral("colorAddCustom"));add->setFixedHeight(28);add->setCursor(Qt::PointingHandCursor);
+    add->setAccessibleName(text("保存当前颜色"));add->setToolTip(text("将当前颜色保存到自定义颜色"));
+    customHead->addWidget(add);form->addLayout(customHead);
+    auto *customRow=new QHBoxLayout;customRow->setSpacing(2);
+    QVector<QToolButton *> customButtons;
+    for(int i=0;i<8;++i){
+        auto *button=new QToolButton(this);button->setObjectName(QStringLiteral("colorCustom%1").arg(i));
+        button->setFixedSize(28,28);button->setIconSize(QSize(22,22));button->setAutoRaise(true);
+        button->setCursor(Qt::PointingHandCursor);button->setFocusPolicy(Qt::StrongFocus);
+        button->setProperty("colorSwatch",true);customRow->addWidget(button);customButtons.append(button);
+    }
+    customRow->addStretch();form->addLayout(customRow);form->addStretch();
+    auto *fieldWidget=new QWidget(this);fieldWidget->setLayout(form);fieldWidget->setFixedWidth(238);fields->addWidget(fieldWidget);
+    root->addLayout(fields);root->addStretch();
+
+    auto colors=std::make_shared<QVector<QColor>>();
+    for(const QString &value:LensSnipSettings().value(QStringLiteral("Capture/customColors")).toStringList()){
+        const QColor color(value);
+        if(color.isValid())colors->append(color);
+    }
+    const auto refreshCustom=[colors,customButtons]{
+        for(int i=0;i<customButtons.size();++i){
+            const bool has=i<colors->size();
+            customButtons[i]->setIcon(colorSwatchIcon(has?colors->at(i):QColor()));
+            customButtons[i]->setToolTip(has?colors->at(i).name(QColor::HexArgb).toUpper():QString());
+            customButtons[i]->setAccessibleName(has
+                ?QCoreApplication::translate("CaptureOverlay","自定义颜色 %1").arg(colors->at(i).name(QColor::HexArgb).toUpper())
+                :QString());
+            customButtons[i]->setEnabled(has);
+        }
+    };
+    refreshCustom();
+    for(int i=0;i<customButtons.size();++i)
+        connect(customButtons[i],&QToolButton::clicked,this,[this,colors,i]{if(i<colors->size())setCurrentColor(colors->at(i));});
+    connect(add,&QPushButton::clicked,this,[this,colors,refreshCustom]{
+        const QColor color=currentColor();
+        colors->removeAll(color);colors->prepend(color);
+        while(colors->size()>8)colors->removeLast();
+        QStringList values;
+        for(const QColor &entry:*colors)values<<entry.name(QColor::HexArgb);
+        LensSnipSettings().setValue(QStringLiteral("Capture/customColors"),values);
+        refreshCustom();
+    });
+
     auto *buttons=new QHBoxLayout;buttons->setSpacing(12);buttons->addStretch();
     auto *cancel=new QPushButton(QCoreApplication::translate("QPlatformTheme","Cancel"),this);
     auto *ok=new QPushButton(QCoreApplication::translate("QPlatformTheme","OK"),this);
     cancel->setFixedSize(88,32);ok->setFixedSize(88,32);buttons->addWidget(cancel);buttons->addWidget(ok);
     connect(ok,&QPushButton::clicked,this,&QDialog::accept);connect(cancel,&QPushButton::clicked,this,&QDialog::reject);
     ok->setDefault(true);
-    const auto refresh=[this,plane,hue,hex,channels](const QColor &color){
+    const auto refresh=[this,plane,hue,hex,channels,hsv,opacity](const QColor &color){
         plane->color=color;plane->update();
         const QSignalBlocker h(hue),x(hex);hue->setValue(qMax(0,color.hsvHue()));hex->setText(color.name(QColor::HexRgb).toUpper());
         const int values[]={color.red(),color.green(),color.blue(),color.alpha()};
         for(int i=0;i<channels.size();++i){const QSignalBlocker block(channels[i]);channels[i]->setValue(values[i]);}
+        const QSignalBlocker opacityBlock(opacity);opacity->setValue(color.alpha());
+        const int hsvValues[]={qMax(0,color.hsvHue()),qRound(color.hsvSaturationF()*100),qRound(color.valueF()*100)};
+        for(int i=0;i<hsv.size();++i){const QSignalBlocker block(hsv[i]);hsv[i]->setValue(hsvValues[i]);}
     };
     connect(this,&QColorDialog::currentColorChanged,this,refresh);
     connect(hex,&QLineEdit::editingFinished,this,[this,hex]{QColor next(hex->text());if(next.isValid()){next.setAlpha(currentColor().alpha());setCurrentColor(next);}});
     for(auto *spin:channels)connect(spin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this,channels]{setCurrentColor(QColor(channels[0]->value(),channels[1]->value(),channels[2]->value(),channels[3]->value()));});
+    connect(opacity,&QSlider::valueChanged,alphaSpin,&QSpinBox::setValue);
+    connect(alphaSpin,QOverload<int>::of(&QSpinBox::valueChanged),opacity,&QSlider::setValue);
+    for(auto *spin:hsv)connect(spin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this,hsv]{setCurrentColor(QColor::fromHsv(hsv[0]->value(),qRound(hsv[1]->value()*2.55),qRound(hsv[2]->value()*2.55),currentColor().alpha()));});
     connect(hue,&QSlider::valueChanged,this,[this](int value){const QColor c=currentColor();setCurrentColor(QColor::fromHsv(value,c.hsvSaturation(),c.value(),c.alpha()));});
     plane->picked=[this,hue](qreal saturation,qreal value){setCurrentColor(QColor::fromHsvF(hue->value()/360.0,saturation,value,currentColor().alphaF()));};
-    setStyleSheet(QStringLiteral("QLabel{color:#9c9da1;font-size:14px;background:transparent;border:none;}"
-                                 "QLineEdit,QSpinBox{background:#111216;color:#f4f5f8;border:1px solid #777980;border-radius:6px;padding:0 12px;font-size:14px;}"
-                                 "QLineEdit:focus,QSpinBox:focus{border-color:#828fff;}"
+    setStyleSheet(QStringLiteral("QLabel{background:transparent;border:none;}"
+                                 "QLineEdit{background:#111216;color:#f4f5f8;border:1px solid #777980;border-radius:8px;padding:0 10px;font-size:14px;}"
+                                 "QSpinBox{background:#111216;color:#f4f5f8;border:1px solid #777980;border-radius:8px;padding:0;font-size:14px;}"
+                                 "QSpinBox QLineEdit{background:transparent;border:none;padding:0 2px;}"
+                                 "QLineEdit:focus,QSpinBox:focus{border:2px solid #828fff;padding:0 9px;}"
+                                 "QSpinBox:focus{padding:0;}"
+                                 "QSpinBox QLineEdit:focus{border:none;padding:0 2px;}"
+                                 "QPushButton#colorPickScreen,QPushButton#colorAddCustom{background:transparent;color:#f4f5f8;border:1px solid #777980;border-radius:8px;padding:0 12px;font-size:13px;}"
+                                 "QPushButton#colorPickScreen:hover,QPushButton#colorAddCustom:hover{background:#222326;}"
+                                 "QPushButton#colorPickScreen:focus,QPushButton#colorAddCustom:focus{border:2px solid #828fff;padding:0 11px;}"
+                                 "QToolButton[colorSwatch=\"true\"]{background:transparent;border:none;border-radius:6px;}"
+                                 "QToolButton[colorSwatch=\"true\"]:hover{background:#222326;}"
+                                 "QToolButton[colorSwatch=\"true\"]:focus{border:2px solid #828fff;}"
                                  "QScrollArea{background:transparent;border:none;}"
                                  "QScrollArea>QWidget>QWidget{background:transparent;}"));
     scroll->setWidget(content);
@@ -329,10 +460,11 @@ ColorDialog::ColorDialog(const QColor &initial,QWidget *parent):QColorDialog(ini
     const QSize initialSize(qMin(820,avail.width()),qMin(600,avail.height()));
     const qreal scale=target?target->devicePixelRatio():1.0;
     const bool compact=initialSize.height()<560||scale>=1.5;
-    plane->setFixedHeight(compact?qBound(160,initialSize.height()-310,300):380);
+    plane->setFixedHeight(compact?qBound(160,initialSize.height()-340,300):340);
     if(compact){
-        form->setSpacing(2);hex->setFixedHeight(26);
-        for(QSpinBox *spin:channels)spin->setFixedHeight(26);
+        form->setSpacing(6);hex->setFixedHeight(28);
+        for(QSpinBox *spin:channels)spin->setFixedHeight(28);
+        for(QSpinBox *spin:hsv)spin->setFixedHeight(28);
     }
     setMinimumSize(qMin(640,initialSize.width()),qMin(420,initialSize.height()));
     resize(initialSize);

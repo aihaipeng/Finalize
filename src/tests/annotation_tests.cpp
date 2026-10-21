@@ -630,7 +630,7 @@ int CaptureOverlay::testTextAnnotation()
     check(overlay.m_colorBoard && overlay.m_colorBoard->focusPolicy() == Qt::NoFocus,
           "the text color board does not steal keyboard focus");
     {
-        const QPoint at = ColorBoard::swatchRect(6).center();
+        const QPoint at = ColorBoard::swatchRect(5).center();
         for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
             QMouseEvent event(type, QPointF(at), QPointF(overlay.m_colorBoard->mapToGlobal(at)), Qt::LeftButton,
                               type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);

@@ -14,6 +14,9 @@ void showAlert(QWidget *parent, const QString &heading, const QString &detail);
 
 class ColorDialog : public QColorDialog
 {
+    Q_OBJECT
 public:
     explicit ColorDialog(const QColor &initial, QWidget *parent = nullptr);
+signals:
+    void screenPickRequested();
 };

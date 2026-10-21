@@ -1676,6 +1676,19 @@ void CaptureOverlay::showColorPalette()
     dialog->setOption(QColorDialog::DontUseNativeDialog);
     dialog->setWindowTitle(tr("选择颜色"));
     connect(dialog, &QColorDialog::currentColorChanged, this, [this](const QColor &c) { pickToolColor(c, false); });
+    connect(dialog, &ColorDialog::screenPickRequested, this, [this, dialog] {
+        QPointer<ColorDialog> guard(dialog);
+        dialog->hide();
+        m_inspector->hide();
+        ScreenColorPicker picker(m_frames, this);
+        const bool accepted = picker.exec() == QDialog::Accepted && picker.pickedColor().isValid();
+        if (guard) {
+            if (accepted) guard->setCurrentColor(picker.pickedColor());
+            guard->show();
+            guard->raise();
+            guard->activateWindow();
+        }
+    });
     connect(dialog, &QDialog::finished, this, [this, dialog, oldColor, before](int result) {
         m_colorDialog.clear();                   // Deletion is deferred; allow reopening right away.
         const QColor chosen = dialog->currentColor();

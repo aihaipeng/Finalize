@@ -42,6 +42,62 @@
         <translation>选择颜色</translation>
     </message>
     <message>
+        <source>屏幕取色</source>
+        <translation>屏幕取色</translation>
+    </message>
+    <message>
+        <source>从冻结画面取色，Esc 取消</source>
+        <translation>从冻结画面取色，Esc 取消</translation>
+    </message>
+    <message>
+        <source>自定义颜色</source>
+        <translation>自定义颜色</translation>
+    </message>
+    <message>
+        <source>保存当前颜色</source>
+        <translation>保存当前颜色</translation>
+    </message>
+    <message>
+        <source>将当前颜色保存到自定义颜色</source>
+        <translation>将当前颜色保存到自定义颜色</translation>
+    </message>
+    <message>
+        <source>自定义颜色 %1</source>
+        <translation>自定义颜色 %1</translation>
+    </message>
+    <message>
+        <source>红色</source>
+        <translation>红色</translation>
+    </message>
+    <message>
+        <source>绿色</source>
+        <translation>绿色</translation>
+    </message>
+    <message>
+        <source>蓝色</source>
+        <translation>蓝色</translation>
+    </message>
+    <message>
+        <source>不透明度</source>
+        <translation>不透明度</translation>
+    </message>
+    <message>
+        <source>不透明度：0 为全透明，255 为不透明</source>
+        <translation>不透明度：0 为全透明，255 为不透明</translation>
+    </message>
+    <message>
+        <source>色相</source>
+        <translation>色相</translation>
+    </message>
+    <message>
+        <source>饱和度</source>
+        <translation>饱和度</translation>
+    </message>
+    <message>
+        <source>明度</source>
+        <translation>明度</translation>
+    </message>
+    <message>
         <location line="+186"/>
         <location filename="../src/capture/capture_overlay.cpp" line="+1756"/>
         <source>大小</source>
@@ -506,6 +562,17 @@
         <location filename="../src/shared/widgets.cpp" line="+177"/>
         <source>颜色</source>
         <translation>颜色</translation>
+    </message>
+    <message>
+        <source>当前颜色，点击打开调色板</source>
+        <translation>当前颜色，点击打开调色板</translation>
+    </message>
+</context>
+<context>
+    <name>ScreenColorPicker</name>
+    <message>
+        <source>点击取色 · Esc 取消</source>
+        <translation>点击取色 · Esc 取消</translation>
     </message>
 </context>
 <context>
