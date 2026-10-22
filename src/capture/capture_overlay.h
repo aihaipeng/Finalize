@@ -41,7 +41,6 @@ class OcrDialog;
 #include <QCheckBox>
 #include <QCursor>
 #include <QTimer>
-#include <QElapsedTimer>
 #include <QPointer>
 #include <QCloseEvent>
 #include <QPolygonF>
@@ -374,11 +373,9 @@ private:
     bool m_pinAfterDetection = false;
     bool m_dragStarted = false;
     QRect m_hover;                                  // Detected target under the cursor; drives selection and hints.
-    QRect m_hoverPaint;                             // Animated hole rect (88 ms OutBack), mirroring the target.
+    QRect m_hoverPaint;                             // Animated hole rect (88 ms OutCirc), retargeted per frame.
     QVariantAnimation *m_hoverAnimation = nullptr;
-    QTimer m_hoverPaintTimer;                       // Coalesces hover updates to the reference 250 ms cadence.
-    QElapsedTimer m_hoverClock;
-    qint64 m_lastHoverPaint = -1000;
+    QTimer m_hoverPaintTimer;                       // Coalesces retargets to one animation start per frame.
     QRect m_pressWindow;                            // Window under the press point; a click without drag selects it.
     PixelInspector *m_inspector = nullptr;
     QPoint m_pressPos;

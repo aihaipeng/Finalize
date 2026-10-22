@@ -541,12 +541,9 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         connect(&m_detectionWatchdog, &QTimer::timeout, this, &CaptureOverlay::recoverDetector);
         m_refineTimer.setSingleShot(true);
         connect(&m_refineTimer, &QTimer::timeout, this, &CaptureOverlay::refineDetection);
-        m_hoverClock.start();
         m_hoverPaintTimer.setSingleShot(true);
-        connect(&m_hoverPaintTimer, &QTimer::timeout, this, [this] {
-            m_lastHoverPaint = m_hoverClock.elapsed();
-            applyHoverPaint(true);
-        });
+        m_hoverPaintTimer.setInterval(16);   // One display frame; avoid restarting the animation before it can tick.
+        connect(&m_hoverPaintTimer, &QTimer::timeout, this, [this] { applyHoverPaint(true); });
         startDetector();
         requestDetection(mapFromGlobal(QCursor::pos()));
     }
@@ -1010,7 +1007,6 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
             // Hover re-detection only runs before a selection is committed: afterwards
             // the highlight would chase the cursor and visually unlock the selection.
         } else requestDetection(pos);
-        updateTip();                            // Visual state changes only with the hover rect.
         return;
     }
     if (m_drag == H_New && !m_dragStarted
@@ -1534,12 +1530,21 @@ void CaptureOverlay::updateSelectionRegion(const QRect &oldSel, const QRect &new
 void CaptureOverlay::applyHoverPaint(bool animate)
 {
     const QRect target = m_hover;
-    if (m_hoverPaint == target) return;
+    const bool running = m_hoverAnimation
+        && m_hoverAnimation->state() == QAbstractAnimation::Running;
+    if (m_hoverPaint == target) {
+        // The target can return to the pixel currently shown while an older
+        // animation is still heading somewhere else; stop it instead of letting
+        // it drift away from the real target.
+        if (running && m_hoverAnimation->endValue().toRectF().toRect() != target)
+            m_hoverAnimation->stop();
+        return;
+    }
     const QRect old = m_hoverPaint;
     if (!m_hoverAnimation) {
         m_hoverAnimation = new QVariantAnimation(this);
         m_hoverAnimation->setDuration(88);                     // Reference mask transition.
-        m_hoverAnimation->setEasingCurve(QEasingCurve::OutBack);
+        m_hoverAnimation->setEasingCurve(QEasingCurve::OutCirc);
         connect(m_hoverAnimation, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
             const QRect next = value.toRectF().toRect();
             const QRect previous = m_hoverPaint;
@@ -1552,7 +1557,7 @@ void CaptureOverlay::applyHoverPaint(bool animate)
             updateHoverRegion(previous, m_hoverPaint);
         });
     }
-    m_hoverAnimation->stop();
+    if (running) m_hoverAnimation->stop();
     // The first target appears immediately; only changes between real elements glide.
     if (!animate || target.isNull() || old.isNull()) {
         m_hoverPaint = target;
@@ -1561,6 +1566,8 @@ void CaptureOverlay::applyHoverPaint(bool animate)
         updateTip();
         return;
     }
+    // Every accepted result retargets from the current visible rect, so a
+    // burst of detector replies never jumps the hole back to an older target.
     m_hoverAnimation->setStartValue(QRectF(old));
     m_hoverAnimation->setEndValue(QRectF(target));
     m_hoverAnimation->start();
@@ -1570,27 +1577,19 @@ void CaptureOverlay::applyHoverPaint(bool animate)
 void CaptureOverlay::queueHoverPaint()
 {
     if (m_hoverPaint.isNull()) {
-        m_lastHoverPaint = m_hoverClock.elapsed();
         applyHoverPaint(false);
         return;
     }
-    // Hover detection is coalesced to the reference 250 ms cadence; the 88 ms
-    // OutBack animation then covers the step instead of restarting per result.
-    const qint64 wait = 250 - (m_hoverClock.elapsed() - m_lastHoverPaint);
-    if (wait <= 0) {
-        m_hoverPaintTimer.stop();
-        m_lastHoverPaint = m_hoverClock.elapsed();
-        applyHoverPaint(true);
-    } else if (!m_hoverPaintTimer.isActive()) {
-        m_hoverPaintTimer.start(int(wait));
-    }
+    // A fast detector can answer several times per display frame. Restarting
+    // the 88 ms tween for every reply resets it before it ever ticks, so keep
+    // the newest target and begin at most one transition per frame.
+    if (!m_hoverPaintTimer.isActive()) m_hoverPaintTimer.start();
 }
 
 void CaptureOverlay::setHoverRect(const QRect &rect, bool animate)
 {
     m_hoverPaintTimer.stop();
-    m_lastHoverPaint = m_hoverClock.isValid() ? m_hoverClock.elapsed() : 0;
-    if (m_hover != rect) m_hover = rect;
+    m_hover = rect;
     applyHoverPaint(animate);
 }
 

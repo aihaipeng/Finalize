@@ -245,9 +245,19 @@ int CaptureOverlay::testWindowDetection()
     overlay.m_queryId = 9200;
     overlay.m_hover = expectedButton;
     overlay.m_hoverPaint = expectedButton;
-    overlay.m_lastHoverPaint = -1000;
+    if (overlay.m_hoverAnimation) overlay.m_hoverAnimation->stop();
+    overlay.m_hoverPaintTimer.stop();
     overlay.handleDetectedRect(editRect, 9200);
     check(overlay.m_hover == expectedEdit, "a new hover target commits immediately");
+    check(overlay.m_hoverPaint == expectedButton, "the new target glides from the visible rect");
+    QElapsedTimer startMotion;
+    startMotion.start();
+    while (overlay.m_hoverPaint == expectedButton && startMotion.elapsed() < 80) {
+        QEventLoop loop;
+        QTimer::singleShot(5, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    check(overlay.m_hoverPaint != expectedButton, "the first transition frame starts without a cadence wait");
     QElapsedTimer transition;
     transition.start();
     while (overlay.m_hoverPaint != expectedEdit && transition.elapsed() < 300) {
@@ -255,25 +265,7 @@ int CaptureOverlay::testWindowDetection()
         QTimer::singleShot(10, &loop, &QEventLoop::quit);
         loop.exec();
     }
-    check(overlay.m_hoverPaint == expectedEdit, "the mask hole glides to the new target");
-    // Reference hover updates are coalesced: a burst of results may not restart
-    // the transition on every accessibility reply.
-    overlay.m_hover = expectedButton;
-    overlay.m_hoverPaint = expectedButton;
-    if (overlay.m_hoverAnimation) overlay.m_hoverAnimation->stop();
-    overlay.m_lastHoverPaint = overlay.m_hoverClock.elapsed();
-    overlay.m_detectionPoint = expectedEdit.center();
-    overlay.m_queryId = 9201;
-    overlay.handleDetectedRect(editRect, 9201);
-    check(overlay.m_hoverPaint == expectedButton, "hover paint waits for the cadence window");
-    QElapsedTimer cadence;
-    cadence.start();
-    while (overlay.m_hoverPaint != expectedEdit && cadence.elapsed() < 600) {
-        QEventLoop loop;
-        QTimer::singleShot(10, &loop, &QEventLoop::quit);
-        loop.exec();
-    }
-    check(overlay.m_hoverPaint == expectedEdit, "the coalesced hover paints the latest target");
+    check(overlay.m_hoverPaint == expectedEdit, "the mask hole settles on the new target");
     // A late whole-window result must not replace the element the cursor is
     // still inside; only leaving it (or wheel expansion) may widen the target.
     const QRect expectedWindow = overlay.localScreenRect(logicalFromNative(frames, windowFrame(fixture.window)));
