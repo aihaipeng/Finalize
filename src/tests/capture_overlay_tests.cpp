@@ -304,6 +304,38 @@ int CaptureOverlay::testSelection()
         stage(QStringLiteral("left"), QStringLiteral("left"));
         stage(QStringLiteral("right"), QStringLiteral("right"));
     }
+    {   // The frame and everything outside it resize the region even with a tool armed.
+        overlay.m_anns.clear();
+        overlay.m_undoStack.clear();
+        overlay.m_redoStack.clear();
+        overlay.m_sel = base;
+        overlay.m_selAnn = -1;
+        overlay.selectTool(ATool::Rect);
+        const QPoint outside = base.bottomRight() + QPoint(40, 40);
+        mouse(QEvent::MouseButtonPress, outside, Qt::LeftButton, Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, outside, Qt::LeftButton, Qt::NoButton);
+        check(overlay.m_sel == QRect(base.topLeft(), outside) && overlay.m_anns.isEmpty()
+                  && overlay.m_atool == ATool::Rect,
+              "an armed tool does not draw outside the frame: the press resizes the region");
+        overlay.m_sel = base;
+        const QPoint edge(base.right(), base.center().y() + 30);
+        mouse(QEvent::MouseButtonPress, edge, Qt::LeftButton, Qt::LeftButton);
+        mouse(QEvent::MouseMove, edge + QPoint(20, 0), Qt::NoButton, Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, edge + QPoint(20, 0), Qt::LeftButton, Qt::NoButton);
+        check(overlay.m_sel == QRect(base.topLeft(), QPoint(base.right() + 20, base.bottom()))
+                  && overlay.m_anns.isEmpty() && overlay.m_atool == ATool::Rect,
+              "the frame itself resizes the region instead of starting a mark");
+        overlay.m_sel = base;
+        const QPoint inner(base.right() - 2, base.center().y() + 30);
+        mouse(QEvent::MouseButtonPress, inner, Qt::LeftButton, Qt::LeftButton);
+        mouse(QEvent::MouseMove, inner + QPoint(20, 10), Qt::NoButton, Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, inner + QPoint(20, 10), Qt::LeftButton, Qt::NoButton);
+        check(overlay.m_anns.size() == 1 && overlay.m_atool == ATool::Rect,
+              "two pixels inside the frame still starts a mark");
+        overlay.undoAnnotation();
+        overlay.setToolNone();
+        overlay.m_sel = base;
+    }
     overlay.resetSelection();
     check(overlay.m_sel.isEmpty() && overlay.m_mode==Selecting,"clearing the selection still permits a new capture");
     overlay.close();

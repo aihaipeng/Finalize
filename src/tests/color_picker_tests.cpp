@@ -547,15 +547,17 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     check(overlay.m_selAnn == -1 && overlay.annotationAt(strokeAt + QPoint(9, 9)) != 4,
           "clicking outside finishes a rectangle erasure");
     {
-        const QRect keptSel = overlay.m_sel;
+        QRect keptSel = overlay.m_sel;
         const int kept = overlay.m_anns.size();
         overlay.m_selAnn = 4;
         const QPoint outside = keptSel.bottomRight() + QPoint(60, 60);
         mouse(QEvent::MouseButtonPress, outside);
         mouse(QEvent::MouseButtonRelease, outside);
-        check(overlay.m_sel == keptSel && overlay.m_anns.size() == kept && overlay.m_selAnn == -1
+        const QRect expanded(QPoint(keptSel.left(), keptSel.top()), outside);
+        check(overlay.m_sel == expanded && overlay.m_anns.size() == kept && overlay.m_selAnn == -1
                   && overlay.m_atool == ATool::Eraser,
-              "an eraser click outside the capture finishes the erasure and keeps the capture region");
+              "an eraser click outside the capture expands the region to the pointer and keeps the erasure");
+        keptSel = expanded;
         overlay.selectTool(ATool::Rect);
         mouse(QEvent::MouseButtonPress, keptSel.topLeft() + QPoint(60, 62));
         mouse(QEvent::MouseMove, keptSel.topLeft() + QPoint(100, 76));
@@ -570,11 +572,13 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         check(overlay.m_anns.size() == kept + 1 && overlay.m_anns[shape].tool == ATool::Ellipse
                   && overlay.m_selAnn == shape && overlay.m_atool == ATool::Ellipse,
               "picking the ellipse turns the selected rectangle into an ellipse in place");
-        mouse(QEvent::MouseButtonPress, outside);
-        mouse(QEvent::MouseButtonRelease, outside);
-        check(overlay.m_sel == keptSel && overlay.m_selAnn == -1 && overlay.m_atool == ATool::Ellipse
+        const QPoint outside2 = keptSel.bottomRight() + QPoint(60, 60);
+        mouse(QEvent::MouseButtonPress, outside2);
+        mouse(QEvent::MouseButtonRelease, outside2);
+        check(overlay.m_sel == QRect(keptSel.topLeft(), outside2) && overlay.m_selAnn == -1
+                  && overlay.m_atool == ATool::Ellipse
                   && overlay.m_anns[shape].tool == ATool::Ellipse,
-              "a shape-tool click outside the capture keeps the shape and the capture region");
+              "a shape-tool click outside the capture resizes the region and keeps the shape");
         overlay.undoAnnotation();
         check(overlay.m_anns[shape].tool == ATool::Rect, "undo restores the rectangle");
         overlay.selectTool(ATool::Rect);

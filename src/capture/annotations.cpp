@@ -459,7 +459,8 @@ void CaptureOverlay::paintMosaicBorder(QPainter &p, const Annotation &ann, bool 
 {
     p.save();
     p.setRenderHint(QPainter::Antialiasing, false);
-    p.setClipRect(QRectF(m_sel), Qt::IntersectClip);
+    // The frame and handles stay visible outside the region; only the effect pixels
+    // are clipped to the selection by paintAnnotations().
     p.setCompositionMode(QPainter::CompositionMode_Difference);
     QPen border(Qt::white, 0);
     if (selected) border.setDashPattern({4, 4});
@@ -497,6 +498,11 @@ void CaptureOverlay::updateAnnotationCursor(const QPoint &pos)
     if (m_mode != Adjusting) { setCursor(Qt::CrossCursor); return; }
     if (overToolChrome(pos)) {
         setCursor(Qt::ArrowCursor);
+        return;
+    }
+    const Handle frame = hitHandle(pos);
+    if (!m_embedded && !m_pinEdit && frame != H_None && frame != H_Move) {
+        setCursor(cursorForHandle(frame));      // The frame and outside area resize the region.
         return;
     }
     if (!m_live && (m_atool == ATool::Text || m_atool == ATool::None)) {
@@ -777,7 +783,9 @@ void CaptureOverlay::syncTextEditorGeometry()
     // every keystroke made typing and re-entering text visibly stutter.
     QRect viewRect = m_editor->mapRectToScene(m_editor->boundingRect()).toAlignedRect()
                         .adjusted(-2, -2, 2, 2).intersected(rect());
-    if (!m_sel.isNull()) viewRect = viewRect.intersected(m_sel);
+    // In a capture the editor stays fully visible outside the frame; only committed
+    // content is clipped. A pin canvas remains fixed to the pin.
+    if (!m_sel.isNull() && (m_pinEdit || m_embedded)) viewRect = viewRect.intersected(m_sel);
     if (viewRect.isEmpty())
         viewRect = QRect(std::clamp(qRound(m_editor->pos().x()), 0, (std::max)(0, width() - 1)),
                          std::clamp(qRound(m_editor->pos().y()), 0, (std::max)(0, height() - 1)), 1, 1);

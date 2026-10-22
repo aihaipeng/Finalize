@@ -806,6 +806,24 @@ int CaptureOverlay::testTextAnnotation()
     check(overlay.rect().contains(topKnob)
               && overlay.annHandleAt(topText, topKnob) == H_Rotate,
           "the text rotate knob stays reachable at the top edge");
+    {   // Text input is fully visible outside the frame; committed content stays clipped.
+        const QRect savedSel = overlay.m_sel;
+        overlay.m_sel = QRect(origin + QPoint(100, 100), QSize(200, 100));
+        overlay.selectTool(ATool::Text);
+        overlay.beginTextEdit(QPoint(overlay.m_sel.right() - 20, overlay.m_sel.center().y()));
+        overlay.m_editor->setPlainText(QStringLiteral("Boundary text extends outside"));
+        QApplication::processEvents();
+        overlay.syncTextEditorGeometry();
+        check(overlay.m_textView->geometry().right() > overlay.m_sel.right(),
+              "the text editor remains fully visible outside the capture frame");
+        overlay.commitTextEdit();
+        const int expectedWidth = qRound(overlay.m_sel.width() * overlay.m_shot.devicePixelRatioF());
+        check(!overlay.m_anns.isEmpty() && overlay.cropped().width() == expectedWidth,
+              "committed text is still clipped to the capture output");
+        overlay.undoAnnotation();
+        overlay.setToolNone();
+        overlay.m_sel = savedSel;
+    }
     Annotation cover;
     cover.tool = ATool::Marker;
     cover.fill = true;

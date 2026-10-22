@@ -281,6 +281,7 @@ private:
     void resetSelection();
     QRect windowAt(const QPoint &p) const;
     static QVector<QRect> handleRects(const QRect &r);
+    bool onSelectionBorder(const QPoint &p) const;
     Handle hitHandle(const QPoint &p) const;
     static Qt::CursorShape cursorForHandle(Handle h);
     QRect resizeBy(Handle h, const QPoint &pos);

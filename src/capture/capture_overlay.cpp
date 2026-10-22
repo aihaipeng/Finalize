@@ -39,7 +39,9 @@
 #include <QAbstractItemView>
 #include <QDialog>
 #include <QLineEdit>
-#include <QHBoxLayout>\n#include <QVBoxLayout>\n#include <QBoxLayout>
+#include <QHBoxLayout>
+#include <QVBoxLayout>
+#include <QBoxLayout>
 #include <QGridLayout>
 #include <QPushButton>
 #include <QFileDialog>
@@ -638,15 +640,6 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
             p.fillRect(QRect(0, r.top(), r.left(), r.height()), dim);
             p.fillRect(QRect(r.right() + 1, r.top(), width() - r.right() - 1, r.height()), dim);
         }
-        p.setPen(QPen(Bar::accent, 2));
-        p.setBrush(QBrush(Qt::NoBrush));
-        if (m_roundEnabled && m_roundRadius > 0 && !m_embedded) {
-            p.setRenderHint(QPainter::Antialiasing);
-            p.drawPath(selectionPath(hole));
-            p.setRenderHint(QPainter::Antialiasing, false);
-        } else {
-            p.drawRect(QRectF(hole).adjusted(0.5, 0.5, -0.5, -0.5));
-        }
     }
     if (m_mode == Adjusting && !m_sel.isNull()) {   // Annotations clip to the selection shape.
         p.save();
@@ -695,6 +688,17 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
             paintHandle(p, knob);
         }
         p.restore();
+        }
+    }
+    if (!m_pinEdit && !hole.isNull()) {            // The region frame stays above the marks.
+        p.setPen(QPen(Bar::accent, 2));
+        p.setBrush(QBrush(Qt::NoBrush));
+        if (m_roundEnabled && m_roundRadius > 0 && !m_embedded) {
+            p.setRenderHint(QPainter::Antialiasing);
+            p.drawPath(selectionPath(hole));
+            p.setRenderHint(QPainter::Antialiasing, false);
+        } else {
+            p.drawRect(QRectF(hole).adjusted(0.5, 0.5, -0.5, -0.5));
         }
     }
     if (m_mode == Adjusting && m_itemDrag == H_Rotate
@@ -782,10 +786,28 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
         return;
     }
     setFocus();                                   // Any click restores keyboard handling.
-    const bool hadItem = m_selAnn >= 0;
     m_pressPos = e->pos();
     m_dragStarted = false;
     m_inspector->hide();
+    // The selection frame and everything outside it always resize the region, even while
+    // a drawing tool is armed. Marks only receive presses strictly inside the frame.
+    const Handle frameHandle = hitHandle(e->pos());
+    if (m_mode == Adjusting && !m_embedded && !m_pinEdit && !m_spaceHeld
+        && !m_sel.isNull() && frameHandle != H_None
+        && (frameHandle != H_Move || onSelectionBorder(e->pos()))) {
+        m_selAnn = -1;
+        updateToolOptions();
+        m_pressWindow = QRect();
+        m_drag = frameHandle;
+        m_pressSel = m_sel;
+        const QRect oldSel = m_sel;
+        m_sel = resizeBy(frameHandle, e->pos());
+        hideToolBars();
+        updateTip();
+        updateSelectionRegion(oldSel, m_sel);
+        updateInspector();
+        return;
+    }
     if (m_mode == Adjusting && !m_spaceHeld
         && (m_atool == ATool::Mosaic || m_atool == ATool::Eraser || m_atool == ATool::None)) {
         const bool regionTool = m_atool == ATool::None || (m_atool == ATool::Mosaic ? !m_mosaicBrush : m_eraserRect);
@@ -921,15 +943,6 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
         }
         m_selAnn = -1;
         updateToolOptions();
-    }
-    const QVector<QRect> selHandles = handleRects(m_sel);
-    if (m_mode == Adjusting && m_atool != ATool::None && !m_spaceHeld && !m_sel.contains(e->pos())
-        && std::none_of(selHandles.cbegin(), selHandles.cend(),
-                        [e](const QRect &h) { return h.contains(e->pos()); })) {
-        if (hadItem) m_selAnn = -1;               // With a tool armed an outside click only finishes the item.
-        updateToolOptions();
-        update();
-        return;
     }
     if (m_mode == Adjusting) {
         if (m_embedded) {   // Nothing to draw on: the press moves the pin itself.
@@ -1873,6 +1886,16 @@ QVector<QRect> CaptureOverlay::handleRects(const QRect &r)
     };
 }
 
+bool CaptureOverlay::onSelectionBorder(const QPoint &p) const
+{
+    if (m_sel.isEmpty()) return false;
+    // The frame, a one-pixel inner ring and everything outside it are selection
+    // controls; only the interior belongs to marks.
+    if (!m_sel.adjusted(2, 2, -2, -2).contains(p)) return true;
+    return m_roundEnabled && m_roundRadius > 0 && !m_embedded && !m_pinEdit
+        && !selectionPath(m_sel).contains(QPointF(p));
+}
+
 CaptureOverlay::Handle CaptureOverlay::hitHandle(const QPoint &p) const
 {
     if (m_mode != Adjusting || m_sel.isEmpty())
@@ -1881,13 +1904,22 @@ CaptureOverlay::Handle CaptureOverlay::hitHandle(const QPoint &p) const
     for (int i = 0; i < hs.size(); ++i)
         if (hs[i].adjusted(-2, -2, 2, 2).contains(p))
             return Handle(H_TL + i);
-    if (m_sel.contains(p))
-        return H_Move;
-    if (p.x() < m_sel.left()) return p.y() < m_sel.top() ? H_TL : p.y() > m_sel.bottom() ? H_BL : H_L;
-    if (p.x() > m_sel.right()) return p.y() < m_sel.top() ? H_TR : p.y() > m_sel.bottom() ? H_BR : H_R;
-    if (p.y() < m_sel.top()) return H_T;
-    if (p.y() > m_sel.bottom()) return H_B;
-    return H_None;
+    if (onSelectionBorder(p)) {
+        if (p.x() < m_sel.left()) return p.y() < m_sel.top() ? H_TL : p.y() > m_sel.bottom() ? H_BL : H_L;
+        if (p.x() > m_sel.right()) return p.y() < m_sel.top() ? H_TR : p.y() > m_sel.bottom() ? H_BR : H_R;
+        if (p.y() < m_sel.top()) return H_T;
+        if (p.y() > m_sel.bottom()) return H_B;
+        if (p.x() <= m_sel.left() + 1) return H_L;
+        if (p.x() >= m_sel.right() - 1) return H_R;
+        if (p.y() <= m_sel.top() + 1) return H_T;
+        if (p.y() >= m_sel.bottom() - 1) return H_B;
+        // A point inside the bounding rect but outside a rounded corner belongs to
+        // that corner's resize control.
+        return p.x() < m_sel.center().x()
+            ? (p.y() < m_sel.center().y() ? H_TL : H_BL)
+            : (p.y() < m_sel.center().y() ? H_TR : H_BR);
+    }
+    return m_sel.contains(p) ? H_Move : H_None;
 }
 
 Qt::CursorShape CaptureOverlay::cursorForHandle(Handle h)

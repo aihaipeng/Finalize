@@ -67,6 +67,9 @@ int CaptureOverlay::testRoundRefresh(const QString &previewPath)
     overlay.m_roundEnabled = true;
     overlay.m_roundRadius = 24;
     overlay.applyRoundSettings(false);
+    const QPoint cutCorner(overlay.m_sel.left() + 6, overlay.m_sel.top() + 2);
+    check(overlay.onSelectionBorder(cutCorner) && overlay.hitHandle(cutCorner) == H_TL,
+          "a rounded-away corner still counts as a region resize target");
     const QImage rounded = overlay.cropped().toImage();
     check(rounded.size() == size, "rounded crop keeps the selection size");
     check(rounded.pixelColor(0, 0).alpha() == 0 && rounded.pixelColor(size.width() - 1, 0).alpha() == 0
