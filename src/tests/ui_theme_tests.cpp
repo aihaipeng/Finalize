@@ -137,11 +137,11 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
     const QRect actual = overlay.m_sizePopup->frameGeometry();
     const QScreen *popupScreen = QGuiApplication::screenAt(actual.center());
     const QRect available = (popupScreen ? popupScreen : QGuiApplication::primaryScreen())->availableGeometry();
-    const bool canAlign = strip.right() + 1 - actual.width() >= available.left() && strip.right() <= available.right();
+    const bool canAlign = strip.left() >= available.left() && strip.left() + actual.width() <= available.right() + 1;
     review.check(available.contains(actual) && actual.right() >= strip.left() && actual.left() <= strip.right()
-                     && (canAlign ? qAbs(actual.right() - strip.right()) <= 1
+                     && (canAlign ? qAbs(actual.left() - strip.left()) <= 1
                                   : actual.left() == available.left() || actual.right() == available.right()),
-                 "the width popup is right-aligned when space permits and stays inside its actual screen");
+                 "the width popup is left-aligned when space permits and stays inside its actual screen");
     review.save(overlay.m_sizePopup->grab(), QStringLiteral("-width"));
     overlay.m_sizePopup->close();
     QApplication::processEvents();

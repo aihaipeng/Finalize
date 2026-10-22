@@ -1446,15 +1446,7 @@ void CaptureOverlay::syncSizeInput()
         glyph.setDevicePixelRatio(dpr);
         glyph.fill(Qt::transparent);
         QPainter painter(&glyph);
-        {   // Three thickening bars, snapped to whole device pixels so they stay sharp at 16px.
-            painter.save();
-            painter.scale(1 / dpr, 1 / dpr);
-            const auto px = [dpr](qreal v) { return qRound(v * dpr); };
-            const qreal bars[][2] = {{6, 2}, {10, 3}, {15, 4}};   // top, height in whole logical px
-            for (const auto &bar : bars)
-                painter.fillRect(QRect(px(1), px(bar[0]), px(15) - px(1), qMax(1, px(bar[1]))), Bar::ink);
-            painter.restore();
-        }
+        painter.drawPixmap(QPoint(0, 4), barIcon(Icon::LineWidth, 16).pixmap(QSize(16, 16), dpr));
         painter.setRenderHint(QPainter::Antialiasing);   // Value sits in a rounded field 4px after the glyph.
         painter.setPen(Qt::NoPen);
         painter.setBrush(Bar::field);
@@ -1522,7 +1514,7 @@ void CaptureOverlay::showSizePopup(QToolButton *anchor, int minimum, int maximum
     const QRect available = (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry();
     const int y = strip.bottom() + 1 + Bar::gap + popup->height() <= available.bottom() + 1
         ? strip.bottom() + 1 + Bar::gap : qMax(available.top(), strip.top() - Bar::gap - popup->height());
-    popup->move(qBound(available.left(), strip.right() + 1 - popup->width(),
+    popup->move(qBound(available.left(), strip.left(),
                       qMax(available.left(), available.right() + 1 - popup->width())), y);
 }
 
