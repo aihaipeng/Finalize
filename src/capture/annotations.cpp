@@ -63,6 +63,7 @@
 #include <QCursor>
 #include <QFontInfo>
 #include <QPolygonF>
+#include <QSvgRenderer>
 #include <qt_windows.h>
 #include <imm.h>
 #include <array>
@@ -70,6 +71,39 @@
 #include <algorithm>
 
 namespace {
+QIcon lucideArrowIcon(int style, qreal dpr)
+{
+    // Lucide SVG paths, ISC licensed. The 10 menu entries keep distinct, familiar arrow semantics.
+    static const char *const paths[] = {
+        "<path d='M5 12h14'/><path d='m12 5 7 7-7 7'/>",
+        "<path d='m18 8 4 4-4 4'/><path d='M2 12h20'/><path d='m6 8-4 4 4 4'/>",
+        "<path d='M18 8 22 12 18 16'/><path d='M2 12H22'/>",
+        "<path d='M8 3 4 7l4 4'/><path d='M4 7h16'/><path d='m16 21 4-4-4-4'/><path d='M20 17H4'/>",
+        "<path d='M13.207 19.793a.707.707 0 0 1-1.207-.5V16a1 1 0 0 0-1-1H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h6a1 1 0 0 0 1-1V4.707a.707.707 0 0 1 1.207-.5l6.94 6.94a1.207 1.207 0 0 1 0 1.707z'/>",
+        "<path d='M13.207 19.793a.707.707 0 0 1-1.207-.5V16a1 1 0 0 0-1-1H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h6a1 1 0 0 0 1-1V4.707a.707.707 0 0 1 1.207-.5l6.94 6.94a1.207 1.207 0 0 1 0 1.707z'/>",
+        "<path d='M10 15v-3'/><path d='M14 15v-3'/><path d='M18 15v-3'/><path d='M2 8V4'/><path d='M22 6H2'/><path d='M22 8V4'/><path d='M6 15v-3'/><rect x='2' y='12' width='20' height='8' rx='2'/>",
+        "<path d='M13.207 19.793a.707.707 0 0 1-1.207-.5V16a1 1 0 0 0-1-1H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h6a1 1 0 0 0 1-1V4.707a.707.707 0 0 1 1.207-.5l6.94 6.94a1.207 1.207 0 0 1 0 1.707z'/>",
+        "<path d='m16 3 4 4-4 4'/><path d='M20 7H4'/><path d='m8 21-4-4 4-4'/><path d='M4 17h16'/>",
+        "<path d='M3 5v14'/><path d='M21 12H7'/><path d='m15 18 6-6-6-6'/>"};
+    static const bool filled[] = {false, false, false, false, false, true, false, true, false, false};
+    const int index = qBound(0, style, 9);
+    QPixmap pm(qCeil(40 * dpr), qCeil(20 * dpr));
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    const QByteArray markup = QByteArrayLiteral(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='")
+        + (filled[index] ? QByteArrayLiteral("white") : QByteArrayLiteral("none"))
+        + QByteArrayLiteral("' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>")
+        + paths[index] + QByteArrayLiteral("</svg>");
+    QSvgRenderer svg(markup);
+    QPainter painter(&pm);
+    painter.setRenderHint(QPainter::Antialiasing);
+    svg.render(&painter, QRectF(2, 0, 36, 20));
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(QRectF(0, 0, 40, 20), Bar::ink);
+    return QIcon(pm);
+}
+
 // Popup rows: a rounded wash under the current or hovered row, no style selection marker.
 class FlatItemDelegate : public QStyledItemDelegate
 {
@@ -2081,23 +2115,6 @@ void CaptureOverlay::updateToolOptions()
         addSwatches(lay, ATool::Marker);
         break;
     case ATool::Arrow: {
-        // Glyphs come from the arrow renderer itself, drawn as wide horizontal samples.
-        auto glyph = [this](int style) {
-            const qreal dpr = devicePixelRatioF();
-            QPixmap pm(qCeil(40 * dpr), qCeil(20 * dpr));
-            pm.setDevicePixelRatio(dpr);
-            pm.fill(Qt::transparent);
-            Annotation sample;
-            sample.tool = ATool::Arrow;
-            sample.color = Bar::ink;
-            sample.pen = 2.25;
-            sample.arrowStyle = style;
-            sample.a = QPoint(8, 10);
-            sample.b = QPoint(32, 10);
-            QPainter painter(&pm);
-            drawAnnotation(painter, sample, QImage());
-            return QIcon(pm);
-        };
         auto addCombo = [this](QHBoxLayout *l, int current, int count,
                                const std::function<QIcon(int)> &iconAt,
                                const std::function<QString(int)> &textAt,
@@ -2126,7 +2143,7 @@ void CaptureOverlay::updateToolOptions()
             m_arrowLineStyle = currentLine;
         }
         addCombo(lay, currentShape, 10,
-                 [&](int k) { return glyph(k); },
+                 [this](int k) { return lucideArrowIcon(k, devicePixelRatioF()); },
                  [](int k) {
                      const char *const names[] = {
                          QT_TRANSLATE_NOOP("CaptureOverlay", "直线箭头"),
@@ -2607,12 +2624,40 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         const QPointF dir = (tip - start) / length;
         const QPointF normal(-dir.y(), dir.x());
         const bool both = shape == 1 || shape == 3 || shape == 8 || shape == 9;
-        const qreal headLen = qMin(3.0 * w, length * (both ? 0.45 : 0.75));
-        const qreal headHalf = headLen / 2.0;
-        const qreal barHalf = qMin(1.5 * w, length * 0.45);
+        const bool barbed = shape == 0 || shape == 1 || shape == 5 || shape == 9;
+        const bool flat = shape == 7 || shape == 8;
+        const bool openLine = shape == 2 || shape == 3;
+        const qreal lenLimit = length * (both ? 0.42 : 0.72);
+        qreal headLen = 3.4 * w;
+        qreal headHalf = 1.4 * w;
+        qreal slotLen = 0.0;
+        qreal slotHalf = 0.0;
+        const bool slotted = shape == 0 || shape == 1;
+        if (barbed) {
+            headLen = (shape == 5 ? 2.4 : shape == 9 ? 2.5 : 3.0) * w;
+            headHalf = (shape == 5 || shape == 9 ? 1.35 : 1.6) * w;
+            slotLen = headLen * (shape == 5 || shape == 9 ? 0.90 : 0.775);
+            slotHalf = (shape == 5 ? 0.55 : shape == 9 ? 0.60 : 0.65) * w;
+        } else if (flat) {
+            headLen = 3.2 * w;
+            headHalf = 1.65 * w;
+        } else if (openLine) {
+            headLen = 2.2 * w;
+            headHalf = 1.7 * w;
+        } else if (shape == 4) {
+            headLen = 2.0 * w;
+            headHalf = 1.25 * w;
+        }
+        headLen = qMin(headLen, lenLimit);
+        headHalf = qMin(headHalf, headLen * 0.80);
+        slotLen = qMin(slotLen, headLen * 0.92);
+        slotHalf = qMin(slotHalf, headHalf * 0.75);
+        const qreal base = qMax<qreal>(0.0, length - headLen);
+        const qreal barHalf = qMin(2.5 * w, length * 0.45);
+        const qreal barWidth = qMax<qreal>(1.0, 1.15 * w);
 
         QPen shaft(ann.color, w);
-        shaft.setCapStyle(Qt::RoundCap);
+        shaft.setCapStyle(both ? Qt::FlatCap : Qt::RoundCap);
         shaft.setJoinStyle(Qt::MiterJoin);
         switch (style) {
         case 1: shaft.setDashPattern({4, 2}); break;
@@ -2624,110 +2669,129 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         auto solidPen = [&] {
             QPen pen = shaft;
             pen.setStyle(Qt::SolidLine);
+            pen.setCapStyle(Qt::RoundCap);
+            pen.setJoinStyle(Qt::RoundJoin);
             return pen;
         };
-        auto paintFlatHead = [&](const QPointF &end, const QPointF &d) {
+        QPen flatShaft = shaft;
+        flatShaft.setCapStyle(Qt::FlatCap);
+        auto headNormal = [](const QPointF &d) { return QPointF(-d.y(), d.x()); };
+        auto paintBarbedHead = [&](const QPointF &end, const QPointF &d) {
+            const QPointF n = headNormal(d);
             QPolygonF head;
-            head << end << end - d * headLen + normal * headHalf
-                 << end - d * headLen - normal * headHalf;
+            head << end << end - d * headLen + n * headHalf;
+            if (slotted)
+                head << end - d * slotLen + n * slotHalf
+                     << end - d * slotLen - n * slotHalf;
+            else
+                head << end - d * slotLen;
+            head << end - d * headLen - n * headHalf;
             p.setPen(Qt::NoPen);
             p.setBrush(ann.color);
             p.drawPolygon(head);
         };
-        auto paintOpenHead = [&](const QPointF &end, const QPointF &d) {
-            QPen headPen = solidPen();
-            headPen.setCapStyle(Qt::RoundCap);
-            headPen.setJoinStyle(Qt::MiterJoin);
-            p.setPen(headPen);
+        auto paintFlatHead = [&](const QPointF &end, const QPointF &d) {
+            const QPointF n = headNormal(d);
+            QPolygonF head;
+            head << end << end - d * headLen + n * headHalf
+                 << end - d * headLen - n * headHalf;
+            p.setPen(Qt::NoPen);
+            p.setBrush(ann.color);
+            p.drawPolygon(head);
+        };
+        auto paintLineHead = [&](const QPointF &end, const QPointF &d) {
+            const QPointF n = headNormal(d);
+            QPen arm = solidPen();
+            arm.setCapStyle(Qt::RoundCap);
+            arm.setJoinStyle(Qt::RoundJoin);
+            p.setPen(arm);
             p.setBrush(Qt::NoBrush);
-            const qreal arm = headLen * 2.5 / 3.0;
-            QPainterPath vee;
-            vee.moveTo(end - d * arm + normal * headHalf);
-            vee.lineTo(end);
-            vee.lineTo(end - d * arm - normal * headHalf);
-            p.drawPath(vee);
+            p.drawLine(end, end - d * headLen + n * headHalf);
+            p.drawLine(end, end - d * headLen - n * headHalf);
         };
         auto paintBar = [&](const QPointF &end) {
-            QPen barPen = solidPen();
-            barPen.setCapStyle(Qt::FlatCap);
-            p.setPen(barPen);
+            QPen bar(ann.color, barWidth);
+            bar.setCapStyle(Qt::FlatCap);
+            p.setPen(bar);
             p.setBrush(Qt::NoBrush);
             p.drawLine(end - normal * barHalf, end + normal * barHalf);
         };
 
-        if (shape == 4 || shape == 5) {              // Whole-arrow body: outline or fill.
-            const qreal base = qMax(0.0, length - headLen);
-            const qreal neck = qMin(length, base + headLen * 0.35);
-            const qreal neckHalf = w * 0.65;
-            const qreal tailHalf = 0.0;
+        if (shape == 4) {                            // Open outline: two tapered rails and a barbed V.
+            const qreal startHalf = w * 0.25;
+            const qreal baseHalf = w * 0.75;
+            const qreal barbBack = headLen * 0.25;
+            const QPointF tailUpper = start + normal * startHalf;
+            const QPointF baseUpper = start + dir * base + normal * baseHalf;
+            const QPointF barbUpper = start + dir * (base - barbBack) + normal * headHalf;
+            const QPointF barbLower = start + dir * (base - barbBack) - normal * headHalf;
+            const QPointF baseLower = start + dir * base - normal * baseHalf;
+            const QPointF tailLower = start - normal * startHalf;
+            QPainterPath outline(tailUpper);
+            outline.lineTo(baseUpper);
+            outline.lineTo(barbUpper);
+            outline.lineTo(tip);
+            outline.lineTo(barbLower);
+            outline.lineTo(baseLower);
+            outline.lineTo(tailLower);
+            QPen edge = shaft;
+            edge.setWidthF(qMax<qreal>(1.0, w * 0.30));
+            edge.setCapStyle(Qt::RoundCap);
+            edge.setJoinStyle(Qt::RoundJoin);
+            p.setPen(edge);
+            p.setBrush(Qt::NoBrush);
+            p.drawPath(outline);
+            break;
+        }
+        if (shape == 5) {                            // Solid wedge tapering into a barbed head.
+            const qreal tailHalf = w * 0.06;
+            const qreal bodyHalf = w * 0.70;
+            const qreal bodyEnd = qMax<qreal>(0.0, length - slotLen);
             QPolygonF body;
             body << start + normal * tailHalf
-                 << start + dir * neck + normal * neckHalf
-                 << start + dir * base + normal * headHalf
-                 << tip
-                 << start + dir * base - normal * headHalf
-                 << start + dir * neck - normal * neckHalf
+                 << start + dir * bodyEnd + normal * bodyHalf
+                 << start + dir * bodyEnd - normal * bodyHalf
                  << start - normal * tailHalf;
-            if (shape == 5) {                        // Filled arrows ignore the line style.
-                p.setPen(Qt::NoPen);
-                p.setBrush(ann.color);
-                p.drawPolygon(body);
-            } else {
-                QPen edge = shaft;
-                edge.setWidthF(qMax(1.0, w * 0.4));
-                edge.setJoinStyle(Qt::MiterJoin);
-                p.setPen(edge);
-                p.setBrush(Qt::NoBrush);
-                p.drawPolygon(body);
-            }
-            break;
-        }
-
-        if (shape == 7 || shape == 8) {              // Solid: a standard block arrow silhouette.
-            const qreal shaftHalf = 0.5 * w;
-            QPolygonF block;
-            const QPointF endBase = start + dir * (length - headLen);
-            if (shape == 7) {
-                block << start + normal * shaftHalf
-                      << endBase + normal * shaftHalf
-                      << endBase + normal * headHalf
-                      << tip
-                      << endBase - normal * headHalf
-                      << endBase - normal * shaftHalf
-                      << start - normal * shaftHalf;
-            } else {
-                const QPointF startBase = start + dir * headLen;
-                block << start
-                      << startBase + normal * headHalf
-                      << startBase + normal * shaftHalf
-                      << endBase + normal * shaftHalf
-                      << endBase + normal * headHalf
-                      << tip
-                      << endBase - normal * headHalf
-                      << endBase - normal * shaftHalf
-                      << startBase - normal * shaftHalf
-                      << startBase - normal * headHalf;
-            }
             p.setPen(Qt::NoPen);
             p.setBrush(ann.color);
-            p.drawPolygon(block);
+            p.drawPolygon(body);
+            paintBarbedHead(tip, dir);
             break;
         }
 
-        p.setPen(shaft);
         p.setBrush(Qt::NoBrush);
-        const qreal startInset = (shape == 3 || shape == 9) ? w / 2 : 0;
-        const qreal tipInset = (shape == 2 || shape == 3 || shape == 9) ? w / 2 : 0;
+        qreal startInset = 0.0;
+        qreal tipInset = 0.0;
+        if (barbed) {
+            const qreal shaftEnd = qMax<qreal>(0.0, slotLen - (slotted ? w * 0.5 : 0.0));
+            if (both) startInset = shaftEnd;
+            tipInset = shaftEnd;
+        } else if (flat) {
+            if (both) startInset = headLen;
+            tipInset = headLen;
+        }
+        if (barbed && shape == 0) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(ann.color);
+            p.drawEllipse(start, w / 2.0, w / 2.0);
+            p.setBrush(Qt::NoBrush);
+        }
+        p.setPen(barbed ? flatShaft : shaft);
         p.drawLine(start + dir * startInset, tip - dir * tipInset);
+
         switch (shape) {
-        case 0: paintFlatHead(tip, dir); break;
-        case 1: paintFlatHead(tip, dir); paintFlatHead(start, -dir); break;
-        case 2: paintOpenHead(tip, dir); break;
-        case 3: paintOpenHead(tip, dir); paintOpenHead(start, -dir); break;
+        case 0: paintBarbedHead(tip, dir); break;
+        case 1: paintBarbedHead(tip, dir); paintBarbedHead(start, -dir); break;
+        case 2: paintLineHead(tip, dir); break;
+        case 3: paintLineHead(tip, dir); paintLineHead(start, -dir); break;
         case 6: paintBar(start); paintBar(tip); break;
+        case 7: paintFlatHead(tip, dir); break;
+        case 8: paintFlatHead(tip, dir); paintFlatHead(start, -dir); break;
         case 9:
-            paintBar(start); paintBar(tip);
-            paintOpenHead(tip, dir); paintOpenHead(start, -dir);
+            paintBarbedHead(tip, dir);
+            paintBarbedHead(start, -dir);
+            paintBar(start);
+            paintBar(tip);
             break;
         default: break;
         }

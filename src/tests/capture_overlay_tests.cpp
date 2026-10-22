@@ -1002,8 +1002,12 @@ int CaptureOverlay::testSelectionBorders()
         arrow.arrowStyle = 5;
         arrow.strokeStyle = 1;
         const QImage filled = renderArrow(arrow);
-        check(outline.pixelColor(200, 100).alpha() < 30
-                  && outline.pixelColor(200, 103).alpha() > 150
+        bool outlineInked = false;
+        for (int dy = 1; dy <= 6; ++dy)
+            outlineInked = outlineInked
+                || outline.pixelColor(200, 100 - dy).alpha() > 80
+                || outline.pixelColor(200, 100 + dy).alpha() > 80;
+        check(outline.pixelColor(200, 100).alpha() < 30 && outlineInked
                   && filled.pixelColor(200, 100).alpha() > 200,
               "hollow and filled arrow bodies render their interiors distinctly");
         arrow.arrowStyle = 0;
@@ -1024,6 +1028,11 @@ int CaptureOverlay::testSelectionBorders()
         check(single.pixelColor(20, 96).alpha() < 30
                   && bilateral.pixelColor(20, 96).alpha() > 150,
               "double straight arrows carry a head at the start");
+        arrow.arrowStyle = 7;
+        const QImage flat = renderArrow(arrow);
+        check(single.pixelColor(242, 96).alpha() < 30
+                  && flat.pixelColor(242, 96).alpha() > 150,
+              "straight and solid arrows keep their barbed and flat head backs");
         arrow.arrowStyle = 6;
         const QImage dimension = renderArrow(arrow);
         check(dimension.pixelColor(10, 93).alpha() > 150
@@ -1032,9 +1041,10 @@ int CaptureOverlay::testSelectionBorders()
               "dimension lines add end bars instead of arrowheads");
         arrow.arrowStyle = 9;
         const QImage dimensionArrow = renderArrow(arrow);
-        check(dimensionArrow.pixelColor(250, 92).alpha() > 150
-                  && dimension.pixelColor(250, 92).alpha() < 30,
-              "dimension arrows combine end bars with open heads");
+        check(dimensionArrow.pixelColor(10, 93).alpha() > 150
+                  && dimensionArrow.pixelColor(250, 96).alpha() > 150
+                  && dimension.pixelColor(250, 96).alpha() < 30,
+              "dimension arrows combine end bars with solid heads");
     }
     overlay.m_anns.clear(); overlay.m_selAnn = -1;
     overlay.selectTool(ATool::Pen);

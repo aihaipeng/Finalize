@@ -955,8 +955,11 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         ann.strokeStyle = 0;
         {
             const QImage image = render(ann);
-            check(image.pixelColor(120, 100).alpha() < 30
-                      && image.pixelColor(120, 103).alpha() > 150,
+            bool inked = false;
+            for (int dy = 1; dy <= 6; ++dy)
+                inked = inked || image.pixelColor(120, 100 - dy).alpha() > 80
+                              || image.pixelColor(120, 100 + dy).alpha() > 80;
+            check(image.pixelColor(120, 100).alpha() < 30 && inked,
                   "hollow arrows keep an empty body and inked outline");
         }
         ann.arrowStyle = 5;
@@ -985,9 +988,9 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         ann.arrowStyle = 9;
         const QImage dimensionArrow = render(ann);
         check(dimensionArrow.pixelColor(10, 93).alpha() > 150
-                  && dimensionArrow.pixelColor(250, 92).alpha() > 150
-                  && dimension.pixelColor(250, 92).alpha() < 30,
-              "dimension arrows combine end bars with open heads");
+                  && dimensionArrow.pixelColor(250, 96).alpha() > 150
+                  && dimension.pixelColor(250, 96).alpha() < 30,
+              "dimension arrows combine end bars with solid heads");
         ann.arrowStyle = 0;
         ann.a = QPoint(10, 150);
         ann.b = QPoint(200, 80);
