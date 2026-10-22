@@ -141,6 +141,7 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
         review.check(lineCombo->view()->verticalScrollBarPolicy() == Qt::ScrollBarAlwaysOff
                          && !lineCombo->view()->verticalScrollBar()->isVisible(),
                      "a five-row line dropdown hides the scrollbar");
+        review.save(lineCombo->view()->window()->grab(), QStringLiteral("-line-popup"));
         lineCombo->hidePopup();
     }
     overlay.selectTool(ATool::Pen);

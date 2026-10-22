@@ -191,7 +191,8 @@ QIcon arrowStyleIcon(int style, qreal dpr)
 class GlyphItemDelegate : public CenteredItemDelegate
 {
 public:
-    using CenteredItemDelegate::CenteredItemDelegate;
+    explicit GlyphItemDelegate(bool stretch, QObject *parent = nullptr)
+        : CenteredItemDelegate(parent), m_stretch(stretch) {}
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
                const QModelIndex &index) const override
     {
@@ -200,10 +201,20 @@ public:
         if (icon.isNull()) return;
         QSize size = option.decorationSize;
         if (size.isEmpty() || size.width() <= 0) size = icon.actualSize(option.rect.size());
-        size = size.boundedTo(option.rect.size());
-        const QRect target(QPoint(option.rect.center().x() - size.width() / 2,
-                                  option.rect.center().y() - size.height() / 2), size);
-        icon.paint(painter, target, Qt::AlignCenter, QIcon::Normal, QIcon::Off);
+        // Line-style samples fill the dropdown; arrow and badge glyphs keep their designed size.
+        const bool longPreview = m_stretch && size.width() >= size.height() * 2;
+        const int available = qMax(1, option.rect.width() - 8);
+        const QSize targetSize(qMin(longPreview ? qMax(size.width(), available) : size.width(),
+                                    option.rect.width()),
+                               qMin(size.height(), option.rect.height()));
+        const QRect target(QPoint(option.rect.center().x() - targetSize.width() / 2,
+                                  option.rect.center().y() - targetSize.height() / 2), targetSize);
+        if (longPreview) {
+            const QPixmap pixmap = icon.pixmap(size, QIcon::Normal, QIcon::Off);
+            painter->drawPixmap(target, pixmap);
+        } else {
+            icon.paint(painter, target, Qt::AlignCenter, QIcon::Normal, QIcon::Off);
+        }
     }
 protected:
     void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const override
@@ -215,6 +226,8 @@ protected:
     {
         return QSize(QStyledItemDelegate::sizeHint(option, index).width(), 24);
     }
+private:
+    bool m_stretch;
 };
 
 // Popup scrollbar in the dark bar language: a slim thumb at rest; on hover a wider thumb
@@ -269,10 +282,10 @@ protected:
 class FlatComboBox : public QComboBox
 {
 public:
-    explicit FlatComboBox(bool glyphOnly = false) : m_glyphOnly(glyphOnly)
+    explicit FlatComboBox(bool glyphOnly = false, bool stretch = false) : m_glyphOnly(glyphOnly)
     {
         if (glyphOnly) {   // Narrow glyph pills keep the sample centered between the edge and the chevron.
-            setItemDelegate(new GlyphItemDelegate(this));
+            setItemDelegate(new GlyphItemDelegate(stretch, this));
             setStyleSheet(QStringLiteral("QComboBox{padding-left:6px;}QComboBox::drop-down{width:16px;}"));
         }
         else setItemDelegate(new CenteredItemDelegate(this));
@@ -2147,7 +2160,7 @@ void CaptureOverlay::updateToolOptions()
             painter.drawLine(QPointF(2, 10), QPointF(38, 10));
             return QIcon(pm);
         };
-        auto *styleCombo = new FlatComboBox(true);
+        auto *styleCombo = new FlatComboBox(true, true);   // Line samples span the popup width.
         styleCombo->setObjectName(QStringLiteral("shapeStyleCombo"));
         const char *const styleNames[] = {
             QT_TRANSLATE_NOOP("CaptureOverlay", "实线"),
@@ -2189,8 +2202,8 @@ void CaptureOverlay::updateToolOptions()
         auto addCombo = [this](QHBoxLayout *l, int current, int count,
                                const std::function<QIcon(int)> &iconAt,
                                const std::function<QString(int)> &textAt,
-                               const std::function<void(int)> &pick) {
-            auto *combo = new FlatComboBox(true);
+                               const std::function<void(int)> &pick, bool stretch) {
+            auto *combo = new FlatComboBox(true, stretch);
             for (int k = 0; k < count; ++k)
                 combo->addItem(iconAt(k), textAt(k));
             combo->setCurrentIndex(current);
@@ -2229,7 +2242,7 @@ void CaptureOverlay::updateToolOptions()
                          QT_TRANSLATE_NOOP("CaptureOverlay", "尺寸箭头")};
                      return QCoreApplication::translate("CaptureOverlay", names[k]);
                  },
-                 [this](int k) { pickArrowStyle(k); });
+                 [this](int k) { pickArrowStyle(k); }, /*stretch=*/false);
         auto *shapeCombo = qobject_cast<QComboBox *>(lay->itemAt(lay->count() - 1)->widget());
         shapeCombo->setObjectName(QStringLiteral("arrowStyleCombo"));
         shapeCombo->setFixedSize(72, 24);
@@ -2260,7 +2273,7 @@ void CaptureOverlay::updateToolOptions()
                          QT_TRANSLATE_NOOP("CaptureOverlay", "双点划线")};
                      return QCoreApplication::translate("CaptureOverlay", names[k]);
                  },
-                 [this](int k) { pickArrowLineStyle(k); });
+                 [this](int k) { pickArrowLineStyle(k); }, /*stretch=*/true);
         auto *lineCombo = qobject_cast<QComboBox *>(lay->itemAt(lay->count() - 1)->widget());
         lineCombo->setObjectName(QStringLiteral("arrowLineStyleCombo"));
         lineCombo->setFixedSize(72, 24);
