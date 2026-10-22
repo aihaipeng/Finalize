@@ -1277,9 +1277,32 @@ Save or pin it.</translation>
         <translation>OCR text</translation>
     </message>
     <message>
-        <location line="+32"/>
         <source>打开链接</source>
         <translation>Open link</translation>
+    </message>
+    <message>
+        <source>下载网页</source>
+        <translation>Download page</translation>
+    </message>
+    <message>
+        <source>网页 (*.html *.htm);;所有文件 (*)</source>
+        <translation>Web page (*.html *.htm);;All files (*)</translation>
+    </message>
+    <message>
+        <source>正在下载网页…</source>
+        <translation>Downloading page…</translation>
+    </message>
+    <message>
+        <source>下载失败：%1</source>
+        <translation>Download failed: %1</translation>
+    </message>
+    <message>
+        <source>保存失败：%1</source>
+        <translation>Save failed: %1</translation>
+    </message>
+    <message>
+        <source>已保存到 %1</source>
+        <translation>Saved to %1</translation>
     </message>
     <message>
         <location line="+31"/>

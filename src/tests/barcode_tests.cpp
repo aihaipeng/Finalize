@@ -19,6 +19,7 @@
 #include <QThread>
 #include <QThreadPool>
 #include <QToolButton>
+#include <QUrl>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -110,6 +111,19 @@ int OcrDialog::testBarcode(const QString &previewPath)
     check(BarcodeEngine::recognize(qr, cancel).cancelled, "pre-cancelled work does not decode");
     cancel->store(false);
 
+    check(OcrDialog::barcodeDownloadName(QUrl(QStringLiteral("https://example.com/docs/page")))
+              == QStringLiteral("page.html"),
+          "download name takes the last path segment and adds .html");
+    check(OcrDialog::barcodeDownloadName(QUrl(QStringLiteral("https://example.com/")))
+              == QStringLiteral("example.com.html"),
+          "download name uses the host for a site root");
+    check(OcrDialog::barcodeDownloadName(QUrl(QStringLiteral("https://example.com/file.pdf")))
+              == QStringLiteral("file.pdf"),
+          "download name keeps an explicit file suffix");
+    check(OcrDialog::barcodeDownloadName(QUrl(QStringLiteral("https://example.com/a%3Ab")))
+              == QStringLiteral("a_b.html"),
+          "download name replaces characters Windows forbids");
+
     QImage pair(400, 220, QImage::Format_RGB32);
     pair.fill(Qt::white);
     {
@@ -135,9 +149,11 @@ int OcrDialog::testBarcode(const QString &previewPath)
     auto *retry = card.findChild<QToolButton *>(QStringLiteral("ocrRetry"));
     auto *copy = card.findChild<QToolButton *>(QStringLiteral("ocrTextCopy"));
     auto *open = card.findChild<QToolButton *>(QStringLiteral("barcodeOpen"));
+    auto *download = card.findChild<QToolButton *>(QStringLiteral("barcodeDownload"));
     auto *picker = card.findChild<QComboBox *>(QStringLiteral("barcodePicker"));
     auto *kind = card.findChild<QLabel *>(QStringLiteral("barcodeKind"));
-    check(text && retry && copy && open && picker && kind, "barcode card exposes its result controls");
+    check(text && retry && copy && open && download && picker && kind,
+          "barcode card exposes its result controls");
     check(dynamic_cast<PickerCombo *>(picker) != nullptr,
           "barcode picker uses the shared chevron combo");
     check(card.findChild<QToolButton *>(QStringLiteral("ocrSearch")) == nullptr,
@@ -150,6 +166,10 @@ int OcrDialog::testBarcode(const QString &previewPath)
     check(picker->isHidden() && open->isVisible() && card.barcodeRegionCount() == 1
               && card.barcodeSelected() == 0,
           "single URL result hides the picker, offers open-link and marks one region");
+    check(download->isVisible()
+              && open->mapTo(&card,QPoint()).x() < download->mapTo(&card,QPoint()).x()
+              && download->mapTo(&card,QPoint()).x() < retry->mapTo(&card,QPoint()).x(),
+          "download sits between open-link and recognize again");
     copy->click();
     check(QGuiApplication::clipboard()->text() == qrText, "copy action copies the selected payload");
     QGuiApplication::clipboard()->setText(oldClipboard);
@@ -165,7 +185,9 @@ int OcrDialog::testBarcode(const QString &previewPath)
     multi.show();
     auto *multiText = multi.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"));
     auto *multiRetry = multi.findChild<QToolButton *>(QStringLiteral("ocrRetry"));
+    auto *multiDownload = multi.findChild<QToolButton *>(QStringLiteral("barcodeDownload"));
     auto *multiPicker = multi.findChild<QComboBox *>(QStringLiteral("barcodePicker"));
+    check(multiDownload != nullptr, "multi result keeps the download action");
     waitFor([&] { return multiRetry->isEnabled() && !multiText->toPlainText().isEmpty(); });
     check(multi.barcodeRegionCount() >= 2 && multiPicker->isVisible()
               && multiPicker->count() >= 2,
@@ -176,6 +198,7 @@ int OcrDialog::testBarcode(const QString &previewPath)
     QApplication::processEvents();
     check(multiText->toPlainText() == qr2Text && multi.barcodeSelected() == secondIndex,
           "choosing a picker row swaps the payload and the marked region");
+    check(multiDownload->isHidden(), "a non-URL payload hides the download action");
     if (!previewPath.isEmpty()) multi.grab().save(previewPath + QStringLiteral("-barcode-multi.png"));
     multi.reject();
     QApplication::processEvents();
@@ -186,11 +209,12 @@ int OcrDialog::testBarcode(const QString &previewPath)
     auto *noneText = none.findChild<QPlainTextEdit *>(QStringLiteral("ocrText"));
     auto *noneRetry = none.findChild<QToolButton *>(QStringLiteral("ocrRetry"));
     auto *noneOpen = none.findChild<QToolButton *>(QStringLiteral("barcodeOpen"));
+    auto *noneDownload = none.findChild<QToolButton *>(QStringLiteral("barcodeDownload"));
     waitFor([&] { return noneRetry->isEnabled() && none.m_emptyRetry->isVisible(); });
     check(noneText->toPlainText().isEmpty() && none.m_busy->text().contains(QStringLiteral("未识别到二维码或条形码"))
               && !none.findChild<QToolButton *>(QStringLiteral("ocrTextCopy"))->isEnabled()
-              && none.barcodeRegionCount() == 0 && noneOpen->isHidden(),
-          "an empty result explains itself, marks nothing and hides open-link");
+              && none.barcodeRegionCount() == 0 && noneOpen->isHidden() && noneDownload->isHidden(),
+          "an empty result explains itself, marks nothing and hides link actions");
     if(!previewPath.isEmpty())none.grab().save(previewPath+QStringLiteral("-barcode-empty.png"));
     none.reject();
     QApplication::processEvents();

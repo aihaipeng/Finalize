@@ -1213,9 +1213,32 @@
         <translation>OCR 识别文本</translation>
     </message>
     <message>
-        <location line="+32"/>
         <source>打开链接</source>
         <translation>打开链接</translation>
+    </message>
+    <message>
+        <source>下载网页</source>
+        <translation>下载网页</translation>
+    </message>
+    <message>
+        <source>网页 (*.html *.htm);;所有文件 (*)</source>
+        <translation>网页 (*.html *.htm);;所有文件 (*)</translation>
+    </message>
+    <message>
+        <source>正在下载网页…</source>
+        <translation>正在下载网页…</translation>
+    </message>
+    <message>
+        <source>下载失败：%1</source>
+        <translation>下载失败：%1</translation>
+    </message>
+    <message>
+        <source>保存失败：%1</source>
+        <translation>保存失败：%1</translation>
+    </message>
+    <message>
+        <source>已保存到 %1</source>
+        <translation>已保存到 %1</translation>
     </message>
     <message>
         <location line="+31"/>

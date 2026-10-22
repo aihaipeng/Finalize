@@ -98,6 +98,9 @@ protected:
 };
 
 class QSplitter;
+class QNetworkAccessManager;
+class QNetworkReply;
+class QUrl;
 class TranslateGateway;
 
 // Picker that reads "prefix (choice)". On the first, automatic item it shows what the
@@ -165,6 +168,9 @@ private:
     void startBarcode();
     void finishBarcode(const BarcodeResult &result);
     void showBarcodeItem(int index);
+    void downloadBarcodePage();
+    void cancelDownload();
+    static QString barcodeDownloadName(const QUrl &url);
     void populateLanguages(const QString &source, const QString &target);
     void saveTranslateChoice() const;
     void setDisplay(int mode);
@@ -225,6 +231,9 @@ private:
     QToolButton *m_view = nullptr;            // Display mode: image + texts / texts / translation only.
     QToolButton *m_again = nullptr;           // Re-translate the current original without recognizing again.
     QToolButton *m_open = nullptr;            // Barcode link action, shown only for URL payloads.
+    QToolButton *m_download = nullptr;        // Saves the linked page, shown for http/https payloads.
+    QNetworkAccessManager *m_downloader = nullptr;
+    QNetworkReply *m_downloadReply = nullptr;
     QComboBox *m_barcodePicker = nullptr;     // One entry per decoded symbol; hidden for a single code.
     QLabel *m_barcodeLabel = nullptr;         // Format name or "N codes" above the payload.
     QWidget *m_mask = nullptr;                // Haze over a translation the edited original no longer matches.

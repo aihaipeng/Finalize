@@ -68,6 +68,14 @@
 #include <QStyleOptionComboBox>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QSaveFile>
+#include <QStandardPaths>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <atomic>
 #include <memory>
 
@@ -82,6 +90,21 @@ static QUrl barcodeUrl(const QString &text)
                           || scheme == QStringLiteral("ftp")))
         return url;
     return {};
+}
+
+QString OcrDialog::barcodeDownloadName(const QUrl &url)
+{
+    const QString pathName = QUrl::fromPercentEncoding(url.fileName().toUtf8()).trimmed();
+    QString name = pathName.isEmpty() ? url.host() : pathName;
+    if (name.isEmpty()) name = QStringLiteral("page");
+    static const QString invalid = QStringLiteral("<>:\"/\\|?*");
+    for (QChar &ch : name)
+        if (ch.unicode() < 0x20 || invalid.contains(ch)) ch = QLatin1Char('_');
+    name = name.trimmed();
+    if (name.isEmpty()) name = QStringLiteral("page");
+    if (pathName.isEmpty() || QFileInfo(name).suffix().isEmpty())
+        name += QStringLiteral(".html");
+    return name;
 }
 
 static OcrDialog *presentCard(OcrDialog *dialog, QWidget *source)
@@ -1120,7 +1143,12 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
             if (!url.isEmpty()) QDesktopServices::openUrl(url);
         });
         textAction(m_open,tr("打开链接"));
+        m_download = iconButton(Icon::Save,QStringLiteral("barcodeDownload"),tr("下载网页"));
+        m_download->hide();
+        connect(m_download,&QToolButton::clicked,this,&OcrDialog::downloadBarcodePage);
+        textAction(m_download,tr("下载网页"));
         tools->addWidget(m_open);
+        tools->addWidget(m_download);
         tools->addWidget(m_retry);
     } else if (m_translate) {
         tools->addWidget(m_view);
@@ -1255,7 +1283,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     } else if (m_barcode) {
         order << m_barcodePicker << m_text;
         appendFooter(resultFooter);
-        order << m_open << m_retry;
+        order << m_open << m_download << m_retry;
     } else {
         order << m_text;
         appendFooter(resultFooter);
@@ -1577,6 +1605,7 @@ void OcrDialog::start() {
 void OcrDialog::startBarcode()
 {
     if (m_closed || m_barcodeWatcher.isRunning()) return;
+    cancelDownload();
     m_barcodeCancel = std::make_shared<std::atomic_bool>(false);
     const auto cancel = m_barcodeCancel;
     const bool initialLoad = m_loadingPage && !m_loadingPage->isHidden();
@@ -1588,6 +1617,7 @@ void OcrDialog::startBarcode()
     m_text->clear();
     m_text->setReadOnly(true);
     m_open->hide();
+    m_download->hide();
     m_retry->setEnabled(false);
     m_status->clear();
     if (initialLoad) {
@@ -1647,12 +1677,66 @@ void OcrDialog::showBarcodeItem(int index)
     m_barcodeLabel->setText(m_barcodeItems.size() == 1
         ? item.format
         : QStringLiteral("%1 · %2/%3").arg(item.format).arg(index+1).arg(m_barcodeItems.size()));
-    m_open->setVisible(!barcodeUrl(item.text).isEmpty());
+    const QUrl url = barcodeUrl(item.text);
+    m_open->setVisible(!url.isEmpty());
+    const QString scheme = url.scheme().toLower();
+    m_download->setVisible(scheme == QStringLiteral("http") || scheme == QStringLiteral("https"));
     QVector<QPolygonF> regions;
     regions.reserve(m_barcodeItems.size());
     for (const BarcodeItem &entry : m_barcodeItems) regions.append(entry.quad);
     m_imageView->setBarcodeRegions(regions,index);
     m_status->clear();
+}
+
+void OcrDialog::downloadBarcodePage()
+{
+    const QUrl url = barcodeUrl(m_text->toPlainText());
+    const QString scheme = url.scheme().toLower();
+    if (m_downloadReply || (scheme != QStringLiteral("http") && scheme != QStringLiteral("https")))
+        return;
+    QString directory = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    if (directory.isEmpty()) directory = QDir::homePath();
+    const QString path = QFileDialog::getSaveFileName(
+        this,tr("下载网页"),QDir(directory).filePath(barcodeDownloadName(url)),
+        tr("网页 (*.html *.htm);;所有文件 (*)"));
+    if (path.isEmpty()) return;
+    if (!m_downloader) m_downloader = new QNetworkAccessManager(this);
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+    request.setTransferTimeout(30000);
+    QNetworkReply *reply = m_downloader->get(request);
+    m_downloadReply = reply;
+    m_download->setEnabled(false);
+    setStatus(tr("正在下载网页…"));
+    connect(reply,&QNetworkReply::finished,this,[this,reply,path] {
+        if (m_downloadReply != reply) return;
+        m_downloadReply = nullptr;
+        m_download->setEnabled(true);
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            setStatus(tr("下载失败：%1").arg(reply->errorString()));
+            return;
+        }
+        const QByteArray data = reply->readAll();
+        // Response body only: scripts, styles and images are not fetched for an offline bundle.
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit()) {
+            setStatus(tr("保存失败：%1").arg(file.errorString()));
+            return;
+        }
+        setStatus(tr("已保存到 %1").arg(QDir::toNativeSeparators(path)));
+    });
+}
+
+void OcrDialog::cancelDownload()
+{
+    if (!m_downloadReply) return;
+    QNetworkReply *reply = m_downloadReply;
+    m_downloadReply = nullptr;
+    reply->abort();
+    reply->deleteLater();
+    if (m_download) m_download->setEnabled(true);
 }
 
 void OcrDialog::translateResult(const OcrResult &result)
