@@ -1322,7 +1322,7 @@ qreal CaptureOverlay::toolSize() const
     if (m_live) return texty ? m_ann.font : m_ann.pen;
     if (m_selAnn >= 0 && m_selAnn < m_anns.size())
         return texty ? m_anns[m_selAnn].font : m_anns[m_selAnn].pen;
-    return texty ? m_afont : m_apen;
+    return texty ? m_afont : m_toolPens[tool == ATool::None ? int(ATool::Pen) : int(tool)];
 }
 
 qreal CaptureOverlay::widthControlValue() const       // Rectangle mosaics tune strength on the canvas, width on the button.
@@ -1499,7 +1499,7 @@ void CaptureOverlay::setToolSize(qreal value)                    // Numeric edit
         m_afont = m_editFont = value;
         applyEditorFont();
     } else if (m_live) {
-        m_ann.pen = m_apen = qRound(value);
+        m_ann.pen = m_toolPens[int(tool)] = qRound(value);
     } else if (m_selAnn >= 0 && m_selAnn < m_anns.size()) {
         const bool dragging = m_sizeSlider && m_sizeSlider->isSliderDown();
         if (!dragging || !m_sizeDragUndo) pushUndo();   // One undo step per slider drag.
@@ -1514,7 +1514,7 @@ void CaptureOverlay::setToolSize(qreal value)                    // Numeric edit
             ann.rect = QRect(c - QPoint(s / 2, s / 2), QSize(s, s));
         }
     } else if (texty) m_afont = value;
-    else m_apen = qRound(value);
+    else m_toolPens[int(tool)] = qRound(value);
     syncSizeInput();
     update();
 }
@@ -1535,7 +1535,7 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
     m_ann = Annotation();
     m_ann.tool = m_atool;
     m_ann.color = m_acolor;
-    m_ann.pen = m_apen;
+    m_ann.pen = m_toolPens[int(m_atool)];
     if (m_atool == ATool::Mosaic) {
         m_ann.pen = m_mosaicWidth;
         m_ann.mosaicBrush = m_mosaicBrush;

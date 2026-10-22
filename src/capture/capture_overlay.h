@@ -402,8 +402,10 @@ private:
     QWidget *m_layoutCardWidget = nullptr;
     ATool m_atool = ATool::None;
     QColor m_acolor = QColor("#ed1c24");             // Red first: the loudest marking color.
-    int m_apen = 3;
-    int m_mosaicLevels[2] = {6, 6}, m_mosaicWidth = 14;
+    // Indexed by ATool: None, Rect, Ellipse, Arrow, Pen, Marker, Text, Number, Mosaic, Eraser.
+    // Marker stores a fifth of its drawn width, so 3 renders as the default 15 logical px.
+    int m_toolPens[10] = {0, 5, 5, 8, 5, 3, 15, 15, 15, 15};
+    int m_mosaicLevels[2] = {6, 6}, m_mosaicWidth = 15;
     bool m_mosaicBrush = true, m_mosaicBlur = false, m_mosaicDragUndo = false;
     int m_smartEpoch = 0;                         // Bumped whenever the annotation list is rebuilt.
     qreal m_afont = 15;                              // Base text/number font size (pt).
@@ -423,7 +425,7 @@ private:
     Handle m_itemDrag = H_None;
     bool m_eraserRect = false;                       // Eraser starts in brush mode.
     bool m_eraserSmart = false;                      // Magic eraser: content-aware fill instead of pixel erasure.
-    int m_eraserWidth = 14;
+    int m_eraserWidth = 15;
     QVector<QVector<Annotation>> m_undoStack, m_redoStack;
     QTimer m_detectionWatchdog;
     QToolButton *m_undoButton = nullptr;             // Enabled state follows the stacks.

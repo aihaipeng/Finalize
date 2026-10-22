@@ -1102,13 +1102,13 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
               && overlay.m_sizePopup->geometry().top() >= overlay.m_sizeButton->mapToGlobal(QPoint(0, overlay.m_sizeButton->height())).y(),
           "clicking the width button opens a horizontal slider below it");
     overlay.m_sizeSlider->setValue(6);
-    check(overlay.m_apen == 6 && overlay.m_sizeButton->text().toDouble() == 6 && overlay.isVisible(),
+    check(overlay.toolSize() == 6 && overlay.m_sizeButton->text().toDouble() == 6 && overlay.isVisible(),
           "dragging the slider changes the tool width without pinning the capture");
     QWheelEvent sizeWheel(QPointF(10, 10), QPointF(overlay.m_sizeSlider->mapToGlobal(QPoint(10, 10))),
                          QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
                          Qt::ScrollUpdate, false);
     QApplication::sendEvent(overlay.m_sizeSlider, &sizeWheel);
-    check(overlay.m_apen == 7 && overlay.m_sizeSlider->value() == 7 && overlay.m_sizeButton->text().toDouble() == 7,
+    check(overlay.toolSize() == 7 && overlay.m_sizeSlider->value() == 7 && overlay.m_sizeButton->text().toDouble() == 7,
           "wheel input over the slider uses the same width and updates the displayed value");
     overlay.m_sizePopup->close();
     QCoreApplication::processEvents();
@@ -1127,7 +1127,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     overlay.m_sizeSlider->setValue(10);
     overlay.m_sizeSlider->setValue(9);
     overlay.m_sizeSlider->setSliderDown(false);
-    check(overlay.m_selAnn == -1 && overlay.m_anns.last().pen == 8 && overlay.m_apen == 9
+    check(overlay.m_selAnn == -1 && overlay.m_anns.last().pen == 8 && overlay.toolSize() == 9
               && overlay.m_sizeButton->text().toDouble() == 9,
           "the width slider changes future pen strokes without retuning completed ink");
     overlay.m_sizePopup->close();

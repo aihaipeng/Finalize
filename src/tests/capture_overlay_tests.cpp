@@ -801,6 +801,35 @@ int CaptureOverlay::testSelectionBorders()
     };
     const QString prefix = QStringLiteral("debug/publish-checks/ui-borders-%1-").arg(dpr);
     const bool previews = QDir(QStringLiteral("debug/publish-checks")).exists();
+    {   // Per-tool default stroke widths; the marker stores a fifth of its rendered width.
+        overlay.m_mosaicBrush = true;
+        struct Expected { ATool tool; qreal width; const char *name; };
+        const Expected expected[] = {
+            {ATool::Arrow, 8, "arrow"}, {ATool::Rect, 5, "rectangle"}, {ATool::Ellipse, 5, "ellipse"},
+            {ATool::Pen, 5, "pen"}, {ATool::Marker, 3, "marker"}, {ATool::Mosaic, 15, "mosaic"},
+            {ATool::Eraser, 15, "eraser"}, {ATool::Text, 15, "text"}, {ATool::Number, 15, "number"}};
+        for (const Expected &e : expected) {
+            overlay.selectTool(e.tool);
+            check(overlay.toolSize() == e.width,
+                  qPrintable(QStringLiteral("the %1 tool starts at its default width").arg(QLatin1String(e.name))));
+        }
+        overlay.selectTool(ATool::Marker);
+        Annotation highlight;
+        highlight.tool = ATool::Marker;
+        highlight.a = QPoint(0, 0);
+        highlight.b = QPoint(60, 0);
+        highlight.pen = qRound(overlay.toolSize());
+        check(overlay.annotationRect(highlight).height() == 19,
+              "the marker default renders as a 15px stroke");
+        overlay.selectTool(ATool::Arrow);
+        overlay.setToolSize(11);
+        overlay.selectTool(ATool::Pen);
+        check(overlay.toolSize() == 5, "switching tools restores the other tool's own width");
+        overlay.selectTool(ATool::Arrow);
+        check(overlay.toolSize() == 11, "each tool remembers its adjusted width independently");
+        overlay.m_mosaicBrush = false;
+        overlay.m_selAnn = -1;
+    }
     for (int t = int(ATool::Rect); t <= int(ATool::Eraser); ++t) {
         const ATool tool = ATool(t);
         Annotation ann;
@@ -984,6 +1013,7 @@ int CaptureOverlay::testSelectionBorders()
     QApplication::sendEvent(&overlay, &finish);
     check(!overlay.m_live && overlay.m_selAnn == -1 && overlay.m_anns.last().tool == ATool::Pen,
           "right-click finishing also leaves completed pen ink without selection controls");
+    overlay.m_anns.clear(); overlay.m_selAnn = -1;
     overlay.m_anns.clear(); overlay.m_selAnn = -1;
     overlay.m_atool = ATool::None;
     overlay.hideToolBars();
