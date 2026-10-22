@@ -333,6 +333,30 @@ int CaptureOverlay::testSelection()
         check(overlay.m_anns.size() == 1 && overlay.m_atool == ATool::Rect,
               "two pixels inside the frame still starts a mark");
         overlay.undoAnnotation();
+        overlay.m_anns.clear();
+        overlay.m_selAnn = -1;
+        Annotation outsideMark;
+        outsideMark.tool = ATool::Rect;
+        outsideMark.color = QColor(255, 0, 255);
+        outsideMark.pen = 2;
+        outsideMark.fill = true;
+        outsideMark.rect = QRect(base.center(), QSize(180, 80));
+        overlay.m_anns.append(outsideMark);
+        for (QWidget *bar : {overlay.m_toolsTop, overlay.m_toolsLeft, overlay.m_toolsRight,
+                             overlay.m_tools, overlay.m_toolOptions})
+            if (bar) bar->hide();
+        overlay.update();
+        QApplication::processEvents();
+        const QPixmap shown = overlay.grab();
+        const qreal shownDpr = shown.devicePixelRatio();
+        const QPoint probe(base.right() + 24, base.center().y() + 8);
+        check(shown.toImage().pixelColor(QPoint(qRound(probe.x() * shownDpr),
+                                                qRound(probe.y() * shownDpr))) == outsideMark.color,
+              "mark content remains visible outside the capture frame");
+        check(overlay.cropped().width() == qRound(base.width() * overlay.m_shot.devicePixelRatioF()),
+              "capture output still clips marks to the selection");
+        overlay.m_anns.clear();
+        overlay.m_undoStack.clear();
         overlay.setToolNone();
         overlay.m_sel = base;
     }

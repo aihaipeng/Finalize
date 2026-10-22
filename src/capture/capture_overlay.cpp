@@ -581,7 +581,7 @@ CaptureOverlay::~CaptureOverlay()
     if (m_embedded) delete m_toolOptions;   // The detached strip has no parent.
 }
 
-void CaptureOverlay::paintEvent(QPaintEvent *)
+void CaptureOverlay::paintEvent(QPaintEvent *event)
 {
     QPainter p(this);
     const auto paintBars = [&] {
@@ -641,11 +641,10 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
             p.fillRect(QRect(r.right() + 1, r.top(), width() - r.right() - 1, r.height()), dim);
         }
     }
-    if (m_mode == Adjusting && !m_sel.isNull()) {   // Annotations clip to the selection shape.
-        p.save();
-        p.setClipPath(selectionPath(m_sel), Qt::IntersectClip);
-        paintAnnotations(p, QPointF(0, 0), 1.0, QRectF(m_sel), false);
-        p.restore();
+    if (m_mode == Adjusting && !m_sel.isNull()) {
+        // Marks stay visible outside the frame while the frame is being adjusted;
+        // cropped()/composited output still clips them to the final selection.
+        paintAnnotations(p, QPointF(0, 0), 1.0, QRectF(event->rect()), false);
     }
     if (m_live && regionItem(m_ann))              // Thin frame shows the dragged region.
         paintMosaicBorder(p, m_ann, false);

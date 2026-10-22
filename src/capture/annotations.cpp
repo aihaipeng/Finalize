@@ -459,8 +459,8 @@ void CaptureOverlay::paintMosaicBorder(QPainter &p, const Annotation &ann, bool 
 {
     p.save();
     p.setRenderHint(QPainter::Antialiasing, false);
-    // The frame and handles stay visible outside the region; only the effect pixels
-    // are clipped to the selection by paintAnnotations().
+    // The frame and handles stay visible outside the region; the effect pixels
+    // remain visible on screen and are clipped only by the final capture output.
     p.setCompositionMode(QPainter::CompositionMode_Difference);
     QPen border(Qt::white, 0);
     if (selected) border.setDashPattern({4, 4});
@@ -2368,7 +2368,7 @@ void CaptureOverlay::paintAnnotations(QPainter &p, const QPointF &origin, qreal 
     bool erasing = m_live && m_ann.tool == ATool::Eraser;
     for (const Annotation &ann : m_anns) erasing = erasing || ann.tool == ATool::Eraser;
     const qreal layerDpr = p.device()->devicePixelRatioF();
-    // shortcut: the layer spans the whole selection each repaint; clip it to the dirty rect if large captures lag.
+    // shortcut: an eraser allocates a layer for the repaint clip; if large captures lag, reuse one buffer.
     const QRect device = erasing ? p.transform().mapRect(clip).toAlignedRect() : QRect();
     QImage layerImage;
     QPainter layerPainter;
@@ -2399,7 +2399,7 @@ void CaptureOverlay::paintAnnotations(QPainter &p, const QPointF &origin, qreal 
             QPainter layer(&lower);
             const qreal dpr = m_shot.devicePixelRatioF();
             layer.scale(dpr, dpr);
-            layer.setClipRect(QRectF(m_sel));
+            layer.setClipRect(clip);
             if (ann.tool == ATool::Eraser) {     // Later mosaics see the original pixels through erasures.
                 layer.setClipPath(annTransform(ann).map(eraserMask(ann)), Qt::IntersectClip);
                 layer.drawImage(QRectF(0, 0, m_mosaicFrame.width() / dpr, m_mosaicFrame.height() / dpr),
