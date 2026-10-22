@@ -1561,7 +1561,10 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
             m_ann.fill = m_eraserRect;
         }
     }
-    if (m_atool == ATool::Rect || m_atool == ATool::Ellipse) m_ann.fill = m_afill;
+    if (m_atool == ATool::Rect || m_atool == ATool::Ellipse) {
+        m_ann.fill = m_afill;
+        m_ann.strokeStyle = m_shapeStyle;
+    }
     if (m_atool == ATool::Marker) m_ann.fill = m_markerFill;
     if (m_atool == ATool::Marker && !m_ann.fill) m_ann.a = m_ann.b = pos;
     if (m_atool == ATool::Arrow) {
@@ -1814,6 +1817,17 @@ void CaptureOverlay::showColorPalette()
     dialog->move(qBound(available.left(), target.x(), available.right() + 1 - dialog->width()),
                  qBound(available.top(), target.y(), available.bottom() + 1 - dialog->height()));
     dialog->open();                              // Window-modal over the overlay, without a nested event loop.
+}
+
+void CaptureOverlay::pickShapeStyle(int style)
+{
+    m_shapeStyle = qBound(0, style, 4);
+    if (m_selAnn >= 0 && m_selAnn < m_anns.size()
+        && (m_anns[m_selAnn].tool == ATool::Rect || m_anns[m_selAnn].tool == ATool::Ellipse)) {
+        pushUndo();
+        m_anns[m_selAnn].strokeStyle = m_shapeStyle;
+        update();
+    }
 }
 
 void CaptureOverlay::pickArrowStyle(int style)
@@ -2096,6 +2110,49 @@ void CaptureOverlay::updateToolOptions()
                   !m_live && m_selAnn >= 0 && m_selAnn < m_anns.size() ? m_anns[m_selAnn].fill : m_afill,
                   [this] { toggleFill(); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("fillButton"));
+        const bool selectedShape = !m_live && m_selAnn >= 0 && m_selAnn < m_anns.size()
+                                   && (m_anns[m_selAnn].tool == ATool::Rect
+                                       || m_anns[m_selAnn].tool == ATool::Ellipse);
+        const int currentStyle = qBound(0, selectedShape ? m_anns[m_selAnn].strokeStyle : m_shapeStyle, 4);
+        if (selectedShape) m_shapeStyle = currentStyle;
+        auto styleIcon = [this](int style) {
+            const qreal dpr = devicePixelRatioF();
+            QPixmap pm(qCeil(40 * dpr), qCeil(20 * dpr));
+            pm.setDevicePixelRatio(dpr);
+            pm.fill(Qt::transparent);
+            QPainter painter(&pm);
+            painter.setRenderHint(QPainter::Antialiasing);
+            QPen sample(Bar::ink, 1.5);            // 40x20 sample spanning 5%..95% with flat ends.
+            sample.setStyle(static_cast<Qt::PenStyle>(Qt::SolidLine + style));
+            sample.setCapStyle(Qt::FlatCap);
+            sample.setJoinStyle(Qt::BevelJoin);
+            painter.setPen(sample);
+            painter.drawLine(QPointF(2, 10), QPointF(38, 10));
+            return QIcon(pm);
+        };
+        auto *styleCombo = new FlatComboBox(true);
+        styleCombo->setObjectName(QStringLiteral("shapeStyleCombo"));
+        const char *const styleNames[] = {
+            QT_TRANSLATE_NOOP("CaptureOverlay", "实线"),
+            QT_TRANSLATE_NOOP("CaptureOverlay", "虚线"),
+            QT_TRANSLATE_NOOP("CaptureOverlay", "点线"),
+            QT_TRANSLATE_NOOP("CaptureOverlay", "点划线"),
+            QT_TRANSLATE_NOOP("CaptureOverlay", "双点划线")};
+        for (int k = 0; k < 5; ++k) {
+            const QString name = QCoreApplication::translate("CaptureOverlay", styleNames[k]);
+            styleCombo->addItem(styleIcon(k), name);
+        }
+        styleCombo->setCurrentIndex(currentStyle);
+        styleCombo->setFocusPolicy(Qt::NoFocus);
+        styleCombo->setFixedSize(64, 24);
+        styleCombo->setIconSize(QSize(40, 20));
+        styleCombo->setAccessibleName(styleCombo->itemText(currentStyle));
+        connect(styleCombo, QOverload<int>::of(&QComboBox::activated), this, [this, styleCombo](int k) {
+            pickShapeStyle(k);
+            styleCombo->setAccessibleName(styleCombo->itemText(k));
+            setFocus();
+        });
+        lay->addWidget(styleCombo);
         addSize();
         addSeparator(lay);
         addSwatches(lay, ATool::Rect);
@@ -2532,12 +2589,20 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
     }
     switch (ann.tool) {
     case ATool::Rect:
-    case ATool::Ellipse:
+    case ATool::Ellipse: {
         if (ann.fill) p.setBrush(ann.color);     // Fill mode: solid shape in the stroke color.
-        p.setPen(pen);
+        QPen outline = pen;
+        // A filled shape keeps a continuous outline; dashes would leave the fill edge toothed.
+        outline.setStyle(ann.fill ? Qt::SolidLine
+                                  : static_cast<Qt::PenStyle>(Qt::SolidLine + qBound(0, ann.strokeStyle, 4)));
+        const bool thick = ann.pen >= 4;         // Thin outlines keep square ends and mitred corners.
+        outline.setCapStyle(thick ? Qt::RoundCap : Qt::SquareCap);
+        outline.setJoinStyle(thick ? Qt::RoundJoin : Qt::MiterJoin);
+        p.setPen(outline);
         if (ann.tool == ATool::Rect) p.drawRect(ann.rect);
         else p.drawEllipse(ann.rect);
         break;
+    }
     case ATool::Pen:
         p.setPen(pen);
         p.drawPolyline(ann.stroke);

@@ -233,6 +233,22 @@
         <translation>Dashed line</translation>
     </message>
     <message>
+        <source>实线</source>
+        <translation>Solid line</translation>
+    </message>
+    <message>
+        <source>点线</source>
+        <translation>Dotted line</translation>
+    </message>
+    <message>
+        <source>点划线</source>
+        <translation>Dash-dot line</translation>
+    </message>
+    <message>
+        <source>双点划线</source>
+        <translation>Dash-dot-dot line</translation>
+    </message>
+    <message>
         <location line="+9"/>
         <location line="+9"/>
         <source>粗体</source>

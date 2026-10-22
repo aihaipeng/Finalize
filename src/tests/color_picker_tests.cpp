@@ -749,6 +749,81 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     overlay.selectTool(ATool::Ellipse);
     check(overlay.m_shapeEllipse && overlay.m_toolBtn[int(ATool::Ellipse)]->isChecked() && !overlay.m_shapeButton->isChecked(),
           "arming the ellipse flips the shared button's sub-shape");
+    overlay.selectTool(ATool::Rect);
+    QComboBox *shapeStyle = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("shapeStyleCombo"));
+    check(shapeStyle && shapeStyle->count() == 5 && shapeStyle->currentIndex() == 0
+              && shapeStyle->iconSize() == QSize(40, 20),
+          "the shape strip offers five line styles as 40x20 samples");
+    overlay.pickShapeStyle(1);
+    const QPoint styleA = annOrigin + QPoint(8, 54), styleB = styleA + QPoint(48, 22);
+    mouse(QEvent::MouseButtonPress, styleA);
+    mouse(QEvent::MouseMove, styleB);
+    mouse(QEvent::MouseButtonRelease, styleB);
+    check(overlay.m_anns.last().tool == ATool::Rect && overlay.m_anns.last().strokeStyle == 1,
+          "the picked line style carries into a fresh rectangle");
+    overlay.updateToolOptions();
+    shapeStyle = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("shapeStyleCombo"));
+    check(shapeStyle && shapeStyle->currentIndex() == 1,
+          "selecting a styled shape shows its line style");
+    const int styleUndo = overlay.m_undoStack.size();
+    const int styleIndex = overlay.m_selAnn;
+    overlay.pickShapeStyle(3);
+    check(overlay.m_anns[styleIndex].strokeStyle == 3 && overlay.m_undoStack.size() == styleUndo + 1,
+          "changing the selected shape's line style is one undo step");
+    overlay.undoAnnotation();
+    check(overlay.m_anns[styleIndex].strokeStyle == 1,
+          "undo restores the selected shape's line style");
+    {
+        auto scan = [&overlay](int style, int &inked, int &gaps) {
+            QImage image(300, 140, QImage::Format_ARGB32);
+            image.fill(Qt::transparent);
+            Annotation sample;
+            sample.tool = ATool::Rect;
+            sample.rect = QRect(20, 20, 260, 100);
+            sample.pen = 6;
+            sample.color = Qt::black;
+            sample.strokeStyle = style;
+            QPainter painter(&image);
+            overlay.drawAnnotation(painter, sample, QImage());
+            painter.end();
+            inked = gaps = 0;
+            bool wasInk = false;
+            for (int x = 40; x < 280; ++x) {
+                const bool ink = image.pixelColor(x, 20).alpha() > 128;
+                if (ink) ++inked;
+                else if (wasInk || x > 40) ++gaps;
+                wasInk = ink;
+            }
+        };
+        int solidInk = 0, solidGaps = 0, dashInk = 0, dashGaps = 0, dotInk = 0, dotGaps = 0;
+        scan(0, solidInk, solidGaps);
+        scan(1, dashInk, dashGaps);
+        scan(2, dotInk, dotGaps);
+        check(solidInk > 200 && solidGaps == 0 && dashInk > 40 && dashGaps > 40
+                  && dotGaps > dashGaps,
+              "solid, dashed and dotted outlines alternate ink and gaps at their own densities");
+        auto inkCount = [&overlay](ATool tool, int style) {
+            QImage image(300, 140, QImage::Format_ARGB32);
+            image.fill(Qt::transparent);
+            Annotation sample;
+            sample.tool = tool;
+            sample.rect = QRect(20, 20, 260, 100);
+            sample.pen = 6;
+            sample.color = Qt::black;
+            sample.strokeStyle = style;
+            QPainter painter(&image);
+            overlay.drawAnnotation(painter, sample, QImage());
+            painter.end();
+            int ink = 0;
+            for (int y = 0; y < image.height(); ++y)
+                for (int x = 0; x < image.width(); ++x)
+                    if (image.pixelColor(x, y).alpha() > 128) ++ink;
+            return ink;
+        };
+        check(inkCount(ATool::Ellipse, 1) > 0
+                  && inkCount(ATool::Ellipse, 0) > inkCount(ATool::Ellipse, 1),
+              "ellipses use the same dashed outline as rectangles");
+    }
     overlay.pickToolColor(QColor("#22b14c"));
     for (ATool shared : {ATool::Marker, ATool::Arrow, ATool::Pen, ATool::Text, ATool::Number, ATool::Rect}) {
         overlay.selectTool(shared);

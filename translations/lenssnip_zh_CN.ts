@@ -189,6 +189,22 @@
         <translation>虚线</translation>
     </message>
     <message>
+        <source>实线</source>
+        <translation>实线</translation>
+    </message>
+    <message>
+        <source>点线</source>
+        <translation>点线</translation>
+    </message>
+    <message>
+        <source>点划线</source>
+        <translation>点划线</translation>
+    </message>
+    <message>
+        <source>双点划线</source>
+        <translation>双点划线</translation>
+    </message>
+    <message>
         <location line="+9"/>
         <location line="+9"/>
         <source>粗体</source>

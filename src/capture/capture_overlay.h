@@ -139,6 +139,7 @@ private:
         int arrowStyle = 0;                          // Heads only: 0 single, 1 single hollow, 2 double, 3 double hollow, 4 none.
         int lineStyle = 0;                           // Shaft path: 0 straight, 1 curve, 2 clicked vertices (straight tool, 3+ points).
         bool dashed = false;                         // Arrow shaft dashing, independent of the path.
+        int strokeStyle = 0;                         // Rect/Ellipse outline: 0 solid, 1 dash, 2 dot, 3 dash-dot, 4 dash-dot-dot.
         int numberStyle = 0;                         // 0 filled disc, 1 ring, 2 bare label.
         int numberFormat = 0;                        // 0 "1 2 3", 1 "I II III", 2 "A B C", 3 "a b c", 4 Chinese numerals.
         bool bold = false;                           // Text weight / slant / underline.
@@ -229,6 +230,7 @@ private:
     void pickArrowStyle(int style);
     void pickArrowLineStyle(int style);
     void toggleArrowDashed();
+    void pickShapeStyle(int style);
     void toggleFill();
     void pickNumberOption(bool format, int value);
     static QString numberLabel(int n, int format);
@@ -476,6 +478,7 @@ private:
     int m_arrowStyle = 0;                            // Head shape, see Annotation::arrowStyle.
     int m_arrowLineStyle = 0;                        // Picked shaft path: 0 straight, 1 curve.
     bool m_arrowDashed = false;
+    int m_shapeStyle = 0;                            // Current rect / ellipse outline, see Annotation::strokeStyle.
     int m_numberStyle = 0, m_numberFormat = 0;       // See Annotation::numberStyle / numberFormat.
     bool m_markerFill = false;                       // Marker drags a translucent rectangle.
     bool m_abold = false, m_aitalic = false, m_aunderline = false;       // Text tool defaults.

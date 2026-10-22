@@ -929,6 +929,43 @@ int CaptureOverlay::testSelectionBorders()
             overlay.m_mosaicBrush = false;
         }
     }
+    {
+        auto filledEdgeContinuous = [&overlay](ATool tool, int style) {
+            QImage image(220, 160, QImage::Format_ARGB32);
+            image.fill(Qt::transparent);
+            Annotation sample;
+            sample.tool = tool;
+            sample.rect = QRect(30, 20, 160, 120);
+            sample.pen = 8;
+            sample.color = Qt::red;
+            sample.fill = true;
+            sample.strokeStyle = style;
+            QPainter painter(&image);
+            overlay.drawAnnotation(painter, sample, QImage());
+            painter.end();
+            int hit = 0, total = 0;
+            if (tool == ATool::Rect) {
+                for (int x = 50; x <= 170; x += 2) {
+                    ++total;
+                    if (image.pixelColor(x, 17).alpha() > 128) ++hit;
+                }
+            } else {
+                const QPointF center = QRectF(sample.rect).center();
+                const qreal rx = sample.rect.width() / 2.0, ry = sample.rect.height() / 2.0;
+                for (int deg = 0; deg < 360; deg += 2) {
+                    const qreal t = qDegreesToRadians(qreal(deg));
+                    QPointF normal(qCos(t) / rx, qSin(t) / ry);
+                    normal /= qSqrt(QPointF::dotProduct(normal, normal));
+                    const QPointF edge = center + QPointF(rx * qCos(t), ry * qSin(t)) + normal * 2;
+                    ++total;
+                    if (image.pixelColor(edge.toPoint()).alpha() > 128) ++hit;
+                }
+            }
+            return hit == total;
+        };
+        check(filledEdgeContinuous(ATool::Rect, 2) && filledEdgeContinuous(ATool::Ellipse, 2),
+              "filled shapes keep a continuous edge when a dotted line style is selected");
+    }
     overlay.m_anns.clear(); overlay.m_selAnn = -1;
     overlay.selectTool(ATool::Pen);
     const auto mouse = [&](QEvent::Type type, const QPoint &point, Qt::KeyboardModifiers mods = Qt::NoModifier) {
