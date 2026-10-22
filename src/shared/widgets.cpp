@@ -71,6 +71,10 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
         // Four strokes from hairline to bold; the box crops the source icon's empty margin.
         markup = R"(<svg xmlns='http://www.w3.org/2000/svg' viewBox='4 8 42 34' fill='white'><path d='M6 10h38v2H6z M6 17h38v3H6z M6 25h38v4H6z M6 34h38v6H6z'/></svg>)";
         break;
+    case Icon::MarkerRect:
+        // A plain rectangle; the old checkerboard aliased into stripes at button size.
+        path = "M4 5h16v14H4z";
+        break;
     case Icon::Eraser: path = "M3 14l10-10 8 8-9 9H9z M9 8l8 8 M12 21h10"; break;
     // A smaller eraser plus two sparkles separates the content-aware mode from plain erasing.
     case Icon::MagicEraser: path = "M2 16l8-8 6 6-8 8H6z M7 11l6 6 M12 22h10 M19 2v4 M17 4h4 M21 9v2 M20 10h2"; break;
