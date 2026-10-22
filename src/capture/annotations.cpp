@@ -1452,7 +1452,7 @@ void CaptureOverlay::syncSizeInput()
         painter.drawRoundedRect(QRectF(0, 0, 54, 24), 6, 6);
         painter.drawPixmap(QPoint(2, 1), barIcon(Icon::LineWidth, 22).pixmap(QSize(22, 22), dpr));
         QFont valueFont = m_sizeButton->font();
-        valueFont.setPixelSize(14);
+        valueFont.setPixelSize(20);
         painter.setFont(valueFont);
         painter.setPen(Bar::ink);
         // Number size may carry a half step shared with text; the button shows whole values only.
