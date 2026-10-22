@@ -73,7 +73,7 @@ class CenteredCombo : public QComboBox
 public:
     explicit CenteredCombo(QWidget *parent = nullptr) : QComboBox(parent)
     {
-        setItemDelegate(new CenteredItemDelegate(this));
+        setItemDelegate(new PopupItemDelegate(this));
     }
     void showPopup() override
     {

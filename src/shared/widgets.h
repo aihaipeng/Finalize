@@ -55,8 +55,8 @@ QComboBox *flatComboBox();
 // Short dropdowns stay chrome-free: ten rows or fewer hide the scrollbar and fit without padding.
 void prepareComboPopup(QComboBox *combo);
 
-// Centers combo popup rows and paints the shared rounded hover/selection wash.
-class CenteredItemDelegate : public QStyledItemDelegate
+// Popup rows keep the default left-aligned content and paint the shared rounded hover/selection wash.
+class PopupItemDelegate : public QStyledItemDelegate
 {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
@@ -64,7 +64,6 @@ public:
                const QModelIndex &index) const override;
 protected:
     static void paintRow(QPainter *painter, const QStyleOptionViewItem &option);
-    void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const override;
 };
 
 // Rounded track slider for the dark capture bars.

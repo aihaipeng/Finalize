@@ -462,7 +462,7 @@ void OcrImageView::drawForeground(QPainter *painter, const QRectF &rect) {
 
 PickerCombo::PickerCombo()
 {
-    setItemDelegate(new CenteredItemDelegate(this));
+    setItemDelegate(new PopupItemDelegate(this));
 }
 
 void PickerCombo::showPopup()

@@ -194,7 +194,7 @@ void prepareComboPopup(QComboBox *combo)
         : QString());
 }
 
-void CenteredItemDelegate::paintRow(QPainter *painter, const QStyleOptionViewItem &option)
+void PopupItemDelegate::paintRow(QPainter *painter, const QStyleOptionViewItem &option)
 {
     if (!(option.state & (QStyle::State_MouseOver | QStyle::State_Selected))) return;
     painter->save();
@@ -205,20 +205,13 @@ void CenteredItemDelegate::paintRow(QPainter *painter, const QStyleOptionViewIte
     painter->restore();
 }
 
-void CenteredItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
-                                 const QModelIndex &index) const
+void PopupItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
+                              const QModelIndex &index) const
 {
     paintRow(painter, option);
     QStyleOptionViewItem plain = option;
     plain.state &= ~(QStyle::State_MouseOver | QStyle::State_Selected | QStyle::State_HasFocus);
     QStyledItemDelegate::paint(painter, plain, index);
-}
-
-void CenteredItemDelegate::initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const
-{
-    QStyledItemDelegate::initStyleOption(option, index);
-    option->displayAlignment = Qt::AlignCenter;
-    option->decorationAlignment = Qt::AlignCenter;
 }
 
 const QString darkSliderQss = QStringLiteral(
