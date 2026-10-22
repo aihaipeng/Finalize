@@ -966,6 +966,76 @@ int CaptureOverlay::testSelectionBorders()
         check(filledEdgeContinuous(ATool::Rect, 2) && filledEdgeContinuous(ATool::Ellipse, 2),
               "filled shapes keep a continuous edge when a dotted line style is selected");
     }
+    {
+        overlay.selectTool(ATool::Arrow);
+        auto *shapes = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("arrowStyleCombo"));
+        auto *lines = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("arrowLineStyleCombo"));
+        check(shapes && shapes->count() == 10 && lines && lines->count() == 5
+                  && !overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("dashedButton")),
+              "the arrow strip offers ten shapes and five line styles without a dash toggle");
+        auto renderArrow = [&overlay](Annotation sample) {
+            QImage image(300, 200, QImage::Format_ARGB32);
+            image.fill(Qt::transparent);
+            QPainter painter(&image);
+            overlay.drawAnnotation(painter, sample, QImage());
+            painter.end();
+            return image;
+        };
+        Annotation arrow;
+        arrow.tool = ATool::Arrow;
+        arrow.color = QColor("#34c759");
+        arrow.pen = 6;
+        arrow.a = QPoint(10, 100);
+        arrow.b = QPoint(260, 100);
+        for (int style = 0; style < 10; ++style) {
+            arrow.arrowStyle = style;
+            arrow.strokeStyle = 0;
+            const QImage image = renderArrow(arrow);
+            int ink = 0;
+            for (int y = 0; y < image.height(); ++y)
+                for (int x = 0; x < image.width(); ++x)
+                    if (image.pixelColor(x, y).alpha() > 0) ++ink;
+            check(ink > 100, "every arrow shape draws visible ink");
+        }
+        arrow.arrowStyle = 4;
+        const QImage outline = renderArrow(arrow);
+        arrow.arrowStyle = 5;
+        arrow.strokeStyle = 1;
+        const QImage filled = renderArrow(arrow);
+        check(outline.pixelColor(200, 100).alpha() < 30
+                  && outline.pixelColor(200, 103).alpha() > 150
+                  && filled.pixelColor(200, 100).alpha() > 200,
+              "hollow and filled arrow bodies render their interiors distinctly");
+        arrow.arrowStyle = 0;
+        arrow.strokeStyle = 1;
+        const QImage dashed = renderArrow(arrow);
+        int gaps = 0;
+        bool wasInk = false;
+        for (int x = 20; x <= 240; ++x) {
+            const bool ink = dashed.pixelColor(x, 100).alpha() > 200;
+            if (wasInk && !ink) ++gaps;
+            wasInk = ink;
+        }
+        check(gaps > 1, "arrow dash styles alternate ink and gaps");
+        arrow.strokeStyle = 0;
+        const QImage single = renderArrow(arrow);
+        arrow.arrowStyle = 1;
+        const QImage bilateral = renderArrow(arrow);
+        check(single.pixelColor(20, 96).alpha() < 30
+                  && bilateral.pixelColor(20, 96).alpha() > 150,
+              "double straight arrows carry a head at the start");
+        arrow.arrowStyle = 6;
+        const QImage dimension = renderArrow(arrow);
+        check(dimension.pixelColor(10, 93).alpha() > 150
+                  && dimension.pixelColor(260, 93).alpha() > 150
+                  && single.pixelColor(10, 93).alpha() < 30,
+              "dimension lines add end bars instead of arrowheads");
+        arrow.arrowStyle = 9;
+        const QImage dimensionArrow = renderArrow(arrow);
+        check(dimensionArrow.pixelColor(250, 92).alpha() > 150
+                  && dimension.pixelColor(250, 92).alpha() < 30,
+              "dimension arrows combine end bars with open heads");
+    }
     overlay.m_anns.clear(); overlay.m_selAnn = -1;
     overlay.selectTool(ATool::Pen);
     const auto mouse = [&](QEvent::Type type, const QPoint &point, Qt::KeyboardModifiers mods = Qt::NoModifier) {

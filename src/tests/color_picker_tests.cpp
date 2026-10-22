@@ -833,188 +833,165 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     }
     overlay.selectTool(ATool::Marker);
     overlay.selectTool(ATool::Arrow);
+    auto *arrowShape = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("arrowStyleCombo"));
+    auto *arrowLine = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("arrowLineStyleCombo"));
+    check(arrowShape && arrowShape->count() == 10 && arrowLine && arrowLine->count() == 5
+              && !overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("dashedButton")),
+          "the arrow strip offers ten shapes and five line styles without a separate dash toggle");
     overlay.pickArrowStyle(1);
-    overlay.pickArrowLineStyle(0);
-    overlay.toggleArrowDashed();                  // Straight, dashed via its own toggle.
+    overlay.pickArrowLineStyle(1);
     const QPoint a1 = annOrigin + QPoint(60, 5), a2 = annOrigin + QPoint(60, 55);
     mouse(QEvent::MouseButtonPress, a1);
     mouse(QEvent::MouseMove, a2);
     mouse(QEvent::MouseButtonRelease, a2);
     check(overlay.m_anns.last().tool == ATool::Arrow
-              && overlay.m_anns.last().arrowStyle == 1
-              && overlay.m_anns.last().lineStyle == 0 && overlay.m_anns.last().dashed,
-          "the arrow shape, line style and dash toggle carry into fresh arrows");
-    overlay.toggleArrowDashed();
-    check(!overlay.m_arrowDashed && !overlay.m_anns.last().dashed,
-          "the dash toggle switches the selected arrow back to a solid shaft");
+              && overlay.m_anns.last().arrowStyle == 1 && overlay.m_anns.last().strokeStyle == 1
+              && overlay.m_anns.last().stroke.isEmpty(),
+          "shape and line style carry into a straight drag arrow");
     overlay.setToolNone();
-    mouse(QEvent::MouseButtonPress, a1 + QPoint(0, 25));
-    mouse(QEvent::MouseButtonRelease, a1 + QPoint(0, 25));
+    mouse(QEvent::MouseButtonPress, annOrigin + QPoint(60, 30));
+    mouse(QEvent::MouseButtonRelease, annOrigin + QPoint(60, 30));
     check(overlay.m_selAnn == overlay.m_anns.size() - 1
               && overlay.m_anns[overlay.m_selAnn].tool == ATool::Arrow,
           "the arrow stays selectable");
     overlay.pickArrowStyle(2);
-    check(overlay.m_anns[overlay.m_selAnn].arrowStyle == 2,
+    overlay.pickArrowLineStyle(3);
+    check(overlay.m_anns[overlay.m_selAnn].arrowStyle == 2
+              && overlay.m_anns[overlay.m_selAnn].strokeStyle == 3,
           "the options strip restyles the selected arrow");
     overlay.selectTool(ATool::Arrow);
     overlay.pickArrowStyle(0);
-    overlay.pickArrowLineStyle(1);                // Curve line style: freehand sampling.
+    overlay.pickArrowLineStyle(0);
     const QPoint c1 = annOrigin + QPoint(15, 5);
     mouse(QEvent::MouseButtonPress, c1);
     mouse(QEvent::MouseMove, c1 + QPoint(20, 25));
-    mouse(QEvent::MouseMove, c1 + QPoint(45, 5));
     mouse(QEvent::MouseMove, c1 + QPoint(70, 30));
     mouse(QEvent::MouseButtonRelease, c1 + QPoint(70, 30));
-    check(overlay.m_anns.last().lineStyle == 1 && overlay.m_anns.last().arrowStyle == 0
-              && overlay.m_anns.last().stroke.size() >= 4
-              && overlay.m_anns.last().a == overlay.m_anns.last().stroke.first().toPoint()
-              && overlay.m_anns.last().b == overlay.m_anns.last().stroke.last().toPoint(),
-          "curve arrows smooth the sampled drag and anchor its endpoints");
-    overlay.setToolNone();
-    mouse(QEvent::MouseButtonPress, c1 + QPoint(45, 8));
-    mouse(QEvent::MouseButtonRelease, c1 + QPoint(45, 8));
-    check(overlay.m_selAnn >= 0 && overlay.m_anns[overlay.m_selAnn].tool == ATool::Arrow
-              && overlay.m_anns[overlay.m_selAnn].lineStyle == 1,
-          "curve arrows remain selectable along their path");
-    // Straight arrows by clicks: A, then B, each click turns the end into a bend; a right click ends
-    // at the last clicked point, dropping the rubber band. Esc and double-click do not end it.
-    overlay.selectTool(ATool::Arrow);
-    overlay.pickArrowLineStyle(0);
-    check(overlay.m_toolOptions->findChildren<QComboBox *>().size() == 2
-              && overlay.m_toolOptions->findChildren<QComboBox *>().last()->count() == 2,
-          "the line style offers straight and curve only");
+    check(overlay.m_anns.last().a == c1 && overlay.m_anns.last().b == c1 + QPoint(70, 30)
+              && overlay.m_anns.last().stroke.isEmpty() && overlay.m_anns.last().arrowStyle == 0,
+          "arrow drag keeps only the two endpoints");
     auto rightAt = [&overlay](const QPoint &at) {
         QMouseEvent right(QEvent::MouseButtonPress, at, overlay.mapToGlobal(at),
                           Qt::RightButton, Qt::RightButton, Qt::NoModifier);
         QApplication::sendEvent(&overlay, &right);
     };
-    const QPoint p1 = annOrigin + QPoint(10, 70);
-    const int beforeClicks = overlay.m_anns.size();
-    mouse(QEvent::MouseButtonPress, p1);
-    mouse(QEvent::MouseButtonRelease, p1);
-    mouse(QEvent::MouseMove, p1 + QPoint(40, 0));
-    check(overlay.m_live && overlay.m_ann.stroke.size() == 2 && overlay.m_ann.stroke.last() == QPointF(p1 + QPoint(40, 0)),
-          "a first click starts a straight arrow that follows the cursor");
-    mouse(QEvent::MouseButtonPress, p1 + QPoint(40, 0));
-    mouse(QEvent::MouseButtonRelease, p1 + QPoint(40, 0));
-    {
-        QMouseEvent dbl(QEvent::MouseButtonDblClick, p1 + QPoint(40, 0), overlay.mapToGlobal(p1 + QPoint(40, 0)),
-                        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(&overlay, &dbl);
-    }
-    QKeyEvent escLive(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-    QApplication::sendEvent(&overlay, &escLive);
-    mouse(QEvent::MouseMove, p1 + QPoint(40, -30));
-    check(overlay.m_live && overlay.m_ann.stroke.size() == 3 && overlay.m_atool == ATool::Arrow,
-          "B becomes a bend; double-click and Esc keep the arrow going");
-    const QColor liveColor = overlay.m_ann.color;
-    overlay.pickToolColor(QColor("#3f48cc"));
-    check(overlay.m_ann.color == liveColor, "a color pick mid-draw leaves the live arrow alone");
-    mouse(QEvent::MouseButtonPress, p1 + QPoint(70, -30));
-    mouse(QEvent::MouseButtonRelease, p1 + QPoint(70, -30));
-    mouse(QEvent::MouseMove, p1 + QPoint(90, 10));
-    rightAt(p1 + QPoint(90, 10));
-    check(!overlay.m_live && overlay.m_anns.size() == beforeClicks + 1 && overlay.m_anns.last().lineStyle == 2
-              && overlay.m_anns.last().stroke
-                     == QPolygonF({QPointF(p1), QPointF(p1 + QPoint(40, 0)), QPointF(p1 + QPoint(70, -30))})
-              && overlay.m_anns.last().b == p1 + QPoint(70, -30) && overlay.m_atool == ATool::Arrow
-              && overlay.m_selAnn == overlay.m_anns.size() - 1,
-          "a right click ends at the last clicked point and keeps the tool");
-    check(overlay.m_acolor == liveColor && overlay.m_colorBoard->currentColor() == liveColor,
-          "the mid-draw pick reverts with the commit");
-    const QColor olderColor = overlay.m_anns[beforeClicks - 1].color;
-    overlay.pickToolColor(QColor("#ff7f27"));
-    check(overlay.m_anns.last().color == QColor("#ff7f27") && overlay.m_anns[beforeClicks - 1].color == olderColor,
-          "a pick after drawing recolors only the latest arrow");
-    // The selection spans only 90px vertically; keep these clicks inside it.
-    mouse(QEvent::MouseButtonPress, p1 + QPoint(0, -50));
-    mouse(QEvent::MouseButtonRelease, p1 + QPoint(0, -50));
-    mouse(QEvent::MouseButtonPress, p1 + QPoint(50, -50));
-    mouse(QEvent::MouseButtonRelease, p1 + QPoint(50, -50));
-    mouse(QEvent::MouseMove, p1 + QPoint(60, -40));
-    rightAt(p1 + QPoint(60, -40));
-    check(overlay.m_anns.size() == beforeClicks + 2 && overlay.m_anns.last().lineStyle == 0
-              && overlay.m_anns.last().stroke.isEmpty() && overlay.m_anns.last().a == p1 + QPoint(0, -50)
-              && overlay.m_anns.last().b == p1 + QPoint(50, -50) && overlay.m_anns.last().color == QColor("#ff7f27"),
-          "A then B is a plain straight arrow in the new color");
-    mouse(QEvent::MouseButtonPress, p1 + QPoint(0, -60));
-    mouse(QEvent::MouseButtonRelease, p1 + QPoint(0, -60));
-    mouse(QEvent::MouseMove, p1 + QPoint(40, -55));
-    rightAt(p1 + QPoint(40, -55));
-    check(!overlay.m_live && overlay.m_anns.size() == beforeClicks + 2,
-          "a right click right after A draws nothing");
-    // Ending then right-clicking twice: the first deselects, later ones keep the tool and capture;
-    // a pick afterwards only changes the current color for the next arrow.
-    mouse(QEvent::MouseButtonPress, p1 + QPoint(0, -60));
-    mouse(QEvent::MouseButtonRelease, p1 + QPoint(0, -60));
-    mouse(QEvent::MouseButtonPress, p1 + QPoint(40, -60));
-    mouse(QEvent::MouseButtonRelease, p1 + QPoint(40, -60));
-    rightAt(p1 + QPoint(40, -60));
-    const int ended = overlay.m_anns.size() - 1;
-    check(overlay.m_selAnn == ended, "the ended arrow is selected");
-    rightAt(p1 + QPoint(40, -60));
-    check(overlay.m_selAnn == -1 && overlay.m_atool == ATool::Arrow, "the first right click only deselects");
-    rightAt(p1 + QPoint(40, -60));
+    const QPoint mid = c1 + QPoint(35, 15);
+    rightAt(mid);
+    check(overlay.m_selAnn == -1 && overlay.m_atool == ATool::Arrow,
+          "the first right click only deselects");
+    rightAt(mid);
     check(overlay.m_selAnn == -1 && overlay.m_atool == ATool::Arrow && overlay.isVisible(),
           "further right clicks keep the tool and the capture");
-    const QColor endedColor = overlay.m_anns[ended].color;
+    const QColor endedColor = overlay.m_anns.last().color;
     overlay.pickToolColor(QColor("#a349a4"));
-    check(overlay.m_anns[ended].color == endedColor && overlay.m_acolor == QColor("#a349a4"),
+    check(overlay.m_anns.last().color == endedColor && overlay.m_acolor == QColor("#a349a4"),
           "a pick after deselecting leaves drawn arrows alone");
-    mouse(QEvent::MouseButtonPress, p1 + QPoint(0, -70));
-    mouse(QEvent::MouseButtonRelease, p1 + QPoint(0, -70));
-    mouse(QEvent::MouseButtonPress, p1 + QPoint(40, -70));
-    mouse(QEvent::MouseButtonRelease, p1 + QPoint(40, -70));
-    rightAt(p1 + QPoint(40, -70));
-    check(overlay.m_anns.size() == ended + 2 && overlay.m_anns.last().color == QColor("#a349a4"),
+    const QPoint q1 = annOrigin + QPoint(15, 40), q2 = q1 + QPoint(55, 0);
+    mouse(QEvent::MouseButtonPress, q1);
+    mouse(QEvent::MouseMove, q2);
+    mouse(QEvent::MouseButtonRelease, q2);
+    check(overlay.m_anns.last().color == QColor("#a349a4")
+              && overlay.m_anns.last().a == q1 && overlay.m_anns.last().b == q2,
           "the next arrow starts with the new color");
-    // Rendering parity: hollow head interior, absolute-unit dashes, antialiased edges.
+    // Rendering parity: ten shapes, five line styles, hollow body, bars and antialiased edges.
     {
         const QColor green(0x34, 0xc7, 0x59);
+        auto render = [&overlay](Annotation sample) {
+            QImage canvas(300, 200, QImage::Format_ARGB32);
+            canvas.fill(Qt::transparent);
+            QPainter painter(&canvas);
+            overlay.drawAnnotation(painter, sample, QImage());
+            painter.end();
+            return canvas;
+        };
         Annotation ann;
         ann.tool = ATool::Arrow;
         ann.color = green;
         ann.pen = 6;
         ann.a = QPoint(10, 100);
         ann.b = QPoint(260, 100);
-        ann.arrowStyle = 1;                       // Single hollow head, straight dashed line.
-        ann.dashed = true;
-        QImage canvas(280, 200, QImage::Format_ARGB32);
-        canvas.fill(Qt::transparent);
-        QPainter painter(&canvas);
-        overlay.drawAnnotation(painter, ann, QImage());
-        painter.end();
-        // One outline (pen 6, head 48 long, 21 half wide): 25px behind the tip the head edge sits
-        // ~10.9px off axis; mid-tail the tapered edge sits ~4.6px off axis.
-        check(canvas.pixelColor(235, 100).alpha() < 30 && canvas.pixelColor(120, 100).alpha() < 30,
-              "hollow arrows keep an empty interior through shaft and head");
-        check(canvas.pixelColor(235, 89).alpha() > 150 && canvas.pixelColor(120, 95).alpha() > 150,
-              "hollow arrow outlines carry ink at pen thickness");
-        ann.arrowStyle = 0;                       // Solid head, dashed straight shaft.
-        QImage dashed(280, 200, QImage::Format_ARGB32);
-        dashed.fill(Qt::transparent);
-        QPainter dashPainter(&dashed);
-        overlay.drawAnnotation(dashPainter, ann, QImage());
-        dashPainter.end();
-        int inked = 0, gaps = 0;                  // Round-capped dashes scale with the pen width.
-        for (int x = 10; x < 200; ++x) (dashed.pixelColor(x, 100).alpha() > 200 ? inked : gaps)++;
-        check(inked > 40 && gaps > 40, "dashed shafts alternate dash segments and gaps");
-        ann.dashed = false;                       // Solid head fills its triangle.
-        QImage solid(280, 200, QImage::Format_ARGB32);
-        solid.fill(Qt::transparent);
-        QPainter solidPainter(&solid);
-        overlay.drawAnnotation(solidPainter, ann, QImage());
-        solidPainter.end();
-        check(solid.pixelColor(250, 100).alpha() > 200,
-              "solid arrows fill their heads");
-        ann.arrowStyle = 4;                       // Diagonal bare line: AA probe off its edge.
+        for (int style = 0; style < 10; ++style) {
+            ann.arrowStyle = style;
+            ann.strokeStyle = 0;
+            const QImage image = render(ann);
+            int ink = 0;
+            for (int y = 0; y < image.height(); ++y)
+                for (int x = 0; x < image.width(); ++x)
+                    if (image.pixelColor(x, y).alpha() > 0) ++ink;
+            check(ink > 100, "every arrow shape draws visible ink");
+        }
+        auto runLengths = [](const QImage &image) {
+            QVector<int> runs;
+            int run = 0;
+            for (int x = 20; x <= 240; ++x) {
+                if (image.pixelColor(x, 100).alpha() > 200) ++run;
+                else if (run) { runs << run; run = 0; }
+            }
+            if (run) runs << run;
+            return runs;
+        };
+        QVector<int> dashes;
+        for (int style = 1; style <= 4; ++style) {
+            ann.arrowStyle = 0;
+            ann.strokeStyle = style;
+            const QImage image = render(ann);
+            const QVector<int> runs = runLengths(image);
+            int gaps = 0;
+            bool wasInk = false;
+            for (int x = 20; x <= 240; ++x) {
+                const bool ink = image.pixelColor(x, 100).alpha() > 200;
+                if (wasInk && !ink) ++gaps;
+                wasInk = ink;
+            }
+            int longest = 0;
+            for (int run : runs) longest = qMax(longest, run);
+            check(!runs.isEmpty() && gaps > 1,
+                  "dash, dot, dash-dot and dash-dot-dot shafts alternate ink");
+            dashes << longest;
+        }
+        check(dashes.size() == 4 && dashes[0] > dashes[1] && dashes[2] > dashes[1],
+              "the dash style has longer strokes than the dot style");
+        ann.arrowStyle = 4;
+        ann.strokeStyle = 0;
+        {
+            const QImage image = render(ann);
+            check(image.pixelColor(120, 100).alpha() < 30
+                      && image.pixelColor(120, 103).alpha() > 150,
+                  "hollow arrows keep an empty body and inked outline");
+        }
+        ann.arrowStyle = 5;
+        ann.strokeStyle = 1;
+        {
+            const QImage image = render(ann);
+            bool gap = false;
+            for (int x = 20; x <= 200; ++x)
+                if (image.pixelColor(x, 100).alpha() < 200) gap = true;
+            check(!gap, "filled arrows stay solid regardless of the selected line style");
+        }
+        ann.arrowStyle = 0;
+        ann.strokeStyle = 0;
+        const QImage single = render(ann);
+        ann.arrowStyle = 1;
+        const QImage bilateral = render(ann);
+        check(single.pixelColor(20, 96).alpha() < 30
+                  && bilateral.pixelColor(20, 96).alpha() > 150,
+              "double straight arrows carry a head at the start");
+        ann.arrowStyle = 6;
+        const QImage dimension = render(ann);
+        check(dimension.pixelColor(10, 93).alpha() > 150
+                  && dimension.pixelColor(260, 93).alpha() > 150
+                  && single.pixelColor(10, 93).alpha() < 30,
+              "dimension lines add end bars instead of arrowheads");
+        ann.arrowStyle = 9;
+        const QImage dimensionArrow = render(ann);
+        check(dimensionArrow.pixelColor(10, 93).alpha() > 150
+                  && dimensionArrow.pixelColor(250, 92).alpha() > 150
+                  && dimension.pixelColor(250, 92).alpha() < 30,
+              "dimension arrows combine end bars with open heads");
+        ann.arrowStyle = 0;
         ann.a = QPoint(10, 150);
         ann.b = QPoint(200, 80);
-        QImage diagonal(280, 200, QImage::Format_ARGB32);
-        diagonal.fill(Qt::transparent);
-        QPainter diagPainter(&diagonal);
-        overlay.drawAnnotation(diagPainter, ann, QImage());
-        diagPainter.end();
+        const QImage diagonal = render(ann);
         const QLineF center(ann.a, ann.b);
         const QPointF unit = (center.p2() - center.p1()) / center.length();
         const QPointF edgePoint = center.pointAt(0.5)
@@ -1025,36 +1002,21 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
                 const int alpha = diagonal.pixelColor(edgePoint.toPoint() + QPoint(dx, dy)).alpha();
                 if (alpha > 0 && alpha < 255) ++blended;
             }
-        check(blended > 0,
-              "antialiased arrow edges blend into the background");
-        if (!previewPath.isEmpty()) {           // Visual preview of the shape and line styles.
-            QImage preview(580, 500, QImage::Format_ARGB32);
+        check(blended > 0, "antialiased arrow edges blend into the background");
+        if (!previewPath.isEmpty()) {
+            QImage preview(620, 760, QImage::Format_ARGB32);
             preview.fill(QColor(30, 34, 38));
             QPainter previewPainter(&preview);
-            const QColor colors[] = {Qt::white, QColor("#ff3b30"), QColor("#34c759")};
-            for (int style = 0; style < 5; ++style)
-                for (int line = 0; line < 4; ++line) {   // Rows: straight, curve, polyline, straight dashed.
-                    Annotation sample;
-                    sample.tool = ATool::Arrow;
-                    sample.color = colors[(style + line) % 3];
-                    sample.pen = 5;
-                    sample.arrowStyle = style;
-                    sample.lineStyle = line == 3 ? 0 : line;
-                    sample.dashed = line == 3;
-                    if (line == 1 || line == 2) {
-                        sample.stroke << QPointF(20, 30) << QPointF(70, 55)
-                                      << QPointF(120, 15) << QPointF(180, 40);
-                        sample.a = sample.stroke.first().toPoint();
-                        sample.b = sample.stroke.last().toPoint();
-                    } else {
-                        sample.a = QPoint(20, 25);
-                        sample.b = QPoint(180, 25);
-                    }
-                    previewPainter.save();
-                    previewPainter.translate((style % 3) * 195, (style / 3) * 250 + line * 60);
-                    overlay.drawAnnotation(previewPainter, sample, QImage());
-                    previewPainter.restore();
-                }
+            Annotation sample;
+            sample.tool = ATool::Arrow;
+            sample.color = Qt::white;
+            sample.pen = 4;
+            for (int style = 0; style < 10; ++style) {
+                sample.arrowStyle = style;
+                sample.a = QPoint(20, 28 + style * 68);
+                sample.b = QPoint(280, 28 + style * 68);
+                overlay.drawAnnotation(previewPainter, sample, QImage());
+            }
             previewPainter.end();
             preview.save(previewPath + QStringLiteral(".arrow-shapes.png"));
         }

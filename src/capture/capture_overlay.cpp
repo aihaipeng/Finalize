@@ -728,12 +728,6 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
             return;
         }
     }
-    if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {   // Polyline: each click fixes a vertex.
-        m_ann.stroke.last() = e->pos();
-        m_ann.stroke << e->pos();
-        update();
-        return;
-    }
     setFocus();                                   // Any click restores keyboard handling.
     m_pressPos = e->pos();
     m_dragStarted = false;
@@ -1002,16 +996,6 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
         QApplication::sendEvent(parent(), &fwd);
         return;
     }
-    if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {
-        // A drag on the first press draws one arrow; otherwise vertices come from clicks.
-        if (m_ann.stroke.size() == 2
-            && (e->pos() - m_ann.stroke.first().toPoint()).manhattanLength() >= QApplication::startDragDistance()) {
-            m_ann.stroke << m_ann.stroke.last();   // Keep the dragged end; commit drops the rubber band.
-            m_live = false;
-            commitAnnotation();
-        }
-        return;
-    }
     if (m_live) {                               // Commit the annotation; the tool stays active.
         m_live = false;
         commitAnnotation();
@@ -1111,7 +1095,6 @@ void CaptureOverlay::contextMenuEvent(QContextMenuEvent *e)
 void CaptureOverlay::mouseDoubleClickEvent(QMouseEvent *e)
 {
     if (editorActive()) return;                  // A text double-click never pins the capture.
-    if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) return;   // Its first press already placed the vertex.
     if (m_mode == Adjusting && (m_atool == ATool::None || m_atool == ATool::Text)) {
         const int hit = textAnnotationAt(e->pos());  // Double-click also reopens locked text.
         if (hit >= 0) {
@@ -1200,7 +1183,6 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
         if (!m_embedded && !m_pinEdit) refreshScreenshot();
         break;
     case Qt::Key_Escape:
-        if (m_live && m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) break;   // Only a right click ends it.
         if (m_live) { m_live = false; endAnnotationDrag(); }
         else if (editorActive()) commitTextEdit();
         else if (m_embedded) {                    // The pin owns the rest: hide its bar, then close.

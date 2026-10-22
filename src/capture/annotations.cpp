@@ -70,39 +70,6 @@
 #include <algorithm>
 
 namespace {
-// Chord-weighted Catmull-Rom (tension 1/2) through the sampled points, matching the
-// reference generator's curve mode: interior vertices become bezier control pairs.
-QPainterPath smoothStrokePath(const QPolygonF &pts)
-{
-    QPainterPath path;
-    if (pts.isEmpty()) return path;
-    const int n = pts.size();
-    path.moveTo(pts.first());
-    if (n == 2) { path.lineTo(pts.last()); return path; }
-    const int last = n - 1;
-    QVector<QPair<QPointF, QPointF>> ctrl(last);         // [i] = {incoming c1, outgoing c2}
-    for (int i = 1; i < last; ++i) {
-        const qreal prev = QLineF(pts[i - 1], pts[i]).length();
-        const qreal next = QLineF(pts[i], pts[i + 1]).length();
-        const qreal total = prev + next;
-        const QPointF span = total > 0 ? (pts[i + 1] - pts[i - 1]) * 0.5 / total : QPointF();
-        ctrl[i] = {pts[i] - span * prev, pts[i] + span * next};
-    }
-    path.quadTo(ctrl[1].first, pts[1]);
-    for (int i = 2; i < last; ++i) path.cubicTo(ctrl[i - 1].second, ctrl[i].first, pts[i]);
-    path.quadTo(ctrl[last - 1].second, pts[last]);
-    return path;
-}
-
-// Reference head geometry: tip on the endpoint, base pulled back 3 widths, half width 1.5.
-QPolygonF arrowHeadPoly(const QPointF &tip, const QPointF &dir, qreal len, qreal half)
-{
-    const QPointF norm(-dir.y(), dir.x());
-    QPolygonF head;
-    head << tip << (tip - dir * len + norm * half) << (tip - dir * len - norm * half);
-    return head;
-}
-
 // Popup rows: a rounded wash under the current or hovered row, no style selection marker.
 class FlatItemDelegate : public QStyledItemDelegate
 {
@@ -253,12 +220,10 @@ QRect CaptureOverlay::annotationRect(const Annotation &ann)
         return ann.stroke.boundingRect().toAlignedRect().adjusted(-w, -w, w, w);
     }
     switch (ann.tool) {
-    case ATool::Arrow:
-        if (ann.lineStyle >= 1) {                 // Curve / polyline: bounds of the path plus the head.
-            const int m = ann.pen * 2 + 2;
-            return ann.stroke.boundingRect().toRect().adjusted(-m, -m, m, m);
-        }
-        return QRect(ann.a, ann.b).normalized();
+    case ATool::Arrow: {
+        const int m = qCeil(ann.pen * 3) + 2;     // Heads and dimension bars extend past the endpoints.
+        return QRect(ann.a, ann.b).normalized().adjusted(-m, -m, m, m);
+    }
     case ATool::Pen:    return ann.stroke.boundingRect().toRect();
     case ATool::Marker: {                          // Fat translucent stroke: include its width.
         if (ann.fill) return ann.rect;
@@ -330,15 +295,9 @@ bool CaptureOverlay::annotationHit(const Annotation &ann, const QPoint &pos)
         return outer <= 1.0 && inner >= 1.0;
     }
     case ATool::Arrow:
-        if (ann.lineStyle >= 1) {                 // Curve / polyline arrows hit along their vertices.
-            if (ann.stroke.isEmpty()) return false;
-            for (int i = 1; i < ann.stroke.size(); ++i)
-                if (distToSegment(QPointF(pos), ann.stroke[i - 1], ann.stroke[i]) <= tol + ann.pen / 2)
-                    return true;
-            return distToSegment(QPointF(pos), ann.stroke.first(), ann.stroke.first())
-                <= tol + ann.pen / 2;
-        }
-        return distToSegment(QPointF(pos), ann.a, ann.b) <= tol + ann.pen / 2;
+        return distToSegment(QPointF(pos), ann.a, ann.b) <= tol + ann.pen / 2
+            || QLineF(pos, ann.a).length() <= 3.0 * ann.pen + tol
+            || QLineF(pos, ann.b).length() <= 3.0 * ann.pen + tol;
     case ATool::Pen:
         if (ann.stroke.isEmpty()) return false;
         for (int i = 1; i < ann.stroke.size(); ++i)
@@ -539,8 +498,6 @@ void CaptureOverlay::applyItemDrag(const QPoint &pos)
         QPoint local = mapToLocal(ann, pos);   // Handle math runs in item space.
         if (ann.tool == ATool::Arrow || (ann.tool == ATool::Marker && !ann.fill)) {
             if (m_itemDrag == H_TL) ann.a = local; else ann.b = local;
-            if (ann.tool == ATool::Arrow && ann.lineStyle >= 1 && ann.stroke.size() >= 2)   // Path endpoints ride the path ends.
-                ann.stroke[m_itemDrag == H_TL ? 0 : ann.stroke.size() - 1] = QPointF(local);
         } else {
             const QRect r = m_pressAnn.rect.normalized();
             const QPoint fixed = m_itemDrag == H_TL ? r.bottomRight()
@@ -1569,18 +1526,12 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
     if (m_atool == ATool::Marker && !m_ann.fill) m_ann.a = m_ann.b = pos;
     if (m_atool == ATool::Arrow) {
         m_ann.arrowStyle = m_arrowStyle;
-        m_ann.lineStyle = m_arrowLineStyle;
-        m_ann.dashed = m_arrowDashed;
+        m_ann.strokeStyle = m_arrowLineStyle;
         m_ann.a = m_ann.b = pos;
     }
-    if (m_atool == ATool::Arrow && m_arrowLineStyle == 0) {
-        m_ann.lineStyle = 2;                     // Straight arrows build clicked vertices; two collapse to a/b.
-        m_ann.stroke << pos << pos;              // Fixed vertex plus a rubber-band end.
-    }
-    else if (m_atool == ATool::Pen || (m_atool == ATool::Eraser && !m_ann.fill)
-        || m_ann.mosaicBrush || (m_atool == ATool::Arrow && m_arrowLineStyle == 1))
-        m_ann.stroke << pos;                     // Curve arrows sample the drag like the pen.
-    else if (m_atool != ATool::Arrow && !(m_atool == ATool::Marker && !m_ann.fill)) m_ann.rect = QRect(pos, pos);
+    else if (m_atool == ATool::Pen || (m_atool == ATool::Eraser && !m_ann.fill) || m_ann.mosaicBrush)
+        m_ann.stroke << pos;
+    else if (!(m_atool == ATool::Marker && !m_ann.fill)) m_ann.rect = QRect(pos, pos);
     syncSizeInput();                             // Keep the active options visible while drawing.
     m_inspector->hide();
     m_sizeBar->hide();
@@ -1598,23 +1549,18 @@ void CaptureOverlay::updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers m
         m_ann.b = end.toPoint();
         return;
     }
-    if (m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {   // Rubber band to the cursor.
-        const QPointF from = m_ann.stroke[m_ann.stroke.size() - 2];
-        QPointF b = pos;
-        const QLineF line(from, b);
-        if (mods & Qt::ShiftModifier && line.length() > 1) {   // Snap the segment to 45-degree steps.
-            const qreal angle = qRound(qAtan2(-(b.y() - from.y()), b.x() - from.x()) / (M_PI / 4)) * (M_PI / 4);
-            b = QPointF(from.x() + qCos(angle) * line.length(), from.y() - qSin(angle) * line.length());
+    if (m_ann.tool == ATool::Arrow) {
+        QPointF end = pos;
+        const QLineF line(m_ann.a, end);
+        if (mods & Qt::ShiftModifier && line.length() > 1) {   // Snap the arrow to 45-degree steps.
+            const qreal angle = qRound(qAtan2(-line.dy(), line.dx()) / (M_PI / 4)) * (M_PI / 4);
+            end = QPointF(m_ann.a) + QPointF(qCos(angle), -qSin(angle)) * line.length();
         }
-        m_ann.stroke.last() = b;
-        m_ann.b = b.toPoint();
+        m_ann.b = end.toPoint();
         return;
     }
-    if (m_ann.mosaicBrush
-        || (m_atool == ATool::Arrow && m_ann.lineStyle == 1)) {
+    if (m_ann.mosaicBrush) {
         if ((pos - m_ann.stroke.last().toPoint()).manhattanLength() >= 2) m_ann.stroke << pos;
-        m_ann.a = m_ann.stroke.first().toPoint();   // Endpoint anchors follow the path ends.
-        m_ann.b = m_ann.stroke.last().toPoint();
         return;
     }
     const ATool shape = (m_ann.tool == ATool::Marker || m_ann.tool == ATool::Eraser) && m_ann.fill
@@ -1641,31 +1587,13 @@ void CaptureOverlay::updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers m
 
 void CaptureOverlay::commitAnnotation()
 {
-    if (m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {   // End at the last clicked vertex.
-        if (!m_ann.stroke.isEmpty()) m_ann.stroke.removeLast();   // The rubber band.
-        QPolygonF vertices;
-        for (const QPointF &p : std::as_const(m_ann.stroke))
-            if (vertices.isEmpty() || QLineF(vertices.last(), p).length() >= 1) vertices << p;
-        m_ann.stroke = vertices;
-        if (!vertices.isEmpty()) {
-            m_ann.a = vertices.first().toPoint();
-            m_ann.b = vertices.last().toPoint();
-        }
-        if (vertices.size() <= 2) {              // A single segment is a plain straight arrow.
-            m_ann.lineStyle = 0;
-            m_ann.stroke.clear();
-        }
-    }
-    qreal pathLength = 0;
-    for (int i = 1; i < m_ann.stroke.size(); ++i) pathLength += QLineF(m_ann.stroke[i - 1], m_ann.stroke[i]).length();
     const bool meaningful = m_ann.mosaicBrush ? !m_ann.stroke.isEmpty()
         : m_ann.tool == ATool::Eraser && !m_ann.fill ? !m_ann.stroke.isEmpty()   // A click erases a dot.
         : m_ann.tool == ATool::Marker && !m_ann.fill ? (m_ann.a - m_ann.b).manhattanLength() >= 3
         : m_ann.tool == ATool::Pen
         ? m_ann.stroke.size() >= 2
         : m_ann.tool == ATool::Arrow
-              ? (m_ann.lineStyle >= 1 ? m_ann.stroke.size() >= 2 && pathLength >= 6
-                                       : (m_ann.a - m_ann.b).manhattanLength() >= 6)
+              ? (m_ann.a - m_ann.b).manhattanLength() >= 6
               : m_ann.rect.width() >= 3 && m_ann.rect.height() >= 3;
     if (meaningful) {                            // Discard accidental tiny strokes.
         pushUndo();
@@ -1703,7 +1631,7 @@ void CaptureOverlay::endAnnotationDrag()                         // Restore what
 
 void CaptureOverlay::setToolNone()
 {
-    if (m_live) { m_live = false; commitAnnotation(); }   // A clicked arrow can still be open.
+    if (m_live) { m_live = false; commitAnnotation(); }   // A live arrow can still be open.
     stopItemDrag();
     commitTextEdit();
     m_atool = ATool::None;
@@ -1754,10 +1682,8 @@ void CaptureOverlay::pickToolColor(const QColor &color, bool undoable)
         m_editColor = color;
         applyEditorFont();
     } else if (m_live) {
-        if (!(m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2)) {   // A clicked arrow keeps its start color.
-            m_ann.color = color;
-            update();
-        }
+        m_ann.color = color;
+        update();
     } else if (m_selAnn >= 0 && m_selAnn < m_anns.size() && m_anns[m_selAnn].tool != ATool::Mosaic
                && m_anns[m_selAnn].tool != ATool::Eraser && m_anns[m_selAnn].color != color) {
         if (undoable) pushUndo();
@@ -1832,7 +1758,7 @@ void CaptureOverlay::pickShapeStyle(int style)
 
 void CaptureOverlay::pickArrowStyle(int style)
 {
-    m_arrowStyle = qBound(0, style, 4);
+    m_arrowStyle = qBound(0, style, 9);
     if (m_selAnn >= 0 && m_selAnn < m_anns.size()
         && m_anns[m_selAnn].tool == ATool::Arrow) {
         pushUndo();
@@ -1843,25 +1769,11 @@ void CaptureOverlay::pickArrowStyle(int style)
 
 void CaptureOverlay::pickArrowLineStyle(int style)
 {
-    m_arrowLineStyle = qBound(0, style, 1);
+    m_arrowLineStyle = qBound(0, style, 4);
     if (m_selAnn >= 0 && m_selAnn < m_anns.size()
         && m_anns[m_selAnn].tool == ATool::Arrow) {
         pushUndo();
-        Annotation &ann = m_anns[m_selAnn];
-        if (m_arrowLineStyle == 1 || ann.lineStyle != 2)   // Clicked vertices already are straight segments.
-            ann.lineStyle = m_arrowLineStyle;
-        if (ann.lineStyle >= 1 && ann.stroke.size() < 2)   // Straight arrows gain a two-point path.
-            ann.stroke = QPolygonF{QPointF(ann.a), QPointF(ann.b)};
-        update();
-    }
-}
-
-void CaptureOverlay::toggleArrowDashed()
-{
-    m_arrowDashed = !m_arrowDashed;
-    if (m_selAnn >= 0 && m_selAnn < m_anns.size() && m_anns[m_selAnn].tool == ATool::Arrow) {
-        pushUndo();
-        m_anns[m_selAnn].dashed = m_arrowDashed;
+        m_anns[m_selAnn].strokeStyle = m_arrowLineStyle;
         update();
     }
 }
@@ -2170,23 +2082,18 @@ void CaptureOverlay::updateToolOptions()
         break;
     case ATool::Arrow: {
         // Glyphs come from the arrow renderer itself, drawn as wide horizontal samples.
-        // Head samples use a heavier pen so the solid head reads clearly; hollow ones stay thin and crisp.
-        auto glyph = [this](int style, int line) {
+        auto glyph = [this](int style) {
             const qreal dpr = devicePixelRatioF();
-            QPixmap pm(qCeil(36 * dpr), qCeil(16 * dpr));
+            QPixmap pm(qCeil(40 * dpr), qCeil(20 * dpr));
             pm.setDevicePixelRatio(dpr);
             pm.fill(Qt::transparent);
             Annotation sample;
             sample.tool = ATool::Arrow;
             sample.color = Bar::ink;
-            const bool hollowHead = style == 1 || style == 3;
-            sample.pen = line > 0 || style == 4 ? 2 : hollowHead ? 1 : 3;
+            sample.pen = 2.25;
             sample.arrowStyle = style;
-            sample.lineStyle = line;
-            sample.a = QPoint(2, 8);
-            sample.b = QPoint(34, 8);
-            if (line == 1)
-                sample.stroke << QPointF(2, 12) << QPointF(12, 4) << QPointF(22, 12) << QPointF(34, 5);
+            sample.a = QPoint(8, 10);
+            sample.b = QPoint(32, 10);
             QPainter painter(&pm);
             drawAnnotation(painter, sample, QImage());
             return QIcon(pm);
@@ -2210,32 +2117,66 @@ void CaptureOverlay::updateToolOptions()
             });
             l->addWidget(combo);
         };
-        addCombo(lay, m_arrowStyle, 5,                 // Heads only.
-                 [&](int k) { return glyph(k, 0); },
+        const bool editing = !m_live && m_selAnn >= 0 && m_selAnn < m_anns.size()
+                             && m_anns[m_selAnn].tool == ATool::Arrow;
+        const int currentShape = editing ? qBound(0, m_anns[m_selAnn].arrowStyle, 9) : m_arrowStyle;
+        const int currentLine = editing ? qBound(0, m_anns[m_selAnn].strokeStyle, 4) : m_arrowLineStyle;
+        if (editing) {
+            m_arrowStyle = currentShape;
+            m_arrowLineStyle = currentLine;
+        }
+        addCombo(lay, currentShape, 10,
+                 [&](int k) { return glyph(k); },
                  [](int k) {
                      const char *const names[] = {
-                         QT_TRANSLATE_NOOP("CaptureOverlay", "单向箭头"),
-                         QT_TRANSLATE_NOOP("CaptureOverlay", "单向镂空箭头"),
-                         QT_TRANSLATE_NOOP("CaptureOverlay", "双向箭头"),
-                         QT_TRANSLATE_NOOP("CaptureOverlay", "双向镂空箭头"),
-                         QT_TRANSLATE_NOOP("CaptureOverlay", "无箭头")};
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "直线箭头"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "双向直线箭头"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "线条箭头"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "双向线条箭头"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "空心箭头"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "填充箭头"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "尺寸线"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "实心箭头"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "双向实心箭头"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "尺寸箭头")};
                      return QCoreApplication::translate("CaptureOverlay", names[k]);
                  },
                  [this](int k) { pickArrowStyle(k); });
-        const bool editing = !m_live && m_selAnn >= 0 && m_selAnn < m_anns.size()
-                             && m_anns[m_selAnn].tool == ATool::Arrow;
-        addCombo(lay, m_arrowLineStyle, 2,             // Path only; dashing is its own toggle.
-                 [&](int k) { return glyph(4, k); },
+        auto *shapeCombo = qobject_cast<QComboBox *>(lay->itemAt(lay->count() - 1)->widget());
+        shapeCombo->setObjectName(QStringLiteral("arrowStyleCombo"));
+        shapeCombo->setFixedSize(72, 24);
+        shapeCombo->setIconSize(QSize(40, 20));
+        auto lineIcon = [this](int style) {
+            const qreal dpr = devicePixelRatioF();
+            QPixmap pm(qCeil(40 * dpr), qCeil(20 * dpr));
+            pm.setDevicePixelRatio(dpr);
+            pm.fill(Qt::transparent);
+            QPainter painter(&pm);
+            painter.setRenderHint(QPainter::Antialiasing);
+            QPen sample(Bar::ink, 1.5);
+            sample.setStyle(static_cast<Qt::PenStyle>(Qt::SolidLine + style));
+            sample.setCapStyle(Qt::FlatCap);
+            sample.setJoinStyle(Qt::BevelJoin);
+            painter.setPen(sample);
+            painter.drawLine(QPointF(2, 10), QPointF(38, 10));
+            return QIcon(pm);
+        };
+        addCombo(lay, currentLine, 5,
+                 [&](int k) { return lineIcon(k); },
                  [](int k) {
                      const char *const names[] = {
-                         QT_TRANSLATE_NOOP("CaptureOverlay", "直线"),
-                         QT_TRANSLATE_NOOP("CaptureOverlay", "曲线")};
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "实线"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "虚线"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "点线"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "点划线"),
+                         QT_TRANSLATE_NOOP("CaptureOverlay", "双点划线")};
                      return QCoreApplication::translate("CaptureOverlay", names[k]);
                  },
                  [this](int k) { pickArrowLineStyle(k); });
-        addOption(lay, Icon::Dashed, tr("虚线"), editing ? m_anns[m_selAnn].dashed : m_arrowDashed,
-                  [this] { toggleArrowDashed(); });
-        lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("dashedButton"));
+        auto *lineCombo = qobject_cast<QComboBox *>(lay->itemAt(lay->count() - 1)->widget());
+        lineCombo->setObjectName(QStringLiteral("arrowLineStyleCombo"));
+        lineCombo->setFixedSize(72, 24);
+        lineCombo->setIconSize(QSize(40, 20));
         addSize();
         addSeparator(lay);
         addSwatches(lay, ATool::Arrow);
@@ -2657,175 +2598,139 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         break;
     }
     case ATool::Arrow: {
-        const qreal w = ann.pen;
-        // Style picks heads only; line style picks the path (straight/curve) and dashing.
-        const bool hollow = ann.arrowStyle == 1 || ann.arrowStyle == 3;
-        const bool startHead = ann.arrowStyle == 2 || ann.arrowStyle == 3;
-        const bool tipHead = ann.arrowStyle <= 3;
-        const bool curve = ann.lineStyle == 1, polyline = ann.lineStyle == 2, dashed = ann.dashed;
+        const qreal w = qMax<qreal>(1.0, ann.pen);
+        const int style = qBound(0, ann.strokeStyle, 4);
+        const int shape = qBound(0, ann.arrowStyle, 9);
+        const QPointF start(ann.a), tip(ann.b);
+        const qreal length = QLineF(start, tip).length();
+        if (length < 0.5) break;
+        const QPointF dir = (tip - start) / length;
+        const QPointF normal(-dir.y(), dir.x());
+        const bool both = shape == 1 || shape == 3 || shape == 8 || shape == 9;
+        const qreal headLen = qMin(3.0 * w, length * (both ? 0.45 : 0.75));
+        const qreal headHalf = headLen / 2.0;
+        const qreal barHalf = qMin(1.5 * w, length * 0.45);
+
         QPen shaft(ann.color, w);
-        shaft.setJoinStyle(Qt::RoundJoin);
         shaft.setCapStyle(Qt::RoundCap);
-        // Dashes scale with the width; round caps make each visible dash ~2.2w with ~1.4w gaps.
-        if (dashed) shaft.setDashPattern({1.2, 2.4});
-        p.setPen(shaft);
-
-        // Path plus end tangents for the chosen shape.
-        QPainterPath path;
-        QPointF dirEnd(1, 0);
-        qreal length = 0;
-        if (curve || polyline) {                        // Curve: smoothed drag; polyline: clicked vertices.
-            if (ann.stroke.size() < 2) break;
-            if (curve) path = smoothStrokePath(ann.stroke);
-            else {
-                path.moveTo(ann.stroke.first());
-                for (int i = 1; i < ann.stroke.size(); ++i) path.lineTo(ann.stroke[i]);
-            }
-            dirEnd = QPointF(ann.stroke.last() - ann.stroke[ann.stroke.size() - 2]);
-            const qreal len = qSqrt(dirEnd.x() * dirEnd.x() + dirEnd.y() * dirEnd.y());
-            if (len > 0.001) dirEnd /= len;
-            length = path.length();
-        } else {
-            const QLineF shaftLine(ann.a, ann.b);
-            length = shaftLine.length();
-            if (length < 1) break;
-            dirEnd = (shaftLine.p2() - shaftLine.p1()) / length;
-            path.moveTo(shaftLine.p1());
-            path.lineTo(shaftLine.p2());
+        shaft.setJoinStyle(Qt::MiterJoin);
+        switch (style) {
+        case 1: shaft.setDashPattern({4, 2}); break;
+        case 2: shaft.setDashPattern({1, 2}); break;
+        case 3: shaft.setDashPattern({4, 2, 1, 2}); break;
+        case 4: shaft.setDashPattern({4, 2, 1, 2, 1, 2}); break;
+        default: break;
         }
-        if (hollow) {
-            // Whole arrow as one outline: a tail that tapers into swept-back heads, stroked at the pen width.
-            // Proportions measured from the user's reference capture: head ~8w long, ~3.5w half
-            // wide, tail ~1.3w half wide, the shaft meeting the head 3/4 of the way back.
-            const qreal hl = qMin(8 * w, length * (startHead ? 0.4 : 0.7));
-            const qreal hh = hl * 3.5 / 8, sh = hl * 1.3 / 8, notch = hl * 0.75;
-            struct Frame { QPointF p, d, n; };
-            auto frame = [&](qreal s) {
-                const qreal t = path.percentAtLength(qBound(0.0, s, length));
-                const qreal ang = qDegreesToRadians(path.angleAtPercent(t));
-                const QPointF d(qCos(ang), -qSin(ang));
-                return Frame{path.pointAtPercent(t), d, QPointF(-d.y(), d.x())};
-            };
-            const qreal s0 = startHead ? notch : 0, s1 = length - notch;
-            auto half = [&](qreal s) {
-                return startHead ? sh : sh * (0.15 + 0.85 * (s - s0) / qMax(1.0, s1 - s0));
-            };
-            // Samples along the tail: polylines use their own vertices with mitred normals so
-            // corners stay crisp; curves are sampled densely.
-            QVector<Frame> rail;
-            QVector<qreal> railS;
-            const int steps = curve ? 60 : 1;
-            for (int i = 0; i <= steps; ++i) {
-                const qreal s = s0 + (s1 - s0) * i / steps;
-                rail << frame(s);
-                railS << s;
-            }
-            if (polyline) {
-                qreal along = 0;
-                for (int i = 1; i < ann.stroke.size() - 1; ++i) {
-                    along += QLineF(ann.stroke[i - 1], ann.stroke[i]).length();
-                    if (along <= s0 || along >= s1) continue;
-                    auto unit = [](QPointF d) { const qreal n = qSqrt(QPointF::dotProduct(d, d)); return n > 0.001 ? d / n : d; };
-                    const QPointF din = unit(ann.stroke[i] - ann.stroke[i - 1]);
-                    const QPointF dout = unit(ann.stroke[i + 1] - ann.stroke[i]);
-                    const QPointF nin(-din.y(), din.x()), nout(-dout.y(), dout.x());
-                    QPointF miter = unit(nin + nout);
-                    const qreal cosHalf = QPointF::dotProduct(miter, nin);
-                    miter /= qMax(0.25, cosHalf);           // Limit spikes on very sharp turns.
-                    rail.insert(rail.size() - 1, Frame{ann.stroke[i], dout, miter});
-                    railS.insert(railS.size() - 1, along);
-                }
-            }
-            QPolygonF outline;
-            for (int i = 0; i < rail.size(); ++i) outline << rail[i].p + rail[i].n * half(railS[i]);
-            // Head barbs sit on the path frame at the head base, so curved ends do not self-cross.
-            const Frame endBase = frame(length - hl);
-            const QPointF tip = frame(length).p;
-            outline << endBase.p + endBase.n * hh << tip << endBase.p - endBase.n * hh;
-            for (int i = rail.size() - 1; i >= 0; --i) outline << rail[i].p - rail[i].n * half(railS[i]);
-            if (startHead) {
-                const Frame startBase = frame(hl);
-                outline << startBase.p - startBase.n * hh << frame(0).p << startBase.p + startBase.n * hh;
-            }
-            QPen edge = shaft;                         // Sharp tip and barbs, as in the reference capture.
-            edge.setStyle(Qt::SolidLine);              // A dashed closed outline reads as noise; hollow stays solid.
-            edge.setJoinStyle(Qt::MiterJoin);
-            p.setPen(edge);
+        auto solidPen = [&] {
+            QPen pen = shaft;
+            pen.setStyle(Qt::SolidLine);
+            return pen;
+        };
+        auto paintFlatHead = [&](const QPointF &end, const QPointF &d) {
+            QPolygonF head;
+            head << end << end - d * headLen + normal * headHalf
+                 << end - d * headLen - normal * headHalf;
+            p.setPen(Qt::NoPen);
+            p.setBrush(ann.color);
+            p.drawPolygon(head);
+        };
+        auto paintOpenHead = [&](const QPointF &end, const QPointF &d) {
+            QPen headPen = solidPen();
+            headPen.setCapStyle(Qt::RoundCap);
+            headPen.setJoinStyle(Qt::MiterJoin);
+            p.setPen(headPen);
             p.setBrush(Qt::NoBrush);
-            p.drawPolygon(outline);
-            break;
-        }
-        // Heads shrink when the shaft cannot fit them (reference short-line scaling).
-        qreal headLen = 3 * w;
-        const qreal wanted = (startHead ? headLen : 0) + (tipHead ? headLen : 0);
-        if (length > 0 && length - wanted < 2 * w)
-            headLen *= qMax(0.0, length - 2 * w) / qMax(1e-6, wanted);
-        QPointF dirStart = -dirEnd;
-        if (polyline) {                                 // Each head follows its own end segment.
-            const QPointF d = ann.stroke.first() - ann.stroke[1];
-            const qreal n = qSqrt(QPointF::dotProduct(d, d));
-            if (n > 0.001) dirStart = d / n;
-        }
-        if (curve && headLen > 0.5) {
-            // Curved heads aim along the chord from their base to the tip, so the trimmed shaft meets the base square.
-            auto chord = [&](qreal from, qreal to, const QPointF &fallback) {
-                const QPointF d = path.pointAtPercent(path.percentAtLength(to))
-                                  - path.pointAtPercent(path.percentAtLength(from));
-                const qreal n = qSqrt(QPointF::dotProduct(d, d));
-                return n > 0.001 ? d / n : fallback;
-            };
-            dirEnd = chord(length - headLen, length, dirEnd);
-            dirStart = chord(headLen, 0, dirStart);
-        }
+            const qreal arm = headLen * 2.5 / 3.0;
+            QPainterPath vee;
+            vee.moveTo(end - d * arm + normal * headHalf);
+            vee.lineTo(end);
+            vee.lineTo(end - d * arm - normal * headHalf);
+            p.drawPath(vee);
+        };
+        auto paintBar = [&](const QPointF &end) {
+            QPen barPen = solidPen();
+            barPen.setCapStyle(Qt::FlatCap);
+            p.setPen(barPen);
+            p.setBrush(Qt::NoBrush);
+            p.drawLine(end - normal * barHalf, end + normal * barHalf);
+        };
 
-        // Trim the shaft so it stops at each head base instead of poking through.
-        // Hollow heads pull back w/2 more so the round cap cannot poke into the open head.
-        // Solid heads stop the shaft at the barb notch; the head fill covers its round cap.
-        const qreal capRoom = hollow ? w / 2 : -0.35 * headLen;
-        const qreal trimStart = startHead ? headLen + capRoom : 0;
-        const qreal trimEnd = tipHead ? headLen + capRoom : 0;
-        if (length > trimStart + trimEnd) {
-            QPainterPath trimmed;
-            const qreal from = path.percentAtLength(trimStart);
-            const qreal to = path.percentAtLength(length - trimEnd);
-            trimmed.moveTo(path.pointAtPercent(from));
-            if (polyline) {                                 // Keep the clicked corners sharp.
-                qreal along = 0;
-                for (int i = 1; i < ann.stroke.size() - 1; ++i) {
-                    along += QLineF(ann.stroke[i - 1], ann.stroke[i]).length();
-                    if (along > trimStart && along < length - trimEnd) trimmed.lineTo(ann.stroke[i]);
-                }
-            } else {
-                for (qreal t = from + 0.01; t < to; t += 0.01)     // 1% walk, as the reference does.
-                    trimmed.lineTo(path.pointAtPercent(qMin(t, to)));
-            }
-            trimmed.lineTo(path.pointAtPercent(to));
-            path = trimmed;
-        }
-        if (!path.isEmpty()) p.drawPath(path);
-
-        auto paintHead = [&](const QPointF &tip, const QPointF &dir) {
-            const QPolygonF head = arrowHeadPoly(tip, dir, headLen, headLen / 2);
-            if (hollow) {                              // Solid outline at shaft thickness, even on dashed lines.
-                QPen outline = shaft;
-                outline.setStyle(Qt::SolidLine);
-                outline.setJoinStyle(Qt::MiterJoin);
-                p.setPen(outline);
-                p.drawPolygon(head);
-                p.setPen(shaft);
-            } else {
-                // Barbs sweep back past the shaft joint (notch 35% of the head length, per the user's capture).
-                QPolygonF barbed = head;
-                barbed.insert(2, tip - dir * headLen * 0.65);
+        if (shape == 4 || shape == 5) {              // Whole-arrow body: outline or fill.
+            const qreal base = qMax(0.0, length - headLen);
+            const qreal neck = qMin(length, base + headLen * 0.35);
+            const qreal neckHalf = w * 0.65;
+            const qreal tailHalf = 0.0;
+            QPolygonF body;
+            body << start + normal * tailHalf
+                 << start + dir * neck + normal * neckHalf
+                 << start + dir * base + normal * headHalf
+                 << tip
+                 << start + dir * base - normal * headHalf
+                 << start + dir * neck - normal * neckHalf
+                 << start - normal * tailHalf;
+            if (shape == 5) {                        // Filled arrows ignore the line style.
                 p.setPen(Qt::NoPen);
                 p.setBrush(ann.color);
-                p.drawPolygon(barbed);
-                p.setPen(shaft);
+                p.drawPolygon(body);
+            } else {
+                QPen edge = shaft;
+                edge.setWidthF(qMax(1.0, w * 0.4));
+                edge.setJoinStyle(Qt::MiterJoin);
+                p.setPen(edge);
                 p.setBrush(Qt::NoBrush);
+                p.drawPolygon(body);
             }
-        };
-        if (tipHead) paintHead(curve || polyline ? ann.stroke.last() : QPointF(ann.b), dirEnd);
-        if (startHead) paintHead(curve || polyline ? ann.stroke.first() : QPointF(ann.a), dirStart);
+            break;
+        }
+
+        if (shape == 7 || shape == 8) {              // Solid: a standard block arrow silhouette.
+            const qreal shaftHalf = 0.5 * w;
+            QPolygonF block;
+            const QPointF endBase = start + dir * (length - headLen);
+            if (shape == 7) {
+                block << start + normal * shaftHalf
+                      << endBase + normal * shaftHalf
+                      << endBase + normal * headHalf
+                      << tip
+                      << endBase - normal * headHalf
+                      << endBase - normal * shaftHalf
+                      << start - normal * shaftHalf;
+            } else {
+                const QPointF startBase = start + dir * headLen;
+                block << start
+                      << startBase + normal * headHalf
+                      << startBase + normal * shaftHalf
+                      << endBase + normal * shaftHalf
+                      << endBase + normal * headHalf
+                      << tip
+                      << endBase - normal * headHalf
+                      << endBase - normal * shaftHalf
+                      << startBase - normal * shaftHalf
+                      << startBase - normal * headHalf;
+            }
+            p.setPen(Qt::NoPen);
+            p.setBrush(ann.color);
+            p.drawPolygon(block);
+            break;
+        }
+
+        p.setPen(shaft);
+        p.setBrush(Qt::NoBrush);
+        const qreal startInset = (shape == 3 || shape == 9) ? w / 2 : 0;
+        const qreal tipInset = (shape == 2 || shape == 3 || shape == 9) ? w / 2 : 0;
+        p.drawLine(start + dir * startInset, tip - dir * tipInset);
+        switch (shape) {
+        case 0: paintFlatHead(tip, dir); break;
+        case 1: paintFlatHead(tip, dir); paintFlatHead(start, -dir); break;
+        case 2: paintOpenHead(tip, dir); break;
+        case 3: paintOpenHead(tip, dir); paintOpenHead(start, -dir); break;
+        case 6: paintBar(start); paintBar(tip); break;
+        case 9:
+            paintBar(start); paintBar(tip);
+            paintOpenHead(tip, dir); paintOpenHead(start, -dir);
+            break;
+        default: break;
+        }
         break;
     }
     case ATool::Mosaic: {                        // Redact lower layers through the object's mask.

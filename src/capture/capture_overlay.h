@@ -132,14 +132,13 @@ private:
         int smartPen = -1;
         QRect rect;                                  // Rect / Ellipse / Mosaic / Text / Number box.
         QPoint a, b;                                 // Arrow / straight highlighter endpoints.
-        QPolygonF stroke;                            // Pen / curved arrow / brush polyline.
+        QPolygonF stroke;                            // Pen / brush polyline.
         QString text;                                // Text / Number content.
         qreal font = 15;                             // Text / Number point size (1/72 inch).
         QString family = QStringLiteral("Microsoft YaHei UI");
-        int arrowStyle = 0;                          // Heads only: 0 single, 1 single hollow, 2 double, 3 double hollow, 4 none.
-        int lineStyle = 0;                           // Shaft path: 0 straight, 1 curve, 2 clicked vertices (straight tool, 3+ points).
-        bool dashed = false;                         // Arrow shaft dashing, independent of the path.
-        int strokeStyle = 0;                         // Rect/Ellipse outline: 0 solid, 1 dash, 2 dot, 3 dash-dot, 4 dash-dot-dot.
+        int arrowStyle = 0;                          // 0 straight, 1 straight bilateral, 2 line, 3 line bilateral,
+                                                     // 4 hollow, 5 filled, 6 dimension line, 7 solid, 8 solid bilateral, 9 dimension arrow.
+        int strokeStyle = 0;                         // Rect/Ellipse/Arrow line: 0 solid, 1 dash, 2 dot, 3 dash-dot, 4 dash-dot-dot.
         int numberStyle = 0;                         // 0 filled disc, 1 ring, 2 bare label.
         int numberFormat = 0;                        // 0 "1 2 3", 1 "I II III", 2 "A B C", 3 "a b c", 4 Chinese numerals.
         bool bold = false;                           // Text weight / slant / underline.
@@ -229,7 +228,6 @@ private:
     void showColorPalette();
     void pickArrowStyle(int style);
     void pickArrowLineStyle(int style);
-    void toggleArrowDashed();
     void pickShapeStyle(int style);
     void toggleFill();
     void pickNumberOption(bool format, int value);
@@ -475,9 +473,8 @@ private:
     ColorBoard *m_colorBoard = nullptr;
     QPointer<QColorDialog> m_colorDialog;
     bool m_shapeEllipse = false;                     // Current sub-shape of the shape button.
-    int m_arrowStyle = 0;                            // Head shape, see Annotation::arrowStyle.
-    int m_arrowLineStyle = 0;                        // Picked shaft path: 0 straight, 1 curve.
-    bool m_arrowDashed = false;
+    int m_arrowStyle = 0;                            // Shape, see Annotation::arrowStyle.
+    int m_arrowLineStyle = 0;                        // Arrow line style, see Annotation::strokeStyle.
     int m_shapeStyle = 0;                            // Current rect / ellipse outline, see Annotation::strokeStyle.
     int m_numberStyle = 0, m_numberFormat = 0;       // See Annotation::numberStyle / numberFormat.
     bool m_markerFill = false;                       // Marker drags a translucent rectangle.

@@ -149,30 +149,46 @@
         <translation>矩形高亮</translation>
     </message>
     <message>
-        <location line="+55"/>
-        <source>单向箭头</source>
-        <translation>单向箭头</translation>
+        <source>直线箭头</source>
+        <translation>直线箭头</translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>单向镂空箭头</source>
-        <translation>单向镂空箭头</translation>
+        <source>双向直线箭头</source>
+        <translation>双向直线箭头</translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>双向箭头</source>
-        <translation>双向箭头</translation>
+        <source>线条箭头</source>
+        <translation>线条箭头</translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>双向镂空箭头</source>
-        <translation>双向镂空箭头</translation>
+        <source>双向线条箭头</source>
+        <translation>双向线条箭头</translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>无箭头</source>
-        <translation>无箭头</translation>
+        <source>空心箭头</source>
+        <translation>空心箭头</translation>
     </message>
+    <message>
+        <source>填充箭头</source>
+        <translation>填充箭头</translation>
+    </message>
+    <message>
+        <source>尺寸线</source>
+        <translation>尺寸线</translation>
+    </message>
+    <message>
+        <source>实心箭头</source>
+        <translation>实心箭头</translation>
+    </message>
+    <message>
+        <source>双向实心箭头</source>
+        <translation>双向实心箭头</translation>
+    </message>
+    <message>
+        <source>尺寸箭头</source>
+        <translation>尺寸箭头</translation>
+    </message>
+
     <message>
         <location line="+10"/>
         <source>直线</source>

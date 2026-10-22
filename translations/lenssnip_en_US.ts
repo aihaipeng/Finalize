@@ -193,30 +193,46 @@
         <translation>Rectangle highlight</translation>
     </message>
     <message>
-        <location line="+55"/>
-        <source>单向箭头</source>
-        <translation>Single arrow</translation>
+        <source>直线箭头</source>
+        <translation>Straight arrow</translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>单向镂空箭头</source>
-        <translation>Single outline arrow</translation>
+        <source>双向直线箭头</source>
+        <translation>Straight double arrow</translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>双向箭头</source>
-        <translation>Double arrow</translation>
+        <source>线条箭头</source>
+        <translation>Line arrow</translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>双向镂空箭头</source>
-        <translation>Double outline arrow</translation>
+        <source>双向线条箭头</source>
+        <translation>Line double arrow</translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>无箭头</source>
-        <translation>No arrow</translation>
+        <source>空心箭头</source>
+        <translation>Hollow arrow</translation>
     </message>
+    <message>
+        <source>填充箭头</source>
+        <translation>Filled arrow</translation>
+    </message>
+    <message>
+        <source>尺寸线</source>
+        <translation>Dimension line</translation>
+    </message>
+    <message>
+        <source>实心箭头</source>
+        <translation>Solid arrow</translation>
+    </message>
+    <message>
+        <source>双向实心箭头</source>
+        <translation>Solid double arrow</translation>
+    </message>
+    <message>
+        <source>尺寸箭头</source>
+        <translation>Dimension arrow</translation>
+    </message>
+
     <message>
         <location line="+10"/>
         <source>直线</source>
