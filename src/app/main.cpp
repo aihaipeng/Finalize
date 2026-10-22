@@ -275,7 +275,7 @@ int main(int argc, char **argv)
 
     Controller ctrl;
     HotkeyFilter hf;
-    hf.onHotkey = [&ctrl] { ctrl.startCapture(); };
+    hf.onHotkey = [&ctrl] { ctrl.startCapture(true); };
     app.installNativeEventFilter(&hf);
     if (!RegisterHotKey(nullptr, 1, MOD_NOREPEAT, VK_F1))
         showAlert(nullptr, QCoreApplication::translate("Main", "无法注册截图热键"),

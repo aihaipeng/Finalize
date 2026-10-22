@@ -94,6 +94,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     : m_frames(frames), m_detectionOptions(options), m_pinEdit(pinEdit), m_embedded(embedParent != nullptr)
 {
     m_liveDetection = liveDetection;
+    m_initialTargets = nativeWindows;
     if (m_embedded) {
         // A child canvas inside the pin: no session chrome, no freeze, no
         // foreground claim. The single frame is the pin's current pixels.
@@ -540,9 +541,21 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         connect(&m_detectionWatchdog, &QTimer::timeout, this, &CaptureOverlay::recoverDetector);
         m_refineTimer.setSingleShot(true);
         connect(&m_refineTimer, &QTimer::timeout, this, &CaptureOverlay::refineDetection);
+        m_hoverClock.start();
+        m_hoverPaintTimer.setSingleShot(true);
+        connect(&m_hoverPaintTimer, &QTimer::timeout, this, [this] {
+            m_lastHoverPaint = m_hoverClock.elapsed();
+            applyHoverPaint(true);
+        });
         startDetector();
         requestDetection(mapFromGlobal(QCursor::pos()));
     }
+    // The first hover result can arrive while the layered window is still being
+    // exposed, leaving only its hole painted. Repaint the whole surface once the
+    // event loop has completed the show.
+    QTimer::singleShot(100, this, [this] {
+        if (isVisible() && !m_desktopPreview) update();
+    });
 }
 
 void CaptureOverlay::buildShot(const QVector<ScreenFrame> &frames)
@@ -604,8 +617,9 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
     // Embedded: a transparent layer of marks only; the pin paints its own
     // pixels, border and text markups underneath, unchanged.
     if (!m_embedded) p.drawPixmap(0, 0, m_shot);   // Frozen frame covers the virtual desktop.
-    // The mask hole tracks the detected target, falling back to the committed selection.
-    const QRect hole = !m_hover.isNull() ? m_hover : m_sel;
+    // The mask hole follows the animated target, falling back to the committed selection.
+    const QRect hover = !m_hoverPaint.isNull() ? m_hoverPaint : m_hover;
+    const QRect hole = !hover.isNull() ? hover : m_sel;
     if (hole.isNull()) {
         p.fillRect(rect(), QColor(0, 0, 0, 120));
         return;
@@ -1073,7 +1087,7 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
         m_sel = m_pressWindow;                  // Click without drag: select the whole window.
     }
     m_mode = Adjusting;
-    m_hover = {};
+    clearHover();
     setCursor(Qt::SizeAllCursor);
     placeToolBars();
     showToolBars();
@@ -1112,9 +1126,8 @@ void CaptureOverlay::wheelEvent(QWheelEvent *e)
         cancelDetection();
         if (m_hoverHistory.size() > 1) {
             m_hoverHistory.removeLast();
-            m_hover = m_hoverHistory.last();
+            setHoverRect(m_hoverHistory.last(), true);
             updateTip();
-            update();
         } else requestDetection(point);
     }
 }
@@ -1183,7 +1196,7 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
         m_sel = m_sel == current ? rect() : current;
         if (m_lockAspect && m_sel.height() > 0) m_aspect = qreal(m_sel.width()) / m_sel.height();
         m_mode = Adjusting;
-        m_hover = {};
+        clearHover();
         placeToolBars(); showToolBars(); updateTip(); update();
         updateInspector();
         return;
@@ -1327,13 +1340,15 @@ void CaptureOverlay::startDetector()
     qRegisterMetaType<WindowTargets>("WindowTargets");
     m_detectionWatchdog.stop();
     m_refineTimer.stop();
+    m_hoverPaintTimer.stop();
     m_refineScheduled = false;
     m_refineTried = false;
-    m_lastHoverId = m_queryId = 0;
-    m_detector = WindowDetector::create(reinterpret_cast<HWND>(winId()), m_detectionOptions);
+    m_queryId = 0;
+    m_detector = WindowDetector::create(reinterpret_cast<HWND>(winId()), m_detectionOptions, m_initialTargets);
     if (!m_detector) {
         m_queryPending = false;
-        setWindowTargets(detectWindowRects(reinterpret_cast<HWND>(winId()), m_detectionOptions.excludedPrograms));
+        if (!m_initialTargets.isEmpty()) setWindowTargets(m_initialTargets);
+        else setWindowTargets(detectWindowRects(reinterpret_cast<HWND>(winId()), m_detectionOptions.excludedPrograms));
         return;
     }
     const QPointer<WindowDetector> detector = m_detector;
@@ -1416,6 +1431,7 @@ void CaptureOverlay::cancelDetection()
     if (m_detector) m_detector->cancel();
     m_detectionWatchdog.stop();
     m_refineTimer.stop();
+    m_hoverPaintTimer.stop();
     m_refineScheduled = false;
     m_refineTried = false;
     m_queryId = 0;
@@ -1433,7 +1449,7 @@ void CaptureOverlay::requestDetection(const QPoint &point, const QRect &previous
     }
     if (previous.isEmpty()) m_hoverHistory.clear();
     m_detectionPoint = point;
-    if (!m_detector) { m_hover = windowAt(point); updateTip(); return; }
+    if (!m_detector) { setHoverRect(windowAt(point), false); updateTip(); return; }
     const QRect nativePoint = nativeDetectionRect(QRect(point, QSize(1, 1)));
     if (nativePoint.isEmpty()) return;
     m_queryPending = true;
@@ -1464,7 +1480,8 @@ void CaptureOverlay::recoverDetector()
     const QPointer<WindowDetector> detector = m_detector;
     const quint64 id = m_queryId;
     if (!detector || !m_queryPending || !isVisible()) return;
-    setWindowTargets(detectWindowRects(reinterpret_cast<HWND>(winId()), m_detectionOptions.excludedPrograms));
+    if (m_initialTargets.isEmpty())
+        setWindowTargets(detectWindowRects(reinterpret_cast<HWND>(winId()), m_detectionOptions.excludedPrograms));
     bool identified = false;
     for (const DetectedWindow &win : m_windowRects)
         if (win.native.contains(m_detectionPoint) && !win.program.isEmpty()) {
@@ -1514,11 +1531,77 @@ void CaptureOverlay::updateSelectionRegion(const QRect &oldSel, const QRect &new
     if (!region.isNull()) update(region);
 }
 
+void CaptureOverlay::applyHoverPaint(bool animate)
+{
+    const QRect target = m_hover;
+    if (m_hoverPaint == target) return;
+    const QRect old = m_hoverPaint;
+    if (!m_hoverAnimation) {
+        m_hoverAnimation = new QVariantAnimation(this);
+        m_hoverAnimation->setDuration(88);                     // Reference mask transition.
+        m_hoverAnimation->setEasingCurve(QEasingCurve::OutBack);
+        connect(m_hoverAnimation, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
+            const QRect next = value.toRectF().toRect();
+            const QRect previous = m_hoverPaint;
+            m_hoverPaint = next;
+            updateHoverRegion(previous, next);
+        });
+        connect(m_hoverAnimation, &QAbstractAnimation::finished, this, [this] {
+            const QRect previous = m_hoverPaint;
+            m_hoverPaint = m_hoverAnimation->endValue().toRectF().toRect();
+            updateHoverRegion(previous, m_hoverPaint);
+        });
+    }
+    m_hoverAnimation->stop();
+    // The first target appears immediately; only changes between real elements glide.
+    if (!animate || target.isNull() || old.isNull()) {
+        m_hoverPaint = target;
+        updateHoverRegion(old, m_hoverPaint);
+        if (old.isNull() || target.isNull()) update();   // Paint the dim mask the first time, not only the hole.
+        updateTip();
+        return;
+    }
+    m_hoverAnimation->setStartValue(QRectF(old));
+    m_hoverAnimation->setEndValue(QRectF(target));
+    m_hoverAnimation->start();
+    updateTip();
+}
+
+void CaptureOverlay::queueHoverPaint()
+{
+    if (m_hoverPaint.isNull()) {
+        m_lastHoverPaint = m_hoverClock.elapsed();
+        applyHoverPaint(false);
+        return;
+    }
+    // Hover detection is coalesced to the reference 250 ms cadence; the 88 ms
+    // OutBack animation then covers the step instead of restarting per result.
+    const qint64 wait = 250 - (m_hoverClock.elapsed() - m_lastHoverPaint);
+    if (wait <= 0) {
+        m_hoverPaintTimer.stop();
+        m_lastHoverPaint = m_hoverClock.elapsed();
+        applyHoverPaint(true);
+    } else if (!m_hoverPaintTimer.isActive()) {
+        m_hoverPaintTimer.start(int(wait));
+    }
+}
+
+void CaptureOverlay::setHoverRect(const QRect &rect, bool animate)
+{
+    m_hoverPaintTimer.stop();
+    m_lastHoverPaint = m_hoverClock.isValid() ? m_hoverClock.elapsed() : 0;
+    if (m_hover != rect) m_hover = rect;
+    applyHoverPaint(animate);
+}
+
 void CaptureOverlay::clearHover()
 {
-    if (m_hover.isNull()) return;
-    const QRect old = m_hover;
+    if (m_hover.isNull() && m_hoverPaint.isNull()) return;
+    m_hoverPaintTimer.stop();
+    if (m_hoverAnimation) m_hoverAnimation->stop();
+    const QRect old = m_hoverPaint.isNull() ? m_hover : m_hoverPaint;
     m_hover = {};
+    m_hoverPaint = {};
     updateHoverRegion(old, QRect());
 }
 
@@ -1539,33 +1622,19 @@ void CaptureOverlay::handleDetectedRect(const QRect &native, quint64 id)
             && candidate != m_hover && candidate.contains(m_hover)
             && rectArea(candidate) > rectArea(m_hover);
     };
-    if (id != m_queryId) {
-        // Hover previews follow the cursor during fast slides: a result already superseded
-        // by a newer query still paints where the cursor just was instead of freezing the
-        // border until the mouse stops. Clicks and expansion keep the strict identity check.
-        if (m_mode != Selecting || !m_queryId || m_drag != H_None
-            || m_waitingClick || m_expanding || id <= m_lastHoverId) return;
-        m_lastHoverId = id;
-        const QRect content = contentFor(native);
-        const QRect stale = content.isEmpty()
-            ? localScreenRect(logicalFromNative(m_frames, native)) : content;
-        if (stale.isEmpty() || keepsElement(stale)) return;
-        const QRect old = m_hover;
-        m_hover = stale;
-        updateTip();
-        updateHoverRegion(old, stale);
-        return;
-    }
-    m_lastHoverId = id;
+    if (id != m_queryId) return;      // A newer query owns the hover; old points must not paint.
     m_queryPending = false;
     m_detectionWatchdog.stop();
     const QRect content = contentFor(native);
     QRect detected = content.isEmpty()
         ? localScreenRect(logicalFromNative(m_frames, native)) : content;
     if (native.isEmpty() && m_detectionOptions.windows) {
-        const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(m_detectionPoint));
-        if (screen) detected = localScreenRect(screen->availableGeometry());
-        if (!detected.contains(m_detectionPoint)) detected = QRect(m_detectionPoint, QSize(1, 1));
+        detected = windowAt(m_detectionPoint);
+        if (detected.isEmpty()) {
+            const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(m_detectionPoint));
+            if (screen) detected = localScreenRect(screen->availableGeometry());
+            if (!detected.contains(m_detectionPoint)) detected = QRect(m_detectionPoint, QSize(1, 1));
+        }
     }
     if (m_expanding && detected == m_hover) {
         const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(m_detectionPoint));
@@ -1585,11 +1654,15 @@ void CaptureOverlay::handleDetectedRect(const QRect &native, quint64 id)
                 placeToolBars();
                 if (m_pinAfterDetection) { m_pinAfterDetection = false; pinCapture(); return; }
             } else resetSelection();
-            m_hover = {};
+            clearHover();
         }
     } else if (m_drag == H_None) {
-        const QRect old = m_hover;
-        m_hover = detected;
+        if (m_expanding) {
+            setHoverRect(detected, true);
+        } else {
+            m_hover = detected;
+            queueHoverPaint();
+        }
         if (m_expanding && (m_hoverHistory.isEmpty() || m_hoverHistory.last() != detected))
             m_hoverHistory.append(detected);
         m_refineTimer.stop();
@@ -1605,8 +1678,6 @@ void CaptureOverlay::handleDetectedRect(const QRect &native, quint64 id)
                     break;
                 }
         }
-        updateTip();
-        updateHoverRegion(old, m_hover);
         return;
     }
     updateTip();
@@ -1630,7 +1701,8 @@ void CaptureOverlay::updateInspector()
         const QPoint pixel(cursor.x, cursor.y);
         for (const ScreenFrame &frame : m_frames) {
             const QRect bounds = localScreenRect(frame.logicalRect);
-            const QRect hole = !m_hover.isNull() ? m_hover : m_sel;
+            const QRect hover = !m_hoverPaint.isNull() ? m_hoverPaint : m_hover;
+            const QRect hole = !hover.isNull() ? hover : m_sel;
             const qreal sx = qreal(frame.pixelRect.width()) / bounds.width();
             const qreal sy = qreal(frame.pixelRect.height()) / bounds.height();
             const QRectF selectionPixels((hole.x() - bounds.x()) * sx, (hole.y() - bounds.y()) * sy,
@@ -2718,7 +2790,7 @@ void CaptureOverlay::presetSelection(const QRect &localSel, ATool tool)
     m_sel = localSel.normalized();
     if (m_sel.width() < 4 || m_sel.height() < 4) { m_sel = {}; return; }
     m_mode = Adjusting;
-    m_hover = {};
+    clearHover();
     m_drag = H_None;
     if (!m_pinEdit) setCursor(Qt::SizeAllCursor);   // Region moving is a capture-only gesture.
     placeToolBars();
@@ -3103,7 +3175,7 @@ void CaptureOverlay::customFieldsChanged()
         m_presetCombo->setCurrentIndex(-1);
     }
     m_mode = Adjusting;
-    m_hover = {};
+    clearHover();
     m_drag = H_None;
     placeToolBars();
     showToolBars();
@@ -3135,7 +3207,7 @@ void CaptureOverlay::applyCustomPreset(int index)
     m_sel = local;
     if (m_lockAspect && m_sel.height() > 0) m_aspect = qreal(m_sel.width()) / m_sel.height();
     m_mode = Adjusting;
-    m_hover = {};
+    clearHover();
     m_drag = H_None;
     updateCustomSizeInputs();
     placeToolBars();
@@ -3286,7 +3358,7 @@ void CaptureOverlay::beginDesktopPreview()
     cancelDetection();
     if (m_detector) m_detector->stop();
     if (m_sizePopup) m_sizePopup->close();
-    m_hover = QRect();
+    clearHover();
     m_sizeBar->hide();
     m_inspector->hide();
     m_toolOptions->hide();
@@ -3382,7 +3454,7 @@ void CaptureOverlay::applyRefreshFrames(const QVector<ScreenFrame> &frames)
     // Refresh replaces the frozen pixels only: keep the committed selection,
     // annotations, history and armed tool exactly as the user left them.
     m_pressSel = QRect();
-    m_hover = QRect();
+    clearHover();
     m_hoverHistory.clear();
     m_windowRects.clear();
     m_mode = m_sel.isNull() ? Selecting : Adjusting;

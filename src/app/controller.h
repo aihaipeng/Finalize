@@ -30,7 +30,7 @@ public:
     Controller();
     static int testThemeUi(const QString &previewPath);
 public slots:
-    void startCapture();
+    void startCapture(bool includePopups = false);
     void openHistory();
 private:
     QMenu m_menu;                                    // Declared first so the tray releases it before destruction.

@@ -23,6 +23,7 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QInputDialog>
+#include <QTimer>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPointer>
@@ -78,7 +79,7 @@ Controller::Controller()
     });
     QMenu *m = &m_menu;
     m->setStyleSheet(darkMenuQss);
-    m->addAction(tr("截图 (F1)"), this, &Controller::startCapture);
+    m->addAction(tr("截图 (F1)"), this, [this] { startCapture(false); });
     m->addAction(tr("截图历史…"), this, &Controller::openHistory);
     m_historyEnabled = m->addAction(tr("记录截图历史"));
     m_historyEnabled->setCheckable(true);
@@ -149,14 +150,30 @@ Controller::Controller()
     m_tray.show();
 }
 
-void Controller::startCapture()
+void Controller::startCapture(bool includePopups)
 {
     if (m_startingCapture) return;                 // Tray click and F1 can race while the frame freezes.
     struct ResetFlag { bool &flag; ~ResetFlag() { flag = false; } } reset{m_startingCapture};
     m_startingCapture = true;
-    if (m_menu.isVisible()) m_menu.close();        // Do not keep the tray popup above the frozen desktop.
-    if (QWidget *popup = QApplication::activePopupWidget()) popup->close();
-    if (m_capture && m_capture->isVisible()) { m_capture->raise(); m_capture->activateWindow(); return; }
+    const bool popupOpen = m_menu.isVisible() || QApplication::activePopupWidget();
+    if (m_capture && m_capture->isVisible()) {
+        if (!includePopups) {
+            if (m_menu.isVisible()) m_menu.close();
+            if (QWidget *popup = QApplication::activePopupWidget()) popup->close();
+        }
+        m_capture->raise();
+        m_capture->activateWindow();
+        return;
+    }
+    // A tray/menu click asks to close its own menu first. F1 must not: the open
+    // menu is part of what the user wants to capture, so freeze and snapshot it
+    // before dismissing the popup.
+    if (!includePopups && popupOpen) {
+        if (m_menu.isVisible()) m_menu.close();
+        if (QWidget *popup = QApplication::activePopupWidget()) popup->close();
+        QTimer::singleShot(0, this, [this] { startCapture(false); });
+        return;
+    }
     const QVector<ScreenFrame> frames = freezeScreens();   // Freeze before showing the selection overlay.
     if (frames.isEmpty()) {
         QMessageBox::warning(nullptr, QStringLiteral("LensSnip"), tr("无法读取屏幕像素"));
@@ -168,7 +185,15 @@ void Controller::startCapture()
     options.elements = settings.value(QStringLiteral("Snip/detect_ui_elements"), true).toBool();
     options.excludedPrograms = settings.value(QStringLiteral("Snip/exclude_from_detection")).toStringList();
     options.disabledUiPrograms = settings.value(QStringLiteral("Snip/crashes")).toStringList();
-    auto *ov = new CaptureOverlay(frames, {}, options, true);
+    // Snapshot before the overlay activates: browser bubbles such as Chrome's
+    // page QR code close on focus loss but are still present in the frozen frame.
+    const WindowTargets nativeWindows = options.windows
+        ? detectWindowRects(nullptr, options.excludedPrograms) : WindowTargets();
+    if (includePopups && popupOpen) {
+        if (m_menu.isVisible()) m_menu.close();
+        if (QWidget *popup = QApplication::activePopupWidget()) popup->close();
+    }
+    auto *ov = new CaptureOverlay(frames, nativeWindows, options, true);
     m_capture = ov;
     connect(ov, &CaptureOverlay::grabbed, this, [](const QPixmap &pix, const QRect &region) {
         if (!pix.isNull() && !region.isEmpty()) new PinWindow(pix, region);

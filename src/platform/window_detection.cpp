@@ -414,17 +414,20 @@ QRect logicalFromNative(const QVector<ScreenFrame> &frames, const QRect &native)
     return result.isEmpty() ? native : result;
 }
 
-WindowDetector::WindowDetector(HWND overlay, const DetectionOptions &options) : m_overlay(overlay), m_options(options) {}
+WindowDetector::WindowDetector(HWND overlay, const DetectionOptions &options,
+                               const WindowTargets &initialTargets)
+    : m_overlay(overlay), m_options(options), m_initialTargets(initialTargets) {}
 
 WindowDetector::~WindowDetector()  { stop(); wait(); }
 
-WindowDetector *WindowDetector::create(HWND overlay, const DetectionOptions &options)
+WindowDetector *WindowDetector::create(HWND overlay, const DetectionOptions &options,
+                                       const WindowTargets &initialTargets)
 {
     s_workers.erase(std::remove_if(s_workers.begin(), s_workers.end(),
         [](const QPointer<WindowDetector> &worker) { return !worker || worker->isFinished(); }), s_workers.end());
     // shortcut: Two stalled in-process providers exhaust detection capacity; use process isolation for restartable providers.
     if (s_workers.size() >= 2) return nullptr;
-    auto *worker = new WindowDetector(overlay, options);
+    auto *worker = new WindowDetector(overlay, options, initialTargets);
     s_workers.append(worker);
     return worker;
 }
@@ -447,9 +450,13 @@ void WindowDetector::run()  {
     if (SUCCEEDED(com))
         CoCreateInstance(kUiaClassId, nullptr, CLSCTX_INPROC_SERVER, kUiaIid,
                          reinterpret_cast<void **>(&m_uia));
-    WindowTargets cachedTargets;
+    // Snapshotting before the overlay activates keeps transient browser bubbles
+    // (for example the page QR code) that close as soon as they lose focus.
+    WindowTargets cachedTargets = m_initialTargets;
     QElapsedTimer targetsAge;
-    bool haveTargets = false;
+    bool haveTargets = !cachedTargets.isEmpty();
+    const bool fixedTargets = haveTargets;
+    if (haveTargets) targetsAge.start();
     while (true) {
         Request request;
         {
@@ -459,7 +466,7 @@ void WindowDetector::run()  {
             request = m_queue.takeFirst();
             if (request.id != m_id) continue;
         }
-        if (m_options.windows && (!haveTargets || targetsAge.elapsed() >= 300)) {
+        if (m_options.windows && !fixedTargets && (!haveTargets || targetsAge.elapsed() >= 300)) {
             cachedTargets = detectWindowRects(m_overlay, m_options.excludedPrograms);
             targetsAge.restart();
             haveTargets = true;

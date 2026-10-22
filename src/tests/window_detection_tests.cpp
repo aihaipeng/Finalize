@@ -67,6 +67,7 @@ int WindowDetector::testCapacity()
 #include <QThread>
 #include <QElapsedTimer>
 #include <QPointer>
+#include <QVariantAnimation>
 #include <QFileInfo>
 
 int CaptureOverlay::testWindowDetection()
@@ -145,6 +146,25 @@ int CaptureOverlay::testWindowDetection()
         if (win.hwnd == fixture.window) exact = win.nativeChildren.contains(buttonRect) && win.nativeChildren.contains(editRect);
     check(exact, "native child rectangles do not grow by one pixel");
     DetectionOptions windowsOnly;
+    WindowTargets snapshot;
+    for (const DetectedWindow &win : detectWindowRects())
+        if (win.hwnd == fixture.window) snapshot.append(win);
+    ShowWindow(fixture.window, SW_HIDE);
+    WindowDetector seeded(nullptr, windowsOnly, snapshot);
+    QRect seededResult;
+    QEventLoop seededLoop;
+    QObject::connect(&seeded, &WindowDetector::gotRect, &seededLoop, [&](const QRect &r, quint64) {
+        seededResult = r; seededLoop.quit();
+    });
+    seeded.query(buttonRect.center());
+    seeded.start();
+    QTimer::singleShot(5000, &seededLoop, &QEventLoop::quit);
+    seededLoop.exec();
+    seeded.stop();
+    seeded.wait();
+    ShowWindow(fixture.window, SW_SHOW);
+    check(seededResult == snapshot.first().native,
+          "a pre-activation target snapshot survives focus-loss-only popups");
     WindowDetector coarse(nullptr, windowsOnly);
     QRect coarseResult;
     quint64 lastId = 0, returnedId = 0;
@@ -211,15 +231,49 @@ int CaptureOverlay::testWindowDetection()
     overlay.m_mode = Selecting;
     overlay.m_sel = {};
     overlay.cancelDetection();
-    // A result superseded by a newer query still paints so the border follows the cursor
-    // during fast slides instead of freezing until the mouse stops.
+    // A result superseded by a newer query must not paint an older cursor position:
+    // doing so makes fast slides flicker back and forth.
+    overlay.m_hover = expectedEdit;
     overlay.requestDetection(expectedButton.center());
     const quint64 superseded = overlay.m_queryId;      // First of two back-to-back queries.
     overlay.requestDetection(expectedEdit.center());
     overlay.handleDetectedRect(buttonRect, superseded);
-    check(overlay.m_hover == expectedButton, "superseded hover results still follow the cursor");
+    check(overlay.m_hover == expectedEdit, "superseded hover results cannot replace the newest target");
     waitResult();
     check(overlay.m_hover == expectedEdit, "the newest query result wins once it arrives");
+    overlay.m_detectionPoint = expectedEdit.center();
+    overlay.m_queryId = 9200;
+    overlay.m_hover = expectedButton;
+    overlay.m_hoverPaint = expectedButton;
+    overlay.m_lastHoverPaint = -1000;
+    overlay.handleDetectedRect(editRect, 9200);
+    check(overlay.m_hover == expectedEdit, "a new hover target commits immediately");
+    QElapsedTimer transition;
+    transition.start();
+    while (overlay.m_hoverPaint != expectedEdit && transition.elapsed() < 300) {
+        QEventLoop loop;
+        QTimer::singleShot(10, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    check(overlay.m_hoverPaint == expectedEdit, "the mask hole glides to the new target");
+    // Reference hover updates are coalesced: a burst of results may not restart
+    // the transition on every accessibility reply.
+    overlay.m_hover = expectedButton;
+    overlay.m_hoverPaint = expectedButton;
+    if (overlay.m_hoverAnimation) overlay.m_hoverAnimation->stop();
+    overlay.m_lastHoverPaint = overlay.m_hoverClock.elapsed();
+    overlay.m_detectionPoint = expectedEdit.center();
+    overlay.m_queryId = 9201;
+    overlay.handleDetectedRect(editRect, 9201);
+    check(overlay.m_hoverPaint == expectedButton, "hover paint waits for the cadence window");
+    QElapsedTimer cadence;
+    cadence.start();
+    while (overlay.m_hoverPaint != expectedEdit && cadence.elapsed() < 600) {
+        QEventLoop loop;
+        QTimer::singleShot(10, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    check(overlay.m_hoverPaint == expectedEdit, "the coalesced hover paints the latest target");
     // A late whole-window result must not replace the element the cursor is
     // still inside; only leaving it (or wheel expansion) may widen the target.
     const QRect expectedWindow = overlay.localScreenRect(logicalFromNative(frames, windowFrame(fixture.window)));
@@ -230,7 +284,6 @@ int CaptureOverlay::testWindowDetection()
     overlay.m_detectionPoint = expectedButton.center();
     overlay.m_expanding = false;
     overlay.m_queryId = 9001;
-    overlay.m_lastHoverId = 0;
     overlay.handleDetectedRect(windowFrame(fixture.window), 9001);
     check(overlay.m_hover == expectedButton,
           "a slow provider cannot widen the hovered element to its window");
@@ -336,12 +389,12 @@ int CaptureOverlay::testWindowDetection()
     rapidHover.stop();
     check(overlay.m_detector != silent && !overlay.m_hover.isEmpty(),
           "the watchdog replaces a silent worker and uses native geometry without blocking capture");
-    check(overlay.m_lastHoverId == 0, "a replacement worker starts with a fresh result sequence gate");
+    overlay.m_hover = expectedEdit;
     overlay.requestDetection(expectedButton.center());
     const quint64 freshSequence = overlay.m_queryId;
     overlay.requestDetection(expectedEdit.center());
     overlay.handleDetectedRect(buttonRect, freshSequence);
-    check(overlay.m_hover == expectedButton, "replacement workers accept superseded hover results immediately");
+    check(overlay.m_hover == expectedEdit, "superseded results stay rejected after replacing a worker");
     waitResult();
     if (silent) {
         silent->blockSignals(false);

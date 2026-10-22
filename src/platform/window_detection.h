@@ -168,9 +168,11 @@ class WindowDetector : public QThread
 {
     Q_OBJECT
 public:
-    WindowDetector(HWND overlay, const DetectionOptions &options);
+    WindowDetector(HWND overlay, const DetectionOptions &options,
+                   const WindowTargets &initialTargets = {});
     ~WindowDetector() override;
-    static WindowDetector *create(HWND overlay, const DetectionOptions &options);
+    static WindowDetector *create(HWND overlay, const DetectionOptions &options,
+                                  const WindowTargets &initialTargets = {});
     static int testCapacity();
     quint64 query(const QPoint &point, const QRect &previous = {});
     void cancel();
@@ -185,6 +187,7 @@ private:
     inline static QVector<QPointer<WindowDetector>> s_workers;
     HWND m_overlay;
     DetectionOptions m_options;
+    WindowTargets m_initialTargets;                  // Captured before the overlay takes focus; transient popups close after that.
     UiaAutomation *m_uia = nullptr;
     QStringList m_uiaSlow;
     QMutex m_mutex;

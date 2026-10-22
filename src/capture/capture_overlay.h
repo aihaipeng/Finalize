@@ -41,6 +41,7 @@ class OcrDialog;
 #include <QCheckBox>
 #include <QCursor>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QPointer>
 #include <QCloseEvent>
 #include <QPolygonF>
@@ -264,6 +265,9 @@ private:
     // plus mask), so the union of the old and new rectangles reproduces the surface.
     void updateHoverRegion(const QRect &oldRect, const QRect &newRect);
     void updateSelectionRegion(const QRect &oldSel, const QRect &newSel);
+    void setHoverRect(const QRect &rect, bool animate);
+    void queueHoverPaint();
+    void applyHoverPaint(bool animate);
     void clearHover();
     void handleDetectedRect(const QRect &native, quint64 id);
 
@@ -352,13 +356,13 @@ private:
     QPointer<OcrDialog> m_ocrDialog;
     mutable QImage m_mosaicFrame;
     QVector<ScreenFrame> m_frames;
+    WindowTargets m_initialTargets;                 // Native snapshot taken before this window activated.
     QVector<DetectedWindow> m_windowRects;          // Detected windows (logical, overlay-local) for click-select and snapping.
     QHash<quintptr, QRect> m_nativeRects;            // hwnd -> raw native window rect before content trimming.
     mutable QHash<quintptr, QPair<QRect, QRect>> m_contentCache; // hwnd -> raw native, trimmed local.
     DetectionOptions m_detectionOptions;
     QPointer<WindowDetector> m_detector;
     quint64 m_queryId = 0;
-    quint64 m_lastHoverId = 0;
     QPoint m_detectionPoint;
     QVector<QRect> m_hoverHistory;
     bool m_queryPending = false, m_waitingClick = false, m_expanding = false;
@@ -369,7 +373,12 @@ private:
     bool m_refineTried = false;
     bool m_pinAfterDetection = false;
     bool m_dragStarted = false;
-    QRect m_hover;                                  // Detected window under the cursor; drives the mask hole while idle.
+    QRect m_hover;                                  // Detected target under the cursor; drives selection and hints.
+    QRect m_hoverPaint;                             // Animated hole rect (88 ms OutBack), mirroring the target.
+    QVariantAnimation *m_hoverAnimation = nullptr;
+    QTimer m_hoverPaintTimer;                       // Coalesces hover updates to the reference 250 ms cadence.
+    QElapsedTimer m_hoverClock;
+    qint64 m_lastHoverPaint = -1000;
     QRect m_pressWindow;                            // Window under the press point; a click without drag selects it.
     PixelInspector *m_inspector = nullptr;
     QPoint m_pressPos;
