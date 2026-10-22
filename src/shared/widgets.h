@@ -14,6 +14,7 @@
 #include <QtMath>
 #include <QToolButton>
 #include <QComboBox>
+#include <QStyledItemDelegate>
 #include <qt_windows.h>
 
 // ---------- Shared icon set for all buttons. ----------
@@ -50,6 +51,22 @@ QIcon barIcon(Icon icon, int size = Bar::icon);
 QToolButton *barButton(Icon icon, const QString &tip);
 // Pill combo for the dark capture bars: flat popup rows and a thin chevron.
 QComboBox *flatComboBox();
+
+// Short dropdowns stay chrome-free: ten rows or fewer hide the scrollbar and fit without padding.
+void prepareComboPopup(QComboBox *combo);
+
+// Centers combo popup rows and paints the shared rounded hover/selection wash.
+class CenteredItemDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override;
+protected:
+    static void paintRow(QPainter *painter, const QStyleOptionViewItem &option);
+    void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const override;
+};
+
 // Rounded track slider for the dark capture bars.
 extern const QString darkSliderQss;
 

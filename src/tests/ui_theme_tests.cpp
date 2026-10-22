@@ -23,6 +23,7 @@
 #include <QKeyEvent>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QAbstractItemView>
 #include <algorithm>
 #include <climits>
 #include <QDir>
@@ -120,6 +121,30 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
     overlay.selectTool(ATool::Pen);
     const QRect bars = overlay.m_tools->geometry().united(overlay.m_toolOptions->geometry());
     review.save(overlay.grab(bars), QStringLiteral("-capture-bars"));
+    overlay.selectTool(ATool::Arrow);
+    auto *arrowCombo = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("arrowStyleCombo"));
+    auto *lineCombo = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("arrowLineStyleCombo"));
+    review.check(arrowCombo && arrowCombo->count() == 10 && lineCombo && lineCombo->count() == 5,
+                 "arrow dropdowns expose ten shapes and five line styles");
+    if (arrowCombo) {
+        arrowCombo->showPopup();
+        QApplication::processEvents();
+        review.check(arrowCombo->view()->verticalScrollBarPolicy() == Qt::ScrollBarAlwaysOff
+                         && !arrowCombo->view()->verticalScrollBar()->isVisible(),
+                     "a ten-row arrow dropdown hides the scrollbar");
+        review.save(arrowCombo->view()->window()->grab(), QStringLiteral("-arrow-popup"));
+        arrowCombo->hidePopup();
+    }
+    if (lineCombo) {
+        lineCombo->showPopup();
+        QApplication::processEvents();
+        review.check(lineCombo->view()->verticalScrollBarPolicy() == Qt::ScrollBarAlwaysOff
+                         && !lineCombo->view()->verticalScrollBar()->isVisible(),
+                     "a five-row line dropdown hides the scrollbar");
+        lineCombo->hidePopup();
+    }
+    overlay.selectTool(ATool::Pen);
+    QApplication::processEvents();
     review.check(overlay.m_colorBoard && overlay.m_colorBoard->width() == 187
                      && overlay.m_colorBoard->height() == 28
                      && ColorBoard::CommonCount == 6 && !ColorBoard::swatchRect(6).isValid(),

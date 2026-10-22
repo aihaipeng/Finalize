@@ -109,11 +109,13 @@ class PickerCombo : public QComboBox
 {
     Q_DECLARE_TR_FUNCTIONS(PickerCombo)
 public:
+    PickerCombo();
     void setPrefix(const QString &prefix) { m_prefix = prefix; updateGeometry(); update(); }
     void setDetected(const QString &detected) { m_detected = detected; updateGeometry(); update(); }
     QString displayText() const;
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override { return sizeHint(); }
+    void showPopup() override;
 protected:
     void paintEvent(QPaintEvent *event) override;
 private:

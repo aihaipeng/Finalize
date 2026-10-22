@@ -187,39 +187,29 @@ QIcon arrowStyleIcon(int style, qreal dpr)
     return QIcon(pm);
 }
 
-// Popup rows: a rounded wash under the current or hovered row, no style selection marker.
-class FlatItemDelegate : public QStyledItemDelegate
-{
-public:
-    using QStyledItemDelegate::QStyledItemDelegate;
-    void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override
-    {
-        QStyleOptionViewItem plain = option;
-        if (option.state & (QStyle::State_MouseOver | QStyle::State_Selected)) {   // Rounded row: accent when current, grey on hover.
-            painter->save();
-            painter->setRenderHint(QPainter::Antialiasing);
-            painter->setPen(Qt::NoPen);
-            painter->setBrush(option.state & QStyle::State_Selected ? Bar::accent : QColor(0x3c, 0x3c, 0x3c));
-            painter->drawRoundedRect(QRectF(option.rect).adjusted(1, 1, -1, -1), 4, 4);
-            painter->restore();
-        }
-        plain.state &= ~(QStyle::State_MouseOver | QStyle::State_Selected | QStyle::State_HasFocus);
-        QStyledItemDelegate::paint(painter, plain, index);
-    }
-};
-
 // Popup rows show only the glyph; names stay in tooltips and accessible text.
-class GlyphItemDelegate : public FlatItemDelegate
+class GlyphItemDelegate : public CenteredItemDelegate
 {
 public:
-    using FlatItemDelegate::FlatItemDelegate;
+    using CenteredItemDelegate::CenteredItemDelegate;
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override
+    {
+        paintRow(painter, option);
+        const QIcon icon = qvariant_cast<QIcon>(index.data(Qt::DecorationRole));
+        if (icon.isNull()) return;
+        QSize size = option.decorationSize;
+        if (size.isEmpty() || size.width() <= 0) size = icon.actualSize(option.rect.size());
+        size = size.boundedTo(option.rect.size());
+        const QRect target(QPoint(option.rect.center().x() - size.width() / 2,
+                                  option.rect.center().y() - size.height() / 2), size);
+        icon.paint(painter, target, Qt::AlignCenter, QIcon::Normal, QIcon::Off);
+    }
 protected:
     void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const override
     {
-        QStyledItemDelegate::initStyleOption(option, index);
+        CenteredItemDelegate::initStyleOption(option, index);
         option->text.clear();
-        option->decorationAlignment = Qt::AlignCenter;
-        option->displayAlignment = Qt::AlignCenter;
     }
     QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override
     {
@@ -285,8 +275,13 @@ public:
             setItemDelegate(new GlyphItemDelegate(this));
             setStyleSheet(QStringLiteral("QComboBox{padding-left:6px;}QComboBox::drop-down{width:16px;}"));
         }
-        else setItemDelegate(new FlatItemDelegate(this));
+        else setItemDelegate(new CenteredItemDelegate(this));
         view()->setVerticalScrollBar(new FlatScrollBar);
+    }
+    void showPopup() override
+    {
+        prepareComboPopup(this);
+        QComboBox::showPopup();
     }
 protected:
     void paintEvent(QPaintEvent *) override

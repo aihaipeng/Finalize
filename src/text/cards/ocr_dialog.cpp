@@ -460,6 +460,17 @@ void OcrImageView::drawForeground(QPainter *painter, const QRectF &rect) {
     painter->restore();
 }
 
+PickerCombo::PickerCombo()
+{
+    setItemDelegate(new CenteredItemDelegate(this));
+}
+
+void PickerCombo::showPopup()
+{
+    prepareComboPopup(this);
+    QComboBox::showPopup();
+}
+
 QString PickerCombo::displayText() const
 {
     const QString choice = currentIndex() == 0 && !m_detected.isEmpty() ? m_detected : currentText();
@@ -578,7 +589,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
             "min-height:32px;combobox-popup:0;}"
         "QComboBox:hover{background:#2b2d33;} QComboBox:focus{background:%8;}"
         "QComboBox::drop-down{width:24px;border:none;background:transparent;} QComboBox::down-arrow{image:none;width:0;height:0;}"
-        "QComboBox QAbstractItemView{background:%1;color:%4;border:none;outline:none;padding:4px;}"
+        "QComboBox QAbstractItemView{background:%1;color:%4;border:none;outline:none;padding:0px;}"
         "QComboBox QAbstractItemView::item{min-height:24px;padding:0 12px;border-radius:8px;}"
         "QComboBox QAbstractItemView::item:selected{background:%7;color:white;}"
         "QPlainTextEdit{background:%2;color:%4;border:none;padding:8px 12px;selection-background-color:%8;}"

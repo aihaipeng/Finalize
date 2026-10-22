@@ -71,7 +71,15 @@ namespace {
 class CenteredCombo : public QComboBox
 {
 public:
-    using QComboBox::QComboBox;
+    explicit CenteredCombo(QWidget *parent = nullptr) : QComboBox(parent)
+    {
+        setItemDelegate(new CenteredItemDelegate(this));
+    }
+    void showPopup() override
+    {
+        prepareComboPopup(this);
+        QComboBox::showPopup();
+    }
 
 protected:
     void paintEvent(QPaintEvent *) override
@@ -497,8 +505,8 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         "QComboBox:hover{background:#222326;}"
         "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
         "QComboBox::down-arrow{image:none;width:0px;height:0px;}"
-        "QComboBox QAbstractItemView{outline:0px;color:#f4f5f8;background:#18191d;border:1px solid #2b2d33;"
-        "padding:4px;selection-background-color:#5e6ad2;selection-color:#ffffff;}"
+        "QComboBox QAbstractItemView{outline:0px;color:#f4f5f8;background:#18191d;border:none;"
+        "padding:0px;selection-background-color:#5e6ad2;selection-color:#ffffff;}"
         "QLineEdit{color:#f4f5f8;background:transparent;border:none;"
         "selection-background-color:#5e6ad2;selection-color:#ffffff;}");
     if (m_embedded) {
@@ -2929,8 +2937,8 @@ void CaptureOverlay::showCustomSizePopup()
         "QComboBox:hover{background:#222326;} QComboBox:focus{border-color:#828fff;}"
         "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
         "QComboBox::down-arrow{image:url(:/icons/chevron_down_light.png);width:10px;height:10px;}"
-        "QComboBox QAbstractItemView{color:#f4f5f8;background:#18191d;border:1px solid #2b2d33;"
-        "border-radius:8px;padding:4px;outline:0;selection-background-color:#5e6ad2;"
+        "QComboBox QAbstractItemView{color:#f4f5f8;background:#18191d;border:none;"
+        "border-radius:0px;padding:0px;outline:0;selection-background-color:#5e6ad2;"
         "selection-color:#ffffff;}"
         "QComboBox QAbstractItemView::item{min-height:26px;padding-left:10px;padding-right:8px;}"
         "QScrollBar:vertical{background:transparent;width:8px;margin:0;}"

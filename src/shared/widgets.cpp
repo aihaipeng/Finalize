@@ -22,6 +22,7 @@
 #include <QStylePainter>
 #include <QStyleOptionComboBox>
 #include <QFrame>
+#include <QAbstractItemView>
 #include <QSvgRenderer>
 #include <qt_windows.h>
 
@@ -177,6 +178,47 @@ QToolButton *barButton(Icon icon, const QString &tip)
     button->setIconSize(QSize(Bar::icon, Bar::icon));
     button->setFixedSize(Bar::button, Bar::button);
     return button;
+}
+
+void prepareComboPopup(QComboBox *combo)
+{
+    if (!combo || !combo->view()) return;
+    const bool compact = combo->count() <= 10;
+    combo->view()->setVerticalScrollBarPolicy(compact ? Qt::ScrollBarAlwaysOff
+                                                      : Qt::ScrollBarAsNeeded);
+    combo->view()->setFrameShape(QFrame::NoFrame);
+    // Short lists fit without the popup frame or padding; long lists keep the slim scrollbar.
+    combo->view()->setStyleSheet(compact
+        ? QStringLiteral("QAbstractItemView{background:%1;color:%2;border:none;outline:0;padding:0px;}")
+              .arg(Bar::surface.name(), Bar::ink.name())
+        : QString());
+}
+
+void CenteredItemDelegate::paintRow(QPainter *painter, const QStyleOptionViewItem &option)
+{
+    if (!(option.state & (QStyle::State_MouseOver | QStyle::State_Selected))) return;
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(option.state & QStyle::State_Selected ? Bar::accent : QColor(0x3c, 0x3c, 0x3c));
+    painter->drawRoundedRect(QRectF(option.rect).adjusted(1, 1, -1, -1), 4, 4);
+    painter->restore();
+}
+
+void CenteredItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
+                                 const QModelIndex &index) const
+{
+    paintRow(painter, option);
+    QStyleOptionViewItem plain = option;
+    plain.state &= ~(QStyle::State_MouseOver | QStyle::State_Selected | QStyle::State_HasFocus);
+    QStyledItemDelegate::paint(painter, plain, index);
+}
+
+void CenteredItemDelegate::initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const
+{
+    QStyledItemDelegate::initStyleOption(option, index);
+    option->displayAlignment = Qt::AlignCenter;
+    option->decorationAlignment = Qt::AlignCenter;
 }
 
 const QString darkSliderQss = QStringLiteral(

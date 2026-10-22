@@ -7,6 +7,8 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QComboBox>
+#include <QAbstractItemView>
+#include <QScrollBar>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QGuiApplication>
@@ -192,6 +194,14 @@ int OcrDialog::testBarcode(const QString &previewPath)
     check(multi.barcodeRegionCount() >= 2 && multiPicker->isVisible()
               && multiPicker->count() >= 2,
           "multiple results expose a picker and one region per symbol");
+    multiPicker->showPopup();
+    QApplication::processEvents();
+    check(multiPicker->view()->verticalScrollBarPolicy() == Qt::ScrollBarAlwaysOff
+              && !multiPicker->view()->verticalScrollBar()->isVisible(),
+          "a short barcode picker hides its scrollbar");
+    if (!previewPath.isEmpty())
+        multiPicker->view()->window()->grab().save(previewPath + QStringLiteral("-picker-popup.png"));
+    multiPicker->hidePopup();
     const int secondIndex = multiPicker->findText(qr2Text, Qt::MatchContains);
     check(secondIndex >= 0, "picker labels include each payload");
     multiPicker->setCurrentIndex(secondIndex);
