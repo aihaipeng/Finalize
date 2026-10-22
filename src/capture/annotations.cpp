@@ -1446,12 +1446,14 @@ void CaptureOverlay::syncSizeInput()
         glyph.setDevicePixelRatio(dpr);
         glyph.fill(Qt::transparent);
         QPainter painter(&glyph);
-        painter.drawPixmap(QPoint(0, 1), barIcon(Icon::LineWidth, 22).pixmap(QSize(22, 22), dpr));
-        painter.setRenderHint(QPainter::Antialiasing);   // Value sits in a rounded field 4px after the glyph.
+        painter.setRenderHint(QPainter::Antialiasing);
         painter.setPen(Qt::NoPen);
-        painter.setBrush(Bar::field);
-        painter.drawRoundedRect(QRectF(26, 0, 28, 24), 6, 6);
-        painter.setFont(m_sizeButton->font());
+        painter.setBrush(Bar::field);                // One field behind both the glyph and the value.
+        painter.drawRoundedRect(QRectF(0, 0, 54, 24), 6, 6);
+        painter.drawPixmap(QPoint(2, 1), barIcon(Icon::LineWidth, 22).pixmap(QSize(22, 22), dpr));
+        QFont valueFont = m_sizeButton->font();
+        valueFont.setPixelSize(14);
+        painter.setFont(valueFont);
         painter.setPen(Bar::ink);
         // Number size may carry a half step shared with text; the button shows whole values only.
         const QString value = QString::number(qRound(widthControlValue()));
@@ -2060,8 +2062,7 @@ void CaptureOverlay::updateToolOptions()
             m_sizeButton->setAccessibleName(tool == ATool::Number ? tr("大小") : tr("粗细"));
             m_sizeButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
             m_sizeButton->setIconSize(QSize(54, 24));
-            m_sizeButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);   // Width hugs glyph + value.
-            m_sizeButton->setFixedHeight(Bar::button);
+            m_sizeButton->setFixedSize(54, Bar::button);   // Matches the glyph canvas so the field fills the button.
             m_sizeButton->setFocusPolicy(Qt::NoFocus);
             m_sizeButton->setCursor(Qt::PointingHandCursor);
             m_sizeButton->installEventFilter(this);
