@@ -208,6 +208,8 @@ int main(int argc, char **argv)
         return CaptureOverlay::testColorPicker(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-color-picker")) + 1));
     if (app.arguments().contains(QStringLiteral("--test-selection")))
         return CaptureOverlay::testSelection();
+    if (app.arguments().contains(QStringLiteral("--test-annotation-controls")))
+        return CaptureOverlay::testSelectionBorders() ? 1 : 0;
     if (app.arguments().contains(QStringLiteral("--test-toolbar-placement")))
         return CaptureOverlay::testToolbarPlacement(app.arguments().value(
             app.arguments().indexOf(QStringLiteral("--test-toolbar-placement")) + 1));

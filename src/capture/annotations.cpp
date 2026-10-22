@@ -263,7 +263,7 @@ QRect CaptureOverlay::annotationRect(const Annotation &ann)
     case ATool::Marker: {                          // Fat translucent stroke: include its width.
         if (ann.fill) return ann.rect;
         const int w = ann.pen * 5 / 2 + 2;
-        return ann.stroke.boundingRect().toRect().adjusted(-w, -w, w, w);
+        return QRect(ann.a, ann.b).normalized().adjusted(-w, -w, w, w);
     }
     default:            return ann.rect;
     }
@@ -340,8 +340,6 @@ bool CaptureOverlay::annotationHit(const Annotation &ann, const QPoint &pos)
         }
         return distToSegment(QPointF(pos), ann.a, ann.b) <= tol + ann.pen / 2;
     case ATool::Pen:
-    case ATool::Marker:
-        if (ann.fill) return ann.rect.adjusted(-tol, -tol, tol, tol).contains(pos);   // Highlight block.
         if (ann.stroke.isEmpty()) return false;
         for (int i = 1; i < ann.stroke.size(); ++i)
             if (distToSegment(QPointF(pos), ann.stroke[i - 1], ann.stroke[i])
@@ -349,6 +347,9 @@ bool CaptureOverlay::annotationHit(const Annotation &ann, const QPoint &pos)
                 return true;
         return distToSegment(QPointF(pos), ann.stroke.first(), ann.stroke.first())
             <= tol + ann.pen / 2;
+    case ATool::Marker:
+        return ann.fill ? ann.rect.adjusted(-tol, -tol, tol, tol).contains(pos)
+            : distToSegment(pos, ann.a, ann.b) <= ann.pen * 2.5 + tol;
     default:                                     // Area objects select anywhere inside.
         return ann.rect.adjusted(-tol, -tol, tol, tol).contains(pos);
     }
@@ -358,7 +359,8 @@ int CaptureOverlay::annotationAt(const QPoint &pos) const        // Topmost anno
 {
     // Deselecting locks an item into the image: only the still-selected one can be picked.
     const int i = m_selAnn;
-    if (i >= 0 && i < m_anns.size() && !m_anns[i].mosaicBrush && m_anns[i].tool != ATool::Eraser
+    if (i >= 0 && i < m_anns.size() && !m_anns[i].mosaicBrush
+        && m_anns[i].tool != ATool::Pen && m_anns[i].tool != ATool::Eraser
         && annotationHit(m_anns[i], mapToLocal(m_anns[i], pos))) return i;
     return -1;
 }
@@ -384,18 +386,26 @@ int CaptureOverlay::textAnnotationAt(const QPoint &pos) const
 QVector<QPoint> CaptureOverlay::annAnchors(const Annotation &ann) const
 {
     if (ann.tool == ATool::Mosaic && ann.mosaicBrush) return {};
-    if (ann.tool == ATool::Arrow) return {ann.a, ann.b};
+    if (ann.tool == ATool::Arrow || (ann.tool == ATool::Marker && !ann.fill)) return {ann.a, ann.b};
     switch (ann.tool) {
     case ATool::Marker:
-        if (!ann.fill) return {};
-        [[fallthrough]];
     case ATool::Eraser:
         if (!ann.fill) return {};
         [[fallthrough]];
     case ATool::Rect: case ATool::Ellipse: case ATool::Mosaic:
     case ATool::Text: case ATool::Number: {
         const QRect r = ann.rect.normalized();
-        return {r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight()};
+        const QPoint c = r.center();
+        QVector<QPoint> anchors{r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight(),
+                               QPoint(r.left(), c.y()), QPoint(r.right(), c.y()),
+                               QPoint(c.x(), r.top()), QPoint(c.x(), r.bottom())};
+        if (ann.tool == ATool::Text || ann.tool == ATool::Number) anchors.resize(4);
+        if (ann.tool == ATool::Ellipse || (ann.tool == ATool::Number && ann.numberStyle != 2)) {
+            const QPointF center = QRectF(r.topLeft(), r.bottomRight()).center();
+            for (int i = 0; i < 4; ++i)
+                anchors[i] = (center + (QPointF(anchors[i]) - center) * M_SQRT1_2).toPoint();
+        }
+        return anchors;
     }
     default:
         return {};
@@ -404,14 +414,15 @@ QVector<QPoint> CaptureOverlay::annAnchors(const Annotation &ann) const
 
 CaptureOverlay::Handle CaptureOverlay::annHandleAt(const Annotation &ann, const QPoint &pos) const
 {
-    if (ann.mosaicBrush || (ann.tool == ATool::Eraser && !ann.fill)) return H_None;
+    if (ann.tool == ATool::Pen || ann.mosaicBrush || (ann.tool == ATool::Eraser && !ann.fill)) return H_None;
     if (ann.tool != ATool::Mosaic
         && QRect(rotateAnchor(ann) - QPoint(6, 6), QSize(12, 12)).contains(pos)) return H_Rotate;
     const QVector<QPoint> anchors = annAnchors(ann);
-    static const Handle ids[] = {H_TL, H_TR, H_BL, H_BR, H_TL, H_BR};
+    static const Handle ids[] = {H_TL, H_TR, H_BL, H_BR, H_L, H_R, H_T, H_B};
+    const bool endpoints = ann.tool == ATool::Arrow || (ann.tool == ATool::Marker && !ann.fill);
     for (int i = 0; i < anchors.size(); ++i)
         if (QRect(mapFromLocal(ann, anchors[i]) - QPoint(5, 5), QSize(10, 10)).contains(pos))
-            return ids[i];
+            return endpoints ? (i == 0 ? H_TL : H_BR) : ids[i];
     if (ann.tool == ATool::Mosaic) {
         const QRect r = ann.rect;
         if (r.adjusted(-5, -5, 5, 5).contains(pos)) {
@@ -461,13 +472,12 @@ void CaptureOverlay::paintMosaicBorder(QPainter &p, const Annotation &ann, bool 
     p.setRenderHint(QPainter::Antialiasing, false);
     // The frame and handles stay visible outside the region; the effect pixels
     // remain visible on screen and are clipped only by the final capture output.
-    p.setCompositionMode(QPainter::CompositionMode_Difference);
-    QPen border(Qt::white, 0);
-    if (selected) border.setDashPattern({4, 4});
-    p.setPen(border);
-    p.setBrush(Qt::NoBrush);
-    const QRectF bounds = QRectF(ann.rect).adjusted(0, 0, -1, -1);
-    p.drawRect(bounds);
+    if (!selected) {
+        p.setCompositionMode(QPainter::CompositionMode_Difference);
+        p.setPen(QPen(Qt::white, 0));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(ann.rect).adjusted(0, 0, -1, -1));
+    }
     if (selected) {
         p.setCompositionMode(QPainter::CompositionMode_SourceOver);
         for (const QPoint &anchor : annAnchors(ann))
@@ -516,10 +526,14 @@ void CaptureOverlay::updateAnnotationCursor(const QPoint &pos)
             return;
         }
     }
-    if (!m_live && m_selAnn >= 0 && m_selAnn < m_anns.size() && regionItem(m_anns[m_selAnn])) {
-        const Handle handle = annHandleAt(m_anns[m_selAnn], pos);
+    if (!m_live && m_selAnn >= 0 && m_selAnn < m_anns.size()) {
+        const Annotation &ann = m_anns[m_selAnn];
+        const Handle handle = annHandleAt(ann, pos);
         if (handle != H_None) { setCursor(cursorForHandle(handle)); return; }
-        if (annotationHit(m_anns[m_selAnn], mapToLocal(m_anns[m_selAnn], pos))) { setCursor(Qt::SizeAllCursor); return; }
+        if (annotationAt(pos) == m_selAnn || (regionItem(ann) && annotationHit(ann, mapToLocal(ann, pos)))) {
+            setCursor(Qt::SizeAllCursor);
+            return;
+        }
     }
     const Handle handle = hitHandle(pos);
     if (m_atool == ATool::Mosaic && mosaicBrush() && handle == H_Move && !m_spaceHeld) {
@@ -552,28 +566,36 @@ void CaptureOverlay::applyItemDrag(const QPoint &pos, Qt::KeyboardModifiers mods
         if (mods & Qt::ShiftModifier) rot = qRound(rot / 15.0) * 15.0;   // Snap to 15 degrees.
         ann.rot = rot;
     } else {
-        const QPoint local = mapToLocal(ann, pos);   // Handle math runs in item space.
-        if (ann.tool == ATool::Arrow) {
+        QPoint local = mapToLocal(ann, pos);   // Handle math runs in item space.
+        if (ann.tool == ATool::Arrow || (ann.tool == ATool::Marker && !ann.fill)) {
             if (m_itemDrag == H_TL) ann.a = local; else ann.b = local;
-            if (ann.lineStyle >= 1 && ann.stroke.size() >= 2)   // Path endpoints ride the path ends.
+            if (ann.tool == ATool::Arrow && ann.lineStyle >= 1 && ann.stroke.size() >= 2)   // Path endpoints ride the path ends.
                 ann.stroke[m_itemDrag == H_TL ? 0 : ann.stroke.size() - 1] = QPointF(local);
         } else {
             const QRect r = m_pressAnn.rect.normalized();
-            if (ann.tool == ATool::Mosaic && (m_itemDrag == H_L || m_itemDrag == H_R
-                || m_itemDrag == H_T || m_itemDrag == H_B)) {
-                ann.rect = r;
-                if (m_itemDrag == H_L) ann.rect.setLeft(local.x());
-                else if (m_itemDrag == H_R) ann.rect.setRight(local.x());
-                else if (m_itemDrag == H_T) ann.rect.setTop(local.y());
-                else ann.rect.setBottom(local.y());
-                ann.rect = ann.rect.normalized();
-                m_anns[m_selAnn] = ann;
-                return;
-            }
             const QPoint fixed = m_itemDrag == H_TL ? r.bottomRight()
                 : m_itemDrag == H_TR ? r.bottomLeft()
                 : m_itemDrag == H_BL ? r.topRight() : r.topLeft();
-            ann.rect = QRect(fixed, local).normalized();
+            if (m_itemDrag == H_L || m_itemDrag == H_R
+                || m_itemDrag == H_T || m_itemDrag == H_B) {
+                QPoint first = r.topLeft(), last = r.bottomRight();
+                if (m_itemDrag == H_L) first.setX(local.x());
+                else if (m_itemDrag == H_R) last.setX(local.x());
+                else if (m_itemDrag == H_T) first.setY(local.y());
+                else last.setY(local.y());
+                ann.rect = QRect(QPoint(qMin(first.x(), last.x()), qMin(first.y(), last.y())),
+                                 QPoint(qMax(first.x(), last.x()), qMax(first.y(), last.y())));
+            } else {
+                if (ann.tool == ATool::Ellipse || (ann.tool == ATool::Number && ann.numberStyle != 2)) {
+                    const QPoint corner = m_itemDrag == H_TL ? r.topLeft()
+                        : m_itemDrag == H_TR ? r.topRight() : m_itemDrag == H_BL ? r.bottomLeft() : r.bottomRight();
+                    const int index = m_itemDrag == H_TL ? 0 : m_itemDrag == H_TR ? 1 : m_itemDrag == H_BL ? 2 : 3;
+                    // The contour handle sits inside the box corner; invert its fixed-corner ratio.
+                    local = corner + (QPointF(local - annAnchors(m_pressAnn)[index]) * (2 / (1 + M_SQRT1_2))).toPoint();
+                }
+                ann.rect = QRect(QPoint(qMin(fixed.x(), local.x()), qMin(fixed.y(), local.y())),
+                                 QPoint(qMax(fixed.x(), local.x()), qMax(fixed.y(), local.y())));
+            }
             if (ann.tool == ATool::Text) {       // Resize letters, not an invisible wrapping box.
                 const qreal scale = qMax(qreal(ann.rect.width()) / qMax(1, r.width()),
                                          qreal(ann.rect.height()) / qMax(1, r.height()));
@@ -586,6 +608,10 @@ void CaptureOverlay::applyItemDrag(const QPoint &pos, Qt::KeyboardModifiers mods
             } else if (ann.tool == ATool::Number) { // Circles stay square while resizing.
                 const int s = qMax(ann.rect.width(), ann.rect.height());
                 ann.rect = QRect(ann.rect.topLeft(), QSize(s, s));
+                if (m_itemDrag == H_TL) ann.rect.moveBottomRight(fixed);
+                else if (m_itemDrag == H_TR) ann.rect.moveBottomLeft(fixed);
+                else if (m_itemDrag == H_BL) ann.rect.moveTopRight(fixed);
+                else ann.rect.moveTopLeft(fixed);
             }
         }
     }
@@ -1575,6 +1601,7 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
     }
     if (m_atool == ATool::Rect || m_atool == ATool::Ellipse) m_ann.fill = m_afill;
     if (m_atool == ATool::Marker) m_ann.fill = m_markerFill;
+    if (m_atool == ATool::Marker && !m_ann.fill) m_ann.a = m_ann.b = pos;
     if (m_atool == ATool::Arrow) {
         m_ann.arrowStyle = m_arrowStyle;
         m_ann.lineStyle = m_arrowLineStyle;
@@ -1585,10 +1612,10 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
         m_ann.lineStyle = 2;                     // Straight arrows build clicked vertices; two collapse to a/b.
         m_ann.stroke << pos << pos;              // Fixed vertex plus a rubber-band end.
     }
-    else if (m_atool == ATool::Pen || ((m_atool == ATool::Marker || m_atool == ATool::Eraser) && !m_ann.fill)
+    else if (m_atool == ATool::Pen || (m_atool == ATool::Eraser && !m_ann.fill)
         || m_ann.mosaicBrush || (m_atool == ATool::Arrow && m_arrowLineStyle == 1))
         m_ann.stroke << pos;                     // Curve arrows sample the drag like the pen.
-    else if (m_atool != ATool::Arrow) m_ann.rect = QRect(pos, pos);
+    else if (m_atool != ATool::Arrow && !(m_atool == ATool::Marker && !m_ann.fill)) m_ann.rect = QRect(pos, pos);
     syncSizeInput();                             // Keep the active options visible while drawing.
     m_inspector->hide();
     m_sizeBar->hide();
@@ -1596,6 +1623,16 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
 
 void CaptureOverlay::updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers mods)
 {
+    if (m_ann.tool == ATool::Marker && !m_ann.fill) {
+        QPointF end = pos;
+        const QLineF line(m_ann.a, end);
+        if (mods & Qt::ShiftModifier && line.length() > 1) {
+            const qreal angle = qRound(qAtan2(-line.dy(), line.dx()) / (M_PI / 4)) * (M_PI / 4);
+            end = QPointF(m_ann.a) + QPointF(qCos(angle), -qSin(angle)) * line.length();
+        }
+        m_ann.b = end.toPoint();
+        return;
+    }
     if (m_ann.tool == ATool::Arrow && m_ann.lineStyle == 2) {   // Rubber band to the cursor.
         const QPointF from = m_ann.stroke[m_ann.stroke.size() - 2];
         QPointF b = pos;
@@ -1619,7 +1656,6 @@ void CaptureOverlay::updateAnnotation(const QPoint &pos, Qt::KeyboardModifiers m
         ? ATool::Rect : m_ann.tool;
     switch (shape) {
     case ATool::Pen:
-    case ATool::Marker:
     case ATool::Eraser:
         if ((pos - m_ann.stroke.last().toPoint()).manhattanLength() >= 2)
             m_ann.stroke << pos;                 // Decimate near-duplicate samples.
@@ -1659,7 +1695,8 @@ void CaptureOverlay::commitAnnotation()
     for (int i = 1; i < m_ann.stroke.size(); ++i) pathLength += QLineF(m_ann.stroke[i - 1], m_ann.stroke[i]).length();
     const bool meaningful = m_ann.mosaicBrush ? !m_ann.stroke.isEmpty()
         : m_ann.tool == ATool::Eraser && !m_ann.fill ? !m_ann.stroke.isEmpty()   // A click erases a dot.
-        : m_ann.tool == ATool::Pen || (m_ann.tool == ATool::Marker && !m_ann.fill)
+        : m_ann.tool == ATool::Marker && !m_ann.fill ? (m_ann.a - m_ann.b).manhattanLength() >= 3
+        : m_ann.tool == ATool::Pen
         ? m_ann.stroke.size() >= 2
         : m_ann.tool == ATool::Arrow
               ? (m_ann.lineStyle >= 1 ? m_ann.stroke.size() >= 2 && pathLength >= 6
@@ -1669,8 +1706,9 @@ void CaptureOverlay::commitAnnotation()
         pushUndo();
         m_anns.append(m_ann);
         normalizeNumbers();
-        // Completed mosaic and eraser strokes are not re-editable.
-        m_selAnn = m_ann.mosaicBrush || (m_ann.tool == ATool::Eraser && !m_ann.fill) ? -1 : m_anns.size() - 1;
+        // Freehand strokes are finished on release; only geometric items retain controls.
+        m_selAnn = m_ann.tool == ATool::Pen || m_ann.mosaicBrush
+            || (m_ann.tool == ATool::Eraser && !m_ann.fill) ? -1 : m_anns.size() - 1;
     } else {
         updateToolOptions();                     // Options fall back to the tool's own defaults.
     }
@@ -2550,7 +2588,7 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         washPen.setCapStyle(Qt::RoundCap);
         washPen.setJoinStyle(Qt::RoundJoin);
         p.setPen(washPen);
-        p.drawPolyline(ann.stroke);
+        p.drawLine(ann.a, ann.b);
         break;
     }
     case ATool::Text: {

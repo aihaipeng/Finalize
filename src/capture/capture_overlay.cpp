@@ -651,6 +651,7 @@ void CaptureOverlay::paintEvent(QPaintEvent *event)
     if (m_mode == Adjusting && !m_live
         && (editorActive() || (m_selAnn >= 0 && m_selAnn < m_anns.size()
                               && !m_anns[m_selAnn].mosaicBrush
+                              && m_anns[m_selAnn].tool != ATool::Pen
                               && !(m_anns[m_selAnn].tool == ATool::Eraser && !m_anns[m_selAnn].fill)
                               ))) {   // The freshly drawn item keeps its handles until deselected.
         const Annotation ann = editorActive() ? editorAnnotation() : m_anns[m_selAnn];
@@ -660,22 +661,6 @@ void CaptureOverlay::paintEvent(QPaintEvent *event)
         p.save();
         if (!qFuzzyIsNull(ann.rot)) p.setTransform(annTransform(ann), true);
         const QRect box = annotationRect(ann);
-        if (ann.tool == ATool::Text) {
-            // Reference text frame: one hairline accent rect at the bounds, nothing dashed.
-            // A rotated cosmetic 1px line must be antialiased or it rasterizes into
-            // disconnected segments; an unrotated one stays crisp for free.
-            p.setRenderHint(QPainter::Antialiasing, !qFuzzyIsNull(ann.rot));
-            QPen frame(Bar::accent, 0);
-            p.setPen(frame);
-            p.setBrush(Qt::NoBrush);
-            p.drawRect(QRectF(box).adjusted(0, 0, 0.5, 0.5));
-        } else {
-            QPen border(Bar::accent, 1);
-            border.setDashPattern({4, 3});
-            p.setPen(border);
-            p.setBrush(Qt::NoBrush);
-            if (ann.tool != ATool::Arrow) p.drawRect(box.adjusted(-3, -3, 3, 3));
-        }
         for (const QPoint &anchor : annAnchors(ann))
             paintHandle(p, anchor);
         if (ann.tool != ATool::Mosaic) {          // Mosaic regions move and resize without rotation.

@@ -82,6 +82,7 @@ public:
     static int testBarcode(const QString &previewPath);
     static int testRoundRefresh(const QString &previewPath);
     static int testSelection();
+    static int testSelectionBorders();
     static int testToolbarPlacement(const QString &previewPath);
     static int testThemeUi(const QString &previewPath);
     static int testColorPicker(const QString &previewPath);
@@ -130,8 +131,8 @@ private:
         QPolygonF smartStroke;
         int smartPen = -1;
         QRect rect;                                  // Rect / Ellipse / Mosaic / Text / Number box.
-        QPoint a, b;                                 // Arrow endpoints.
-        QPolygonF stroke;                            // Pen / Marker / Mosaic brush polyline.
+        QPoint a, b;                                 // Arrow / straight highlighter endpoints.
+        QPolygonF stroke;                            // Pen / curved arrow / brush polyline.
         QString text;                                // Text / Number content.
         qreal font = 15;                             // Text / Number point size (1/72 inch).
         QString family = QStringLiteral("Microsoft YaHei UI");
@@ -158,7 +159,7 @@ private:
     static bool textInnerHit(const Annotation &ann, const QPoint &pos);
     int annotationAt(const QPoint &pos) const;
     int textAnnotationAt(const QPoint &pos) const;
-    // Corner anchors for area shapes, endpoint anchors for arrows; strokes and text move only.
+    // Area anchors follow the shape contour; lines have endpoints and freehand strokes have none.
     QVector<QPoint> annAnchors(const Annotation &ann) const;
     Handle annHandleAt(const Annotation &ann, const QPoint &pos) const;
     QPoint rotateAnchor(const Annotation &ann) const;
@@ -166,7 +167,6 @@ private:
     bool textKnobAbove(const Annotation &ann) const;
     void paintMosaicBorder(QPainter &p, const Annotation &ann, bool selected) const;
     static void paintHandle(QPainter &p, const QPointF &center);
-    static int testSelectionBorders();
     static QCursor mosaicBrushCursor(qreal width, qreal dpr);
     static QCursor eraserCursor(qreal width, qreal dpr);
     static QPainterPath strokeMask(const QPolygonF &stroke, qreal width);

@@ -804,13 +804,15 @@ int CaptureOverlay::testSelectionBorders()
     for (int t = int(ATool::Rect); t <= int(ATool::Eraser); ++t) {
         const ATool tool = ATool(t);
         Annotation ann;
-        ann.tool = tool == ATool::Eraser ? ATool::Rect : tool;
+        ann.tool = tool;
+        ann.fill = tool == ATool::Eraser;
         ann.rect = QRect(80, 80, 180, 100);
         ann.a = ann.rect.topLeft(); ann.b = ann.rect.bottomRight();
         ann.stroke = QPolygonF{QPointF(90, 100), QPointF(240, 140)};
         ann.text = QStringLiteral("Text");
         ann.color = QColor("#ff3b30");
         if (tool == ATool::Text) fitTextAnnotation(ann);
+        if (tool == ATool::Number) ann.rect.setSize(QSize(100, 100));
         overlay.m_anns = {ann};
         overlay.m_atool = tool;
         overlay.m_selAnn = -1;
@@ -818,25 +820,77 @@ int CaptureOverlay::testSelectionBorders()
         const QImage output = overlay.cropped().toImage();
         overlay.m_selAnn = 0;
         const QImage active = render();
-        check(active != plain, "the selected item keeps its controls while its drawing tool stays armed");
+        check(tool == ATool::Pen ? active == plain : active != plain,
+              "only adjustable geometric annotations retain controls with their tool armed");
         if (previews) active.save(prefix + QString::number(t) + QStringLiteral("-drawing.png"));
         overlay.m_atool = ATool::None;
         const QImage selected = render();
-        check(selected != plain, "explicit object selection reveals editing controls for every annotation tool");
+        check(tool == ATool::Pen ? selected == plain : selected != plain,
+              "freehand pen marks never gain controls, even in object selection mode");
         check(overlay.cropped().toImage() == output, "editing borders and nodes never enter exported pixels");
         if (previews) selected.save(prefix + QString::number(t) + QStringLiteral("-editing.png"));
-        if (tool == ATool::Arrow) {
-            const QPoint probe = annotationRect(ann).topLeft() + QPoint(40, -3);
-            check(selected.pixelColor(qRound(probe.x() * dpr), qRound(probe.y() * dpr))
-                      == plain.pixelColor(qRound(probe.x() * dpr), qRound(probe.y() * dpr)),
-                  "arrow editing has endpoint nodes without an unnecessary rectangular border");
-        }
-        for (const QPoint &anchor : overlay.annAnchors(ann))
+        const QVector<QPoint> anchors = overlay.annAnchors(ann);
+        const QPoint knob = overlay.rotateKnobLocal(ann);
+        const QRect box = annotationRect(ann);
+        int extraPixels = 0;
+        const QRect scan = box.adjusted(-8, -8, 8, 8).intersected(overlay.rect());
+        for (int y = scan.top(); y <= scan.bottom(); ++y)
+            for (int x = scan.left(); x <= scan.right(); ++x) {
+                const QPoint point(x, y);
+                bool control = false;
+                for (const QPoint &anchor : anchors)
+                    control |= QLineF(point, anchor).length() <= 7;
+                if (tool != ATool::Mosaic && tool != ATool::Pen)
+                    control |= QLineF(point, knob).length() <= 7
+                        || (qAbs(x - box.center().x()) <= 2
+                            && (knob.y() < box.top() ? y <= box.top() : y >= box.bottom()));
+                if (!control && selected.pixelColor(qRound(x * dpr), qRound(y * dpr))
+                        != plain.pixelColor(qRound(x * dpr), qRound(y * dpr))) ++extraPixels;
+            }
+        check(extraPixels == 0, "selection adds nodes and rotation only, never a surrounding rectangle");
+        for (const QPoint &anchor : anchors)
             check(overlay.annHandleAt(ann, mapFromLocal(ann, anchor)) != H_None,
                   "smaller visual circles retain the original resize hit targets");
+        if (tool != ATool::Pen && tool != ATool::Mosaic) {
+            Annotation turned = ann;
+            turned.rot = 30;
+            for (const QPoint &anchor : overlay.annAnchors(turned))
+                check(overlay.annHandleAt(turned, mapFromLocal(turned, anchor)) != H_None,
+                      "contour-node hit targets follow the rotated annotation");
+        }
+        if (tool == ATool::Ellipse) {
+            const QPointF center = QRectF(ann.rect.topLeft(), ann.rect.bottomRight()).center();
+            for (const QPoint &anchor : anchors) {
+                const QPointF normalized((anchor.x() - center.x()) / ((ann.rect.width() - 1) / 2.0),
+                                         (anchor.y() - center.y()) / ((ann.rect.height() - 1) / 2.0));
+                check(qAbs(QPointF::dotProduct(normalized, normalized) - 1) < 0.04,
+                      "ellipse handles lie on the ellipse instead of its bounding-box corners");
+            }
+        }
+        if (tool == ATool::Rect || tool == ATool::Ellipse || tool == ATool::Mosaic
+            || tool == ATool::Eraser || tool == ATool::Number) {
+            check(anchors.size() == (tool == ATool::Number ? 4 : 8), "area tools retain their contour resize nodes");
+            static const Handle handles[] = {H_TL, H_TR, H_BL, H_BR, H_L, H_R, H_T, H_B};
+            for (int i = 0; i < anchors.size(); ++i) {
+                overlay.m_pressAnn = ann;
+                overlay.m_itemDrag = handles[i];
+                overlay.applyItemDrag(anchors[i]);
+                check(overlay.m_anns[0].rect == ann.rect, "grabbing a contour node does not jump the shape");
+                const QPoint delta = tool == ATool::Number
+                    ? QPoint(i == 0 || i == 2 ? -20 : 20, i < 2 ? -20 : 20) : QPoint(20, 15);
+                overlay.applyItemDrag(anchors[i] + delta);
+                check(overlay.m_anns[0].rect != ann.rect, "each contour resize node changes the shape");
+                const QPoint expected = anchors[i] + (i < 4 ? delta : i < 6 ? QPoint(20, 0) : QPoint(0, 15));
+                check(QLineF(overlay.annAnchors(overlay.m_anns[0])[i], expected).length() <= 2,
+                      "the dragged contour node follows the pointer");
+            }
+            overlay.m_anns[0] = ann;
+            overlay.m_itemDrag = H_None;
+        }
         overlay.m_atool = tool;
         overlay.m_spaceHeld = true;
-        check(render() != plain, "space-based object editing retains its editing feedback");
+        check(tool == ATool::Pen ? render() == plain : render() != plain,
+              "space-based editing does not restore controls to a completed pen stroke");
         overlay.m_spaceHeld = false;
         if (tool == ATool::Mosaic) {
             overlay.m_anns[0].mosaicBrush = true;
@@ -849,6 +903,94 @@ int CaptureOverlay::testSelectionBorders()
         }
     }
     overlay.m_anns.clear(); overlay.m_selAnn = -1;
+    overlay.selectTool(ATool::Pen);
+    const auto mouse = [&](QEvent::Type type, const QPoint &point, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+        QMouseEvent event(type, point, overlay.mapToGlobal(point),
+                          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                          type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, mods);
+        QApplication::sendEvent(&overlay, &event);
+    };
+    for (int i = 0; i < 2; ++i) {
+        mouse(QEvent::MouseButtonPress, QPoint(120, 130));
+        mouse(QEvent::MouseMove, QPoint(220, 170));
+        mouse(QEvent::MouseButtonRelease, QPoint(220, 170));
+        check(overlay.m_anns.size() == i + 1 && overlay.m_selAnn == -1,
+              "a new pen stroke can start on an old stroke without selecting or moving it");
+    }
+    const QColor penColor = overlay.m_anns[0].color;
+    const int penWidth = overlay.m_anns[0].pen;
+    overlay.pickToolColor(Qt::green);
+    overlay.setToolSize(penWidth + 1);
+    check(overlay.m_anns[0].color == penColor && overlay.m_anns[0].pen == penWidth,
+          "pen option changes only affect future strokes");
+    overlay.undoAnnotation();
+    check(overlay.m_anns.size() == 1 && overlay.m_selAnn == -1, "undo removes one pen stroke without selecting another");
+    overlay.redoAnnotation();
+    check(overlay.m_anns.size() == 2 && overlay.m_selAnn == -1, "redo restores pen ink without adjustment controls");
+    overlay.selectTool(ATool::Marker);
+    overlay.m_markerFill = false;
+    mouse(QEvent::MouseButtonPress, QPoint(120, 240));
+    mouse(QEvent::MouseMove, QPoint(180, 330));
+    mouse(QEvent::MouseMove, QPoint(240, 180));
+    mouse(QEvent::MouseMove, QPoint(300, 240));
+    mouse(QEvent::MouseButtonRelease, QPoint(300, 240));
+    const Annotation line = overlay.m_anns.last();
+    check(line.a == QPoint(120, 240) && line.b == QPoint(300, 240) && line.stroke.isEmpty()
+              && overlay.annAnchors(line) == QVector<QPoint>{line.a, line.b},
+          "highlights use two endpoint controls and never retain freehand samples");
+    check(overlay.annHandleAt(line, line.a) == H_TL && overlay.annHandleAt(line, line.b) == H_BR,
+          "highlight endpoints have distinct start and end hit targets");
+    overlay.updateAnnotationCursor(line.b);
+    check(overlay.cursor().shape() == cursorForHandle(H_BR), "a highlight endpoint advertises its adjustment cursor");
+    overlay.m_pressAnn = line;
+    overlay.m_itemDrag = H_BR;
+    overlay.applyItemDrag(line.b + QPoint(30, 10));
+    check(overlay.m_anns.last().a == line.a && overlay.m_anns.last().b == line.b + QPoint(30, 10),
+          "dragging a highlight endpoint changes only that endpoint");
+    overlay.m_itemDrag = H_None;
+    QImage linePixels(360, 360, QImage::Format_ARGB32);
+    linePixels.fill(Qt::transparent);
+    {
+        QPainter painter(&linePixels);
+        overlay.drawAnnotation(painter, line, QImage());
+    }
+    check(linePixels.pixelColor(200, 240).alpha() == 110 && linePixels.pixelColor(180, 330).alpha() == 0,
+          "highlight output contains only the translucent straight segment, not the mouse trail");
+    overlay.setToolSize(line.pen + 1);
+    check(overlay.m_anns.last().pen == line.pen + 1, "straight highlights retain editable width");
+    overlay.undoAnnotation();
+    check(overlay.m_anns.last().pen == line.pen, "highlight width changes remain undoable");
+    overlay.redoAnnotation();
+    check(overlay.m_anns.last().pen == line.pen + 1, "highlight width changes remain redoable");
+    overlay.toggleFill();
+    mouse(QEvent::MouseButtonPress, QPoint(450, 240));
+    mouse(QEvent::MouseMove, QPoint(550, 290));
+    mouse(QEvent::MouseButtonRelease, QPoint(550, 290));
+    check(overlay.m_anns.last().tool == ATool::Marker && overlay.m_anns.last().fill
+              && overlay.m_anns.last().rect == QRect(QPoint(450, 240), QPoint(550, 290))
+              && overlay.m_anns.last().stroke.isEmpty() && overlay.annAnchors(overlay.m_anns.last()).size() == 8,
+          "rectangle highlights remain available with eight boundary nodes and no freehand path");
+    overlay.toggleFill();
+    overlay.m_anns.clear(); overlay.m_selAnn = -1;
+    mouse(QEvent::MouseButtonPress, QPoint(120, 240));
+    mouse(QEvent::MouseMove, QPoint(260, 265), Qt::ShiftModifier);
+    mouse(QEvent::MouseButtonRelease, QPoint(260, 265), Qt::ShiftModifier);
+    check(overlay.m_anns.last().a.y() == overlay.m_anns.last().b.y(), "Shift snaps straight highlights to 45-degree steps");
+    overlay.m_selAnn = -1;
+    overlay.m_atool = ATool::Pen;
+    overlay.m_live = false;
+    overlay.beginAnnotation(QPoint(360, 130));
+    overlay.updateAnnotation(QPoint(420, 160), Qt::NoModifier);
+    QMouseEvent finish(QEvent::MouseButtonPress, QPoint(420, 160), overlay.mapToGlobal(QPoint(420, 160)),
+                       Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+    QApplication::sendEvent(&overlay, &finish);
+    check(!overlay.m_live && overlay.m_selAnn == -1 && overlay.m_anns.last().tool == ATool::Pen,
+          "right-click finishing also leaves completed pen ink without selection controls");
+    overlay.m_anns.clear(); overlay.m_selAnn = -1;
+    overlay.m_atool = ATool::None;
+    overlay.hideToolBars();
+    overlay.m_sizeBar->hide();
+    overlay.m_inspector->hide();
     const QImage selection = render();
     for (const QRect &target : handleRects(overlay.m_sel)) {
         const QPoint center = target.center() + QPoint(1, 1);
@@ -856,7 +998,7 @@ int CaptureOverlay::testSelectionBorders()
                   && overlay.hitHandle(center) != H_None,
               "all eight capture resize handles are accent dots and remain draggable");
     }
-    if (!failures) std::puts("PASS: per-tool editing borders, circular nodes, hit targets and clean exports");
+    if (!failures) std::puts("PASS: contour controls without outer frames, finished pen ink, straight highlights, undo and clean exports");
     return failures;
 }
 
@@ -923,7 +1065,7 @@ int CaptureOverlay::testOutput()
         overlay.m_redoStack = {overlay.m_anns};
         overlay.placeToolBars();
         overlay.showToolBars();
-        const QPoint pressPoint(ink.rect.center().x(), ink.rect.top());
+        const QPoint pressPoint(ink.rect.left() + ink.rect.width() / 4, ink.rect.top());
         QMouseEvent press(QEvent::MouseButtonPress, pressPoint, overlay.mapToGlobal(pressPoint),
                           Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(&overlay, &press);

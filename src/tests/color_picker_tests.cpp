@@ -455,8 +455,9 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     mouse(QEvent::MouseMove, strokeAt + QPoint(18, 18));
     mouse(QEvent::MouseButtonRelease, strokeAt + QPoint(18, 18));
     check(overlay.m_anns.size() == 1 && overlay.m_anns[0].tool == ATool::Marker
-              && overlay.m_anns[0].stroke.size() >= 3,
-          "the marker commits a decimated translucent stroke");
+              && overlay.m_anns[0].stroke.isEmpty() && overlay.m_anns[0].a == strokeAt
+              && overlay.m_anns[0].b == strokeAt + QPoint(18, 18),
+          "the marker ignores intermediate samples and commits one straight translucent line");
     const QImage beforeText = overlay.cropped().toImage();
     overlay.selectTool(ATool::Text);
     mouse(QEvent::MouseButtonPress, annOrigin + QPoint(60, 20));
@@ -658,12 +659,12 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     overlay.setToolNone();
     mouse(QEvent::MouseButtonPress, fin + QPoint(7, 3));   // Re-select the stroke.
     mouse(QEvent::MouseButtonRelease, fin + QPoint(7, 3));
-    const QPointF beforeNudge = overlay.m_anns.last().stroke.first();
+    const QPoint beforeNudge = overlay.m_anns.last().a;
     QKeyEvent keyA(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier);
     QApplication::sendEvent(&overlay, &keyA);
     QKeyEvent keyW(QEvent::KeyPress, Qt::Key_W, Qt::NoModifier);
     QApplication::sendEvent(&overlay, &keyW);
-    check(overlay.m_anns.last().stroke.first() == beforeNudge + QPointF(-1, -1),
+    check(overlay.m_anns.last().a == beforeNudge + QPoint(-1, -1),
           "WASD keys nudge the selected annotation one pixel");
     const QPoint knob = overlay.rotateAnchor(overlay.m_anns.last());
     mouse(QEvent::MouseButtonPress, knob);
@@ -730,7 +731,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         check(alpha > 60 && alpha < 200, "the highlight rectangle is translucent");
     }
     overlay.toggleFill();
-    check(!overlay.m_markerFill, "the marker fill toggles back to freehand strokes");
+    check(!overlay.m_markerFill, "the marker fill toggles back to straight highlights");
     check(numberLabel(4, 0) == QStringLiteral("4") && numberLabel(9, 1) == QStringLiteral("IX")
               && numberLabel(14, 1) == QStringLiteral("XIV") && numberLabel(27, 2) == QStringLiteral("AA")
               && numberLabel(3, 3) == QStringLiteral("c") && numberLabel(10, 4) == QStringLiteral("十")
@@ -1128,8 +1129,23 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     overlay.m_sizeSlider->setValue(10);
     overlay.m_sizeSlider->setValue(9);
     overlay.m_sizeSlider->setSliderDown(false);
+    check(overlay.m_selAnn == -1 && overlay.m_anns.last().pen == 8 && overlay.m_apen == 9
+              && overlay.m_sizeButton->text().toDouble() == 9,
+          "the width slider changes future pen strokes without retuning completed ink");
+    overlay.m_sizePopup->close();
+    QCoreApplication::processEvents();
+    overlay.selectTool(ATool::Marker);
+    overlay.setToolSize(8);
+    mouse(QEvent::MouseButtonPress, sizeStroke + QPoint(30, 10));
+    mouse(QEvent::MouseMove, sizeStroke + QPoint(80, 20));
+    mouse(QEvent::MouseButtonRelease, sizeStroke + QPoint(80, 20));
+    overlay.m_sizeButton->click();
+    overlay.m_sizeSlider->setSliderDown(true);
+    overlay.m_sizeSlider->setValue(10);
+    overlay.m_sizeSlider->setValue(9);
+    overlay.m_sizeSlider->setSliderDown(false);
     check(overlay.m_anns.last().pen == 9 && overlay.m_sizeButton->text().toDouble() == 9,
-          "the slider retunes the selected object");
+          "the slider retunes a selected geometric highlight");
     overlay.m_sizePopup->close();
     QCoreApplication::processEvents();
     overlay.undoAnnotation();

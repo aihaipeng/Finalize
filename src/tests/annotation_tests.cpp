@@ -433,7 +433,7 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
               "editing lower annotations invalidates the effect cache");
         overlay.m_anns.removeLast();
         check(overlay.annHandleAt(overlay.m_anns[1], overlay.rotateAnchor(overlay.m_anns[1])) == H_None
-                  && overlay.annAnchors(overlay.m_anns[1]).size() == 4,
+                  && overlay.annAnchors(overlay.m_anns[1]).size() == 8,
               "mosaic regions retain resize handles but expose no rotation handle");
         const QRect beforeMove = overlay.m_anns[1].rect;
         const int countBeforeMove = overlay.m_anns.size();
@@ -540,7 +540,7 @@ int CaptureOverlay::testTextAnnotation()
     QComboBox *fontAfterEdit = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("annotationFont"));
     check(fontBeforeEdit && fontAfterEdit && fontAfterEdit->property("reuseProbe").toBool(),
           "re-entering text reuses the existing option strip instead of rebuilding it");
-    {   // Editing shows one hairline frame: no blue dashed box, no native placeholder dashes.
+    {   // Editing shows only controls: no outer frame or native placeholder dashes.
         overlay.hideToolBars();
         QImage edit(overlay.size(), QImage::Format_ARGB32);
         overlay.render(&edit);
@@ -560,19 +560,19 @@ int CaptureOverlay::testTextAnnotation()
         for (int y = scan.top(); y <= scan.bottom(); ++y)
             for (int x = scan.left(); x <= scan.right(); ++x) {
                 if (edit.pixelColor(x, y) == bg) continue;
+                if (nearCorner(x, y)) continue;
                 if (y > box.bottom() || y < box.top()) {               // Rotation stalk, above text.
                     if (qAbs(x - box.center().x()) <= 2) continue;
                 }
-                const bool onFrame = nearCorner(x, y)
-                    || (frameBand.contains(x, y)
+                const bool onFrame = (frameBand.contains(x, y)
                         && (qAbs(x - box.left()) <= 1 || qAbs(x - box.right()) <= 1
                             || qAbs(y - box.top()) <= 1 || qAbs(y - box.bottom()) <= 1));
                 if (onFrame) ++frame;
                 else if (!box.contains(x, y)) ++outside;
                 else if (x > box.left() + 8) ++interior;  // Beyond the blinking cursor column.
             }
-        check(outside == 0 && interior == 0 && frame > 40,
-              "text editing draws a single hairline frame with anchor dots and no extra dashed boxes");
+        check(outside == 0 && interior == 0 && frame == 0,
+              "text editing draws anchor dots without a hairline frame or extra dashed boxes");
     }
     check(overlay.m_editor->font().pointSizeF() == 10.5 && overlay.m_editor->font().pixelSize() == -1
               && qAbs(QFontInfo(overlay.m_editor->font()).pixelSize() - 10.5 * overlay.logicalDpiY() / 72.0) <= 1,
