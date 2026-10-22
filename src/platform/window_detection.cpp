@@ -478,14 +478,26 @@ void WindowDetector::run()  {
                 const bool blocked = !m_options.disabledUiPrograms.contains(win.program, Qt::CaseInsensitive);
                 const QRect accessible = SUCCEEDED(com) && blocked
                     ? accessibleAt(win.hwnd, request.point, win.native, request.previous) : QRect();
-                const QRect uia = m_uia && blocked
-                    ? uiaRectAt(m_uia, win.hwnd, request.point, win.native, request.previous,
-                                &m_uiaSlow, win.program) : QRect();
                 const QRect child = childAt(win, request.point, request.previous);
-                QRect best = child;
-                for (const QRect &candidate : {accessible, uia})
-                    if (!candidate.isEmpty() && (best.isEmpty() || rectArea(candidate) < rectArea(best)))
-                        best = candidate;
+                // Snipaste is MSAA-first. Keep a semantic MSAA/native control,
+                // but let UIA refine container-sized results (Chromium exposes
+                // its page pane to MSAA while the input lives in the UIA tree).
+                QRect best;
+                if (!accessible.isEmpty()) {
+                    best = accessible;
+                    if (!child.isEmpty() && rectArea(child) < rectArea(accessible)) best = child;
+                } else {
+                    best = child;
+                }
+                const bool container = best.isEmpty() || !request.previous.isEmpty()
+                    || rectArea(best) * 4 >= rectArea(win.native) * 3;
+                if (container) {
+                    const QRect uia = m_uia && blocked
+                        ? uiaRectAt(m_uia, win.hwnd, request.point, win.native, request.previous,
+                                    &m_uiaSlow, win.program) : QRect();
+                    if (!uia.isEmpty() && (best.isEmpty() || rectArea(uia) < rectArea(best)))
+                        best = uia;
+                }
                 if (!best.isEmpty()) result = best;
             }
             break;

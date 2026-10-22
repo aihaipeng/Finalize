@@ -94,7 +94,7 @@ Controller::Controller()
                               qMakePair(tr("自动检测 UI 元素"), QStringLiteral("detect_ui_elements"))}) {
         QAction *action = detection->addAction(entry.first);
         action->setCheckable(true);
-        action->setChecked(settings.value(QStringLiteral("Snip/") + entry.second, entry.second == QStringLiteral("detect_windows")).toBool());
+        action->setChecked(settings.value(QStringLiteral("Snip/") + entry.second, true).toBool());
         const QString key = entry.second;
         connect(action, &QAction::toggled, this, [key](bool enabled) {
             LensSnipSettings().setValue(QStringLiteral("Snip/") + key, enabled);
@@ -165,7 +165,7 @@ void Controller::startCapture()
     LensSnipSettings settings;
     DetectionOptions options;
     options.windows = settings.value(QStringLiteral("Snip/detect_windows"), true).toBool();
-    options.elements = settings.value(QStringLiteral("Snip/detect_ui_elements"), false).toBool();
+    options.elements = settings.value(QStringLiteral("Snip/detect_ui_elements"), true).toBool();
     options.excludedPrograms = settings.value(QStringLiteral("Snip/exclude_from_detection")).toStringList();
     options.disabledUiPrograms = settings.value(QStringLiteral("Snip/crashes")).toStringList();
     auto *ov = new CaptureOverlay(frames, {}, options, true);

@@ -256,7 +256,8 @@ private:
     QRect globalScreenRect(const QRect &local) const;
     QRect nativeDetectionRect(const QRect &local) const;
     void cancelDetection();
-    void requestDetection(const QPoint &point, const QRect &previous = {});
+    void requestDetection(const QPoint &point, const QRect &previous = {}, bool force = false);
+    void refineDetection();
     void recoverDetector();
     // Hover-driven repaints stay incremental: a full-desktop repaint per follow update
     // saturates the GUI thread during fast slides, and painting is stateless (frozen frame
@@ -362,6 +363,10 @@ private:
     QVector<QRect> m_hoverHistory;
     bool m_queryPending = false, m_waitingClick = false, m_expanding = false;
     static constexpr int kDetectionWatchdogMs = 1500;
+    QTimer m_refineTimer;
+    QPoint m_refinePoint;
+    bool m_refineScheduled = false;
+    bool m_refineTried = false;
     bool m_pinAfterDetection = false;
     bool m_dragStarted = false;
     QRect m_hover;                                  // Detected window under the cursor; drives the mask hole while idle.

@@ -182,6 +182,13 @@ int CaptureOverlay::testWindowDetection()
     const QRect expectedEdit = overlay.localScreenRect(logicalFromNative(frames, editRect));
     overlay.requestDetection(expectedButton.center());
     waitResult();
+    if (overlay.m_hover != expectedButton)
+        std::fprintf(stderr, "hover=(%d,%d %dx%d) expected=(%d,%d %dx%d) windows=%lld children=%lld pending=%d\n",
+            overlay.m_hover.x(), overlay.m_hover.y(), overlay.m_hover.width(), overlay.m_hover.height(),
+            expectedButton.x(), expectedButton.y(), expectedButton.width(), expectedButton.height(),
+            (long long)overlay.m_windowRects.size(),
+            overlay.m_windowRects.isEmpty() ? 0LL : (long long)overlay.m_windowRects.first().nativeChildren.size(),
+            int(overlay.m_queryPending));
     check(overlay.m_hover == expectedButton, "live MSAA/native detection highlights a button under the overlay");
     QCursor::setPos(expectedEdit.center() + overlay.geometry().topLeft());
     overlay.requestDetection(expectedEdit.center());
@@ -231,6 +238,14 @@ int CaptureOverlay::testWindowDetection()
     overlay.handleDetectedRect(windowFrame(fixture.window), 9001);
     check(overlay.m_hover == expectedWindow,
           "leaving the element lets the containing window take over");
+    overlay.m_hover = expectedWindow;
+    overlay.m_detectionPoint = expectedWindow.center();
+    overlay.m_refineTried = false;
+    overlay.m_queryId = 9100;
+    overlay.handleDetectedRect(windowFrame(fixture.window), 9100);
+    check(overlay.m_refineScheduled, "container-sized hover schedules one refinement");
+    overlay.m_refineTimer.stop();
+    overlay.m_refineScheduled = false;
     overlay.m_hover = expectedEdit;
     overlay.m_detectionPoint = expectedEdit.center();
     // Probe COM directly without native child hints while the UI pumps provider messages.

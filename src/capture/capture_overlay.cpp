@@ -538,6 +538,8 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     if (liveDetection) {
         m_detectionWatchdog.setSingleShot(true);
         connect(&m_detectionWatchdog, &QTimer::timeout, this, &CaptureOverlay::recoverDetector);
+        m_refineTimer.setSingleShot(true);
+        connect(&m_refineTimer, &QTimer::timeout, this, &CaptureOverlay::refineDetection);
         startDetector();
         requestDetection(mapFromGlobal(QCursor::pos()));
     }
@@ -605,7 +607,7 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
     // The mask hole tracks the detected target, falling back to the committed selection.
     const QRect hole = !m_hover.isNull() ? m_hover : m_sel;
     if (hole.isNull()) {
-        p.fillRect(rect(), QColor(0, 0, 0, 60));
+        p.fillRect(rect(), QColor(0, 0, 0, 120));
         return;
     }
     if (!m_pinEdit) {                           // Pin editing draws on the pin as-is:
@@ -1324,6 +1326,9 @@ void CaptureOverlay::startDetector()
 {
     qRegisterMetaType<WindowTargets>("WindowTargets");
     m_detectionWatchdog.stop();
+    m_refineTimer.stop();
+    m_refineScheduled = false;
+    m_refineTried = false;
     m_lastHoverId = m_queryId = 0;
     m_detector = WindowDetector::create(reinterpret_cast<HWND>(winId()), m_detectionOptions);
     if (!m_detector) {
@@ -1410,14 +1415,22 @@ void CaptureOverlay::cancelDetection()
 {
     if (m_detector) m_detector->cancel();
     m_detectionWatchdog.stop();
+    m_refineTimer.stop();
+    m_refineScheduled = false;
+    m_refineTried = false;
     m_queryId = 0;
     m_queryPending = m_waitingClick = false;
     m_pinAfterDetection = false;
 }
 
-void CaptureOverlay::requestDetection(const QPoint &point, const QRect &previous)
+void CaptureOverlay::requestDetection(const QPoint &point, const QRect &previous, bool force)
 {
-    if (m_drag == H_None && point == m_detectionPoint && previous.isEmpty() && m_queryId != 0) return;
+    if (!force && m_drag == H_None && point == m_detectionPoint && previous.isEmpty() && m_queryId != 0) return;
+    if (point != m_detectionPoint) {
+        m_refineTimer.stop();
+        m_refineScheduled = false;
+        m_refineTried = false;
+    }
     if (previous.isEmpty()) m_hoverHistory.clear();
     m_detectionPoint = point;
     if (!m_detector) { m_hover = windowAt(point); updateTip(); return; }
@@ -1427,6 +1440,23 @@ void CaptureOverlay::requestDetection(const QPoint &point, const QRect &previous
     m_expanding = !previous.isEmpty();
     m_queryId = m_detector->query(nativePoint.topLeft(), nativeDetectionRect(previous));
     if (!m_detectionWatchdog.isActive()) m_detectionWatchdog.start(kDetectionWatchdogMs);
+}
+
+void CaptureOverlay::refineDetection()
+{
+    if (!m_refineScheduled) return;
+    m_refineScheduled = false;
+    if (!m_detectionOptions.elements || m_mode != Selecting || m_waitingClick
+        || m_drag != H_None || m_expanding || m_queryPending || m_hover.isNull()
+        || !isVisible() || m_detectionPoint != m_refinePoint) return;
+    QRect window;
+    for (const DetectedWindow &win : m_windowRects)
+        if (win.native.contains(m_detectionPoint)) { window = win.native; break; }
+    if (window.isEmpty() || rectArea(m_hover) * 4 < rectArea(window) * 3) return;
+    // Chromium builds its accessibility tree after the first hover. Re-query
+    // the same point once so a container result can refine without mouse motion.
+    m_refineTried = true;
+    requestDetection(m_refinePoint, {}, true);
 }
 
 void CaptureOverlay::recoverDetector()
@@ -1562,6 +1592,19 @@ void CaptureOverlay::handleDetectedRect(const QRect &native, quint64 id)
         m_hover = detected;
         if (m_expanding && (m_hoverHistory.isEmpty() || m_hoverHistory.last() != detected))
             m_hoverHistory.append(detected);
+        m_refineTimer.stop();
+        m_refineScheduled = false;
+        if (!m_expanding && !m_refineTried && m_detectionOptions.elements) {
+            for (const DetectedWindow &win : m_windowRects)
+                if (win.native.contains(m_detectionPoint)) {
+                    if (rectArea(detected) * 4 >= rectArea(win.native) * 3) {
+                        m_refinePoint = m_detectionPoint;
+                        m_refineScheduled = true;
+                        m_refineTimer.start(180);
+                    }
+                    break;
+                }
+        }
         updateTip();
         updateHoverRegion(old, m_hover);
         return;
