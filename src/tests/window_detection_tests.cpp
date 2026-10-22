@@ -13,6 +13,19 @@
 #include <cstdio>
 #include <cstdlib>
 
+static LRESULT CALLBACK layeredFixtureProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    if (message == WM_ERASEBKGND) return 1;
+    if (message == WM_PAINT) {
+        PAINTSTRUCT paint{};
+        HDC dc = BeginPaint(hwnd, &paint);
+        FillRect(dc, &paint.rcPaint, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+        EndPaint(hwnd, &paint);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
 int WindowDetector::testCapacity()
 {
     class Waiting : public WindowDetector {
@@ -74,6 +87,15 @@ int CaptureOverlay::testWindowDetection()
     const QVector<ScreenFrame> scaled{{QRect(-200, 0, 200, 100), QRect(-300, 0, 300, 150), QImage()}};
     check(logicalFromNative(scaled, QRect(-300, 0, 300, 150)) == QRect(-200, 0, 200, 100),
           "native rectangles map exclusive edges without a one-pixel expansion");
+    QImage shadowImage(160, 120, QImage::Format_RGB32);
+    shadowImage.fill(QColor(45, 45, 45));
+    for (int y = 8; y < 112; ++y)
+        for (int x = 10; x < 150; ++x)
+            shadowImage.setPixelColor(x, y, QColor(220, 30, 40));
+    const QRect shadowNative(1000, 1000, 160, 120);
+    const QRect shadowHit(1004, 1004, 152, 112);
+    check(pixelContentRect(shadowImage, shadowNative, shadowHit) == QRect(1010, 1008, 140, 104),
+          "pixel refinement stops at the first strong content edge inside the hit-test rim");
     const QRect available = nativeFromLogical(QGuiApplication::primaryScreen()->availableGeometry());
     WNDCLASSW windowClass{};
     windowClass.lpfnWndProc = DefWindowProcW;
@@ -191,6 +213,26 @@ int CaptureOverlay::testWindowDetection()
     check(overlay.m_hover == expectedButton, "superseded hover results still follow the cursor");
     waitResult();
     check(overlay.m_hover == expectedEdit, "the newest query result wins once it arrives");
+    // A late whole-window result must not replace the element the cursor is
+    // still inside; only leaving it (or wheel expansion) may widen the target.
+    const QRect expectedWindow = overlay.localScreenRect(logicalFromNative(frames, windowFrame(fixture.window)));
+    overlay.m_mode = Selecting;
+    overlay.m_sel = {};
+    overlay.m_drag = H_None;
+    overlay.m_hover = expectedButton;
+    overlay.m_detectionPoint = expectedButton.center();
+    overlay.m_expanding = false;
+    overlay.m_queryId = 9001;
+    overlay.m_lastHoverId = 0;
+    overlay.handleDetectedRect(windowFrame(fixture.window), 9001);
+    check(overlay.m_hover == expectedButton,
+          "a slow provider cannot widen the hovered element to its window");
+    overlay.m_detectionPoint = expectedEdit.center();
+    overlay.handleDetectedRect(windowFrame(fixture.window), 9001);
+    check(overlay.m_hover == expectedWindow,
+          "leaving the element lets the containing window take over");
+    overlay.m_hover = expectedEdit;
+    overlay.m_detectionPoint = expectedEdit.center();
     // Probe COM directly without native child hints while the UI pumps provider messages.
     QRect accessible;
     QEventLoop comLoop;
@@ -215,7 +257,7 @@ int CaptureOverlay::testWindowDetection()
     check(accessible == buttonRect, "IAccessible accHitTest returns the button without native child hints");
     // Scoped UIA probe: walks from the window's own element, so the fullscreen capture
     // overlay above the fixture cannot hijack the result the way a global query would.
-    QRect uiaHit, uiaGrow;
+    QRect uiaHit, uiaGrow, uiaMarked;
     QThread *uiaProbe = QThread::create([&] {
         if (SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) {
             UiaAutomation *automation = nullptr;
@@ -227,6 +269,9 @@ int CaptureOverlay::testWindowDetection()
                                    QRect(), &slow, QStringLiteral("uia-probe"));
                 uiaGrow = uiaRectAt(automation, fixture.window, buttonRect.center(), window,
                                     buttonRect, &slow, QStringLiteral("uia-probe"));
+                QStringList marked{QStringLiteral("uia-probe")};
+                uiaMarked = uiaRectAt(automation, fixture.window, buttonRect.center(), window,
+                                      QRect(), &marked, QStringLiteral("uia-probe"));
                 automation->Release();
             }
             CoUninitialize();
@@ -247,6 +292,8 @@ int CaptureOverlay::testWindowDetection()
     check(uiaHit == buttonRect, "scoped UIA walk returns the button without native hints");
     check(uiaGrow.contains(buttonRect) && uiaGrow != buttonRect,
           "UIA wheel expansion walks to a strictly containing ancestor");
+    check(uiaMarked == buttonRect,
+          "a slow-provider mark is diagnostic and cannot disable later UIA queries");
     overlay.m_hoverHistory.clear();
     QWheelEvent expand(expectedEdit.center(), expectedEdit.center() + overlay.geometry().topLeft(),
         QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
@@ -298,13 +345,13 @@ int CaptureOverlay::testWindowDetection()
           "a click locks the fresh asynchronous element result");
     // Once locked, moving the mouse must not re-arm hover detection: the highlight would
     // otherwise chase the cursor and visually unlock the selection.
-    const quint64 lockedQueryId = overlay.m_queryId;
     QMouseEvent slideAfterLock(QEvent::MouseMove, expectedEdit.center(),
                                expectedEdit.center() + overlay.geometry().topLeft(),
                                Qt::NoButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(&overlay, &slideAfterLock);
-    check(overlay.m_queryId == lockedQueryId && !overlay.m_queryPending && overlay.m_hover.isNull()
-              && overlay.m_sel == expectedButton,
+    // Moving outside a locked selection intentionally cancels hover detection,
+    // so the query id may reset; the selection and hover state must not move.
+    check(!overlay.m_queryPending && overlay.m_hover.isNull() && overlay.m_sel == expectedButton,
           "the locked selection stays put while the mouse keeps moving");
     // The status bar steps aside while the selection is dragged and returns on release.
     overlay.m_drag = H_BR;
@@ -353,6 +400,47 @@ int CaptureOverlay::testWindowDetection()
     QApplication::sendEvent(&overlay, &escTool);
     check(overlay.m_atool == ATool::None && overlay.isVisible(),
           "escape drops the annotation tool before closing the overlay");
+    // Layered windows (pinned screenshots) keep a self-drawn shadow inside
+    // their window rect. The visible content must win over that transparent rim.
+    WNDCLASSW layeredClass = windowClass;
+    layeredClass.lpfnWndProc = layeredFixtureProc;
+    layeredClass.lpszClassName = L"LensSnipLayeredFixture";
+    layeredClass.hbrBackground = nullptr;
+    check(RegisterClassW(&layeredClass) != 0, "register the layered detection fixture class");
+    HWND layered = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        layeredClass.lpszClassName, L"Layered pin", WS_POPUP | WS_VISIBLE,
+        available.center().x() - 172, available.center().y() - 112, 344, 224,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    check(layered != nullptr, "create a layered detection fixture");
+    HRGN region = CreateRectRgn(12, 12, 332, 212);
+    check(region && SetWindowRgn(layered, region, TRUE), "inset the layered hit-test region");
+    SetLayeredWindowAttributes(layered, 0, 255, LWA_ALPHA);
+    ShowWindow(layered, SW_SHOWNA);
+    UpdateWindow(layered);
+    const QRect layeredRaw = windowFrame(layered);
+    // Capture fresh pixels with the fixture on screen; the main overlay's frozen
+    // frame predates this window and would let desktop edges drive the refinement.
+    overlay.hide();
+    QVector<ScreenFrame> layeredFrames = freezeScreens();
+    // Pixel refinement is covered by the synthetic-image assertion above; keep
+    // these frames uniform and check the native OS hit-test trim here.
+    for (ScreenFrame &frame : layeredFrames)
+        if (!frame.image.isNull()) frame.image.fill(Qt::black);
+    CaptureOverlay layeredOverlay(layeredFrames, {}, DetectionOptions(), false);
+    layeredOverlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    const QRect trimmedNative = layeredOverlay.trimLayeredContent(layered, layeredRaw);
+    if (trimmedNative.size() != layeredRaw.size() - QSize(24, 24))
+        std::fprintf(stderr, "layered native trimmed=%dx%d full=%dx%d\n",
+            trimmedNative.width(), trimmedNative.height(), layeredRaw.width(), layeredRaw.height());
+    check(trimmedNative.size() == layeredRaw.size() - QSize(24, 24),
+          "layered windows trim their transparent shadow margin");
+    layeredOverlay.close();
+    DestroyWindow(layered);
+    UnregisterClassW(L"LensSnipLayeredFixture", GetModuleHandleW(nullptr));
+    overlay.show();
+    overlay.setWindowTargets({});
+    overlay.m_hover = {};
+    overlay.m_sel = {};
     bool pinned = false;
     QRect pinnedRegion;
     const QRect expectedPinnedRegion = overlay.globalScreenRect(expectedButton);

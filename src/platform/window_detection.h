@@ -23,6 +23,10 @@ struct DetectionOptions {
     QStringList disabledUiPrograms;
 };
 
+// Keep hover walking responsive without turning one slow provider into a
+// session-wide downgrade; results are asynchronous and stale replies are filtered.
+inline constexpr int kUiaQueryBudgetMs = 240;
+
 // Rectangles use native pixels in the detector and local logical coordinates in the overlay.
 struct DetectedWindow {
     QRect native;
@@ -155,8 +159,8 @@ QRect accessibleAt(HWND hwnd, const QPoint &point, const QRect &bounds, const QR
 // Scoped UIA hit test for one window. The walk starts at the target window's own element and
 // descends, so fullscreen capture overlays never hijack the result (a global ElementFromPoint
 // returns the topmost overlay instead). Chromium engines expose their element tree only after
-// an accessibility nudge, so wake them before walking; the walk is budget-capped and providers
-// that overrun the cap are skipped for the rest of the session.
+// an accessibility nudge, so wake them before walking; the walk is budget-capped and a slow
+// provider is retried on later queries instead of being disabled for the session.
 QRect uiaRectAt(UiaAutomation *automation, HWND hwnd, const QPoint &point, const QRect &bounds,
                        const QRect &previous, QStringList *downgraded, const QString &program);
 
@@ -192,3 +196,8 @@ private:
 
 // Map a native-pixel rect into logical coordinates via the frozen frames.
 QRect logicalFromNative(const QVector<ScreenFrame> &frames, const QRect &native);
+
+// Find the first strong pixel step inside hitNative; removes a layered window's
+// self-drawn shadow after OS hit-test trimming.
+QRect pixelContentRect(const QImage &image, const QRect &imageNative, const QRect &hitNative,
+                       int maxInset = 64);

@@ -19,6 +19,91 @@
 
 qint64 rectArea(const QRect &r) { return qint64(r.width()) * r.height(); }
 
+namespace {
+int colorDelta(const QColor &a, const QColor &b)
+{
+    return qAbs(a.red() - b.red()) + qAbs(a.green() - b.green()) + qAbs(a.blue() - b.blue());
+}
+}
+
+QRect pixelContentRect(const QImage &image, const QRect &imageNative, const QRect &hitNative,
+                       int maxInset)
+{
+    if (image.isNull() || image.size() != imageNative.size() || hitNative.isEmpty())
+        return hitNative;
+    const int maxScan = qMin(maxInset, qMin(hitNative.width() / 2, hitNative.height() / 2));
+    if (maxScan < 2) return hitNative;
+    const auto pixel = [&](int x, int y) {
+        return image.pixelColor(x - imageNative.x(), y - imageNative.y());
+    };
+    const int ys[] = {hitNative.top() + hitNative.height() / 2,
+                      hitNative.top() + hitNative.height() / 4,
+                      hitNative.top() + hitNative.height() * 3 / 4};
+    const int xs[] = {hitNative.left() + hitNative.width() / 2,
+                      hitNative.left() + hitNative.width() / 4,
+                      hitNative.left() + hitNative.width() * 3 / 4};
+    QVector<int> leftScore(maxScan, 0), rightScore(maxScan, 0);
+    QVector<int> topScore(maxScan, 0), bottomScore(maxScan, 0);
+    QVector<int> leftCount(maxScan, 0), rightCount(maxScan, 0);
+    QVector<int> topCount(maxScan, 0), bottomCount(maxScan, 0);
+    // shortcut: an image edge that matches the shadow/background color has no
+    // step to find; use compositor alpha if that case becomes common.
+    for (int y : ys) {
+        for (int i = 0; i < maxScan; ++i) {
+            const int x = hitNative.left() + i;
+            if (imageNative.contains(x, y) && imageNative.contains(x + 1, y)) {
+                leftScore[i] += colorDelta(pixel(x, y), pixel(x + 1, y));
+                ++leftCount[i];
+            }
+            const int xr = hitNative.right() - i;
+            if (imageNative.contains(xr - 1, y) && imageNative.contains(xr, y)) {
+                rightScore[i] += colorDelta(pixel(xr - 1, y), pixel(xr, y));
+                ++rightCount[i];
+            }
+        }
+    }
+    for (int x : xs) {
+        for (int i = 0; i < maxScan; ++i) {
+            const int y = hitNative.top() + i;
+            if (imageNative.contains(x, y) && imageNative.contains(x, y + 1)) {
+                topScore[i] += colorDelta(pixel(x, y), pixel(x, y + 1));
+                ++topCount[i];
+            }
+            const int yb = hitNative.bottom() - i;
+            if (imageNative.contains(x, yb - 1) && imageNative.contains(x, yb)) {
+                bottomScore[i] += colorDelta(pixel(x, yb - 1), pixel(x, yb));
+                ++bottomCount[i];
+            }
+        }
+    }
+    const auto firstEdge = [](const QVector<int> &score, const QVector<int> &count) {
+        // A shadow fades in gradually; the image starts where the step jumps
+        // sharply above that gradient. Requiring a relative jump skips both the
+        // smooth rim and later texture edges inside the image.
+        for (int i = 1; i < score.size(); ++i) {
+            if (count[i] < 2) continue;
+            const int avg = score[i] / count[i];
+            const int previous = count[i - 1] ? score[i - 1] / count[i - 1] : 0;
+            if (avg >= 24 && avg >= 2 * qMax(1, previous)) return i;
+        }
+        return -1;
+    };
+    int left = hitNative.left(), top = hitNative.top();
+    int right = hitNative.right(), bottom = hitNative.bottom();
+    const int li = firstEdge(leftScore, leftCount);
+    const int ri = firstEdge(rightScore, rightCount);
+    const int ti = firstEdge(topScore, topCount);
+    const int bi = firstEdge(bottomScore, bottomCount);
+    if (li >= 0) left = hitNative.left() + li + 1;
+    if (ri >= 0) right = hitNative.right() - ri - 1;
+    if (ti >= 0) top = hitNative.top() + ti + 1;
+    if (bi >= 0) bottom = hitNative.bottom() - bi - 1;
+    const QRect refined(left, top, right - left + 1, bottom - top + 1);
+    if (refined.width() < 8 || refined.height() < 8 || !hitNative.contains(refined))
+        return hitNative;
+    return refined;
+}
+
 void prepareChildren(DetectedWindow &win)
 {
     QVector<QRect> rects;
@@ -229,7 +314,6 @@ QRect uiaRectAt(UiaAutomation *automation, HWND hwnd, const QPoint &point, const
                        const QRect &previous, QStringList *downgraded, const QString &program)
 {
     if (!automation || windowHung(hwnd)) return QRect();
-    if (!program.isEmpty() && downgraded->contains(program, Qt::CaseInsensitive)) return QRect();
     const auto rectOf = [bounds](UiaElement *element) {
         RECT r{};
         if (!element || FAILED(element->CurrentBoundingRectangle(&r)) || r.right <= r.left || r.bottom <= r.top)
@@ -251,9 +335,10 @@ QRect uiaRectAt(UiaAutomation *automation, HWND hwnd, const QPoint &point, const
     if (FAILED(automation->ElementFromHandle(hwnd, &root)) || !root) return QRect();
     UiaTreeWalker *walker = nullptr;
     const bool walking = SUCCEEDED(automation->ControlViewWalker(&walker)) && walker;
-    // The walk budget keeps hover queries interactive: a full desktop repaint trails the cursor
-    // when a single query costs hundreds of milliseconds, so heavy trees stop early and providers
-    // that still overrun get skipped for the rest of the session.
+    // The walk budget keeps hover queries interactive; a slow first tree build
+    // still returns the best rectangle found so far. It must not disable later
+    // queries: Chromium builds its accessibility tree asynchronously, so one
+    // over-budget walk is normal and a permanent downgrade loses real elements.
     QElapsedTimer timer;
     timer.start();
     // Single-path descent with decoy skipping: some providers expose empty containers with the
@@ -262,11 +347,11 @@ QRect uiaRectAt(UiaAutomation *automation, HWND hwnd, const QPoint &point, const
     std::function<UiaElement *(UiaElement *, int)> search;
     search = [&](UiaElement *element, int depth) -> UiaElement * {
         element->AddRef();                               // Owned reference for the caller.
-        if (depth >= 60 || timer.elapsed() >= 120) return element;
+        if (depth >= 60 || timer.elapsed() >= kUiaQueryBudgetMs) return element;
         const int selfArea = rectArea(rectOf(element));
         UiaElement *child = nullptr;
         if (SUCCEEDED(walker->GetFirstChildElement(element, &child)) && child) {
-            while (child && timer.elapsed() < 120) {
+            while (child && timer.elapsed() < kUiaQueryBudgetMs) {
                 if (rectOf(child).contains(point)) {
                     UiaElement *found = search(child, depth + 1);
                     if (rectArea(rectOf(found)) < selfArea) {
@@ -292,7 +377,7 @@ QRect uiaRectAt(UiaAutomation *automation, HWND hwnd, const QPoint &point, const
         result = deepest.contains(point) ? deepest : QRect();
     } else if (walking) {
         // Expansion: first control-view ancestor strictly containing the current region.
-        while (held && timer.elapsed() < 120) {
+        while (held && timer.elapsed() < kUiaQueryBudgetMs) {
             const QRect r = rectOf(held);
             if (!r.isEmpty() && r != previous && r.contains(previous)) { result = r; break; }
             UiaElement *parent = nullptr;
@@ -304,7 +389,9 @@ QRect uiaRectAt(UiaAutomation *automation, HWND hwnd, const QPoint &point, const
     if (held) held->Release();
     if (walking) walker->Release();
     root->Release();
-    if (timer.elapsed() > 120 && !program.isEmpty() && !downgraded->contains(program))
+    // Diagnostic only: a slow provider is retried instead of being disabled for
+    // the rest of the capture session.
+    if (timer.elapsed() > kUiaQueryBudgetMs && !program.isEmpty() && !downgraded->contains(program))
         downgraded->append(program);
     return result;
 }

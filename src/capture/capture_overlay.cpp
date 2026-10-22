@@ -609,11 +609,22 @@ void CaptureOverlay::paintEvent(QPaintEvent *)
         return;
     }
     if (!m_pinEdit) {                           // Pin editing draws on the pin as-is:
-        QPainterPath mask;                      // no dim mask and no selection frame.
-        mask.setFillRule(Qt::OddEvenFill);
-        mask.addRect(QRectF(rect()));
-        mask.addPath(selectionPath(hole));
-        p.fillPath(mask, QColor(0, 0, 0, 120));
+        const QColor dim(0, 0, 0, 120);         // no dim mask and no selection frame.
+        if (m_roundEnabled && m_roundRadius > 0 && !m_embedded) {
+            QPainterPath mask;
+            mask.setFillRule(Qt::OddEvenFill);
+            mask.addRect(QRectF(rect()));
+            mask.addPath(selectionPath(hole));
+            p.fillPath(mask, dim);
+        } else {
+            // Four rects are cheaper than a full-desktop odd-even path and are
+            // clipped to the dirty region during selection drags.
+            const QRect r = hole.normalized();
+            p.fillRect(QRect(0, 0, width(), r.top()), dim);
+            p.fillRect(QRect(0, r.bottom() + 1, width(), height() - r.bottom() - 1), dim);
+            p.fillRect(QRect(0, r.top(), r.left(), r.height()), dim);
+            p.fillRect(QRect(r.right() + 1, r.top(), width() - r.right() - 1, r.height()), dim);
+        }
         p.setPen(QPen(Bar::accent, 2));
         p.setBrush(QBrush(Qt::NoBrush));
         if (m_roundEnabled && m_roundRadius > 0 && !m_embedded) {
@@ -919,10 +930,11 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
         m_drag = hitHandle(e->pos());
         m_pressSel = m_sel;
         if (m_drag != H_None && m_drag != H_Move && !m_sel.contains(e->pos())) {
+            const QRect oldSel = m_sel;
             m_sel = resizeBy(m_drag, e->pos());  // Outside presses extend the existing edge or corner.
             hideToolBars();
             updateTip();
-            update();
+            updateSelectionRegion(oldSel, m_sel);
         } else if (m_drag == H_None) {
             resetSelection();
             m_drag = H_New;
@@ -991,7 +1003,8 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
     cancelDetection();
     hideToolBars();                              // The status bar steps aside during drags.
     if (!m_hover.isNull())
-        m_hover = QRect();                      // A drag replaces the hover preview with the selection.
+        clearHover();                            // Repaint only the retired hover rectangle.
+    const QRect oldSel = m_sel;
     if (m_drag == H_New) {                      // New selection.
         if (m_mode == Selecting)
             m_mode = Adjusting;                 // Dragging enters adjustment mode.
@@ -1001,7 +1014,7 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
     }
     updateInspector();
     updateTip();
-    update();
+    updateSelectionRegion(oldSel, m_sel);
 }
 
 void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
@@ -1327,7 +1340,7 @@ void CaptureOverlay::startDetector()
     }, Qt::QueuedConnection);
     connect(detector, &WindowDetector::gotRect, this, [this, detector](const QRect &rect, quint64 id) {
         if (detector == m_detector) {
-            if (m_queryPending) m_detectionWatchdog.start(500);
+            if (m_queryPending) m_detectionWatchdog.start(kDetectionWatchdogMs);
             handleDetectedRect(rect, id);
         }
     }, Qt::QueuedConnection);
@@ -1337,6 +1350,7 @@ void CaptureOverlay::startDetector()
 void CaptureOverlay::setWindowTargets(const WindowTargets &windows)
 {
     m_windowRects.clear();
+    m_nativeRects.clear();
     for (const DetectedWindow &win : windows) {
         QRect logical = logicalFromNative(m_frames, win.native);
         const QScreen *center = QGuiApplication::screenAt(logical.center());
@@ -1348,6 +1362,7 @@ void CaptureOverlay::setWindowTargets(const WindowTargets &windows)
         DetectedWindow target(localScreenRect(logical));
         target.hwnd = win.hwnd;
         target.program = win.program;
+        m_nativeRects.insert(quintptr(win.hwnd), win.native);
         for (const QRect &child : win.nativeChildren) {
             const QRect clipped = logical.intersected(logicalFromNative(m_frames, child));
             if (!clipped.isEmpty()) target.nativeChildren.append(localScreenRect(clipped));
@@ -1411,7 +1426,7 @@ void CaptureOverlay::requestDetection(const QPoint &point, const QRect &previous
     m_queryPending = true;
     m_expanding = !previous.isEmpty();
     m_queryId = m_detector->query(nativePoint.topLeft(), nativeDetectionRect(previous));
-    if (!m_detectionWatchdog.isActive()) m_detectionWatchdog.start(500);
+    if (!m_detectionWatchdog.isActive()) m_detectionWatchdog.start(kDetectionWatchdogMs);
 }
 
 void CaptureOverlay::recoverDetector()
@@ -1424,21 +1439,28 @@ void CaptureOverlay::recoverDetector()
     for (const DetectedWindow &win : m_windowRects)
         if (win.native.contains(m_detectionPoint) && !win.program.isEmpty()) {
             identified = true;
-            if (!m_detectionOptions.disabledUiPrograms.contains(win.program, Qt::CaseInsensitive)) {
+            if (windowHung(win.hwnd)
+                && !m_detectionOptions.disabledUiPrograms.contains(win.program, Qt::CaseInsensitive)) {
                 m_detectionOptions.disabledUiPrograms.append(win.program);
-                if (windowHung(win.hwnd)) {
-                    LensSnipSettings settings;
-                    QStringList disabled = settings.value(QStringLiteral("Snip/crashes")).toStringList();
-                    if (!disabled.contains(win.program, Qt::CaseInsensitive)) disabled.append(win.program);
-                    settings.setValue(QStringLiteral("Snip/crashes"), disabled);
-                }
+                LensSnipSettings settings;
+                QStringList disabled = settings.value(QStringLiteral("Snip/crashes")).toStringList();
+                if (!disabled.contains(win.program, Qt::CaseInsensitive)) disabled.append(win.program);
+                settings.setValue(QStringLiteral("Snip/crashes"), disabled);
             }
             break;
         }
     if (!identified) m_detectionOptions.elements = false;
-    // A stuck provider must not hold up a click or block the next capture session.
+    // A slow provider is not a hung one. Keep the element already under the
+    // cursor so one over-budget walk cannot widen the highlight to the page or
+    // persist a UI downgrade for the rest of the session.
+    const QRect lastHover = m_hover;
+    m_queryPending = false;
+    m_detectionWatchdog.stop();
     detector->stop();
-    handleDetectedRect(nativeDetectionRect(windowAt(m_detectionPoint)), id);
+    if (!lastHover.isNull() && lastHover.contains(m_detectionPoint))
+        handleDetectedRect(nativeDetectionRect(lastHover), id);
+    else
+        handleDetectedRect(nativeDetectionRect(windowAt(m_detectionPoint)), id);
     if (isVisible()) startDetector();
     else m_detector = nullptr;
 }
@@ -1448,6 +1470,17 @@ void CaptureOverlay::updateHoverRegion(const QRect &oldRect, const QRect &newRec
     QRect region;
     if (!newRect.isNull()) region = newRect.adjusted(-2, -2, 2, 2);
     if (!oldRect.isNull()) region |= oldRect.adjusted(-2, -2, 2, 2);
+    if (!region.isNull()) update(region);
+}
+
+void CaptureOverlay::updateSelectionRegion(const QRect &oldSel, const QRect &newSel)
+{
+    // Selection painting is stateless, so the union reproduces both the retired
+    // and current frame without repainting the whole virtual desktop.
+    const int margin = 16;
+    QRect region;
+    if (!oldSel.isNull()) region |= oldSel.adjusted(-margin, -margin, margin, margin);
+    if (!newSel.isNull()) region |= newSel.adjusted(-margin, -margin, margin, margin);
     if (!region.isNull()) update(region);
 }
 
@@ -1462,6 +1495,20 @@ void CaptureOverlay::clearHover()
 void CaptureOverlay::handleDetectedRect(const QRect &native, quint64 id)
 {
     if (!id || !isVisible()) return;
+    const auto contentFor = [this](const QRect &rawNative) {
+        for (const DetectedWindow &win : m_windowRects)
+            if (win.hwnd && m_nativeRects.value(quintptr(win.hwnd)) == rawNative)
+                return contentRectFor(win, m_detectionPoint);
+        return QRect();
+    };
+    const auto keepsElement = [this](const QRect &candidate) {
+        // Slow providers can return an ancestor after a smaller element was
+        // already resolved. Keep the element while the cursor stays inside it;
+        // widening is user-driven (wheel) or follows the cursor leaving.
+        return !m_expanding && !m_hover.isNull() && m_hover.contains(m_detectionPoint)
+            && candidate != m_hover && candidate.contains(m_hover)
+            && rectArea(candidate) > rectArea(m_hover);
+    };
     if (id != m_queryId) {
         // Hover previews follow the cursor during fast slides: a result already superseded
         // by a newer query still paints where the cursor just was instead of freezing the
@@ -1469,8 +1516,10 @@ void CaptureOverlay::handleDetectedRect(const QRect &native, quint64 id)
         if (m_mode != Selecting || !m_queryId || m_drag != H_None
             || m_waitingClick || m_expanding || id <= m_lastHoverId) return;
         m_lastHoverId = id;
-        const QRect stale = localScreenRect(logicalFromNative(m_frames, native));
-        if (stale.isEmpty()) return;
+        const QRect content = contentFor(native);
+        const QRect stale = content.isEmpty()
+            ? localScreenRect(logicalFromNative(m_frames, native)) : content;
+        if (stale.isEmpty() || keepsElement(stale)) return;
         const QRect old = m_hover;
         m_hover = stale;
         updateTip();
@@ -1480,7 +1529,9 @@ void CaptureOverlay::handleDetectedRect(const QRect &native, quint64 id)
     m_lastHoverId = id;
     m_queryPending = false;
     m_detectionWatchdog.stop();
-    QRect detected = localScreenRect(logicalFromNative(m_frames, native));
+    const QRect content = contentFor(native);
+    QRect detected = content.isEmpty()
+        ? localScreenRect(logicalFromNative(m_frames, native)) : content;
     if (native.isEmpty() && m_detectionOptions.windows) {
         const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(m_detectionPoint));
         if (screen) detected = localScreenRect(screen->availableGeometry());
@@ -1492,6 +1543,7 @@ void CaptureOverlay::handleDetectedRect(const QRect &native, quint64 id)
         if (available != m_hover && available.contains(m_hover)) detected = available;
     }
     if (!detected.isEmpty() && !detected.contains(m_detectionPoint)) return;
+    if (keepsElement(detected)) return;
     if (m_drag == H_New || m_waitingClick) {
         m_pressWindow = detected;
         if (m_waitingClick) {
@@ -1588,9 +1640,106 @@ QRect CaptureOverlay::windowAt(const QPoint &p) const
     for (const DetectedWindow &w : m_windowRects) {   // Top-down z-order: first hit wins.
         if (!w.native.contains(p))
             continue;
-        return m_detectionOptions.elements ? ::childAt(w, p) : w.native;
+        QRect hit = m_detectionOptions.elements ? ::childAt(w, p) : w.native;
+        if (hit == w.native) {
+            const QRect content = contentRectFor(w, p);
+            if (!content.isEmpty()) hit = content;
+        }
+        return hit;
     }
     return QRect();
+}
+
+QRect CaptureOverlay::contentRectFor(const DetectedWindow &win, const QPoint &point) const
+{
+    if (!win.hwnd || win.native.isEmpty()) return win.native;
+    const QRect raw = m_nativeRects.value(quintptr(win.hwnd));
+    if (raw.isEmpty()) return win.native;
+    const quintptr key = quintptr(win.hwnd);
+    const auto cached = m_contentCache.constFind(key);
+    if (cached != m_contentCache.constEnd() && cached->first == raw)
+        return cached->second.contains(point) ? cached->second : win.native;
+    const QRect trimmedNative = trimLayeredContent(win.hwnd, raw);
+    QRect trimmed = trimmedNative == raw ? win.native
+        : localScreenRect(logicalFromNative(m_frames, trimmedNative));
+    if (trimmed.isEmpty() || !trimmed.contains(point)) trimmed = win.native;
+    if (m_contentCache.size() > 256) m_contentCache.clear();
+    m_contentCache.insert(key, qMakePair(raw, trimmed));
+    return trimmed;
+}
+
+QRect CaptureOverlay::trimLayeredContent(HWND hwnd, const QRect &native) const
+{
+    if (!hwnd || native.isEmpty() || !isVisible() || IsIconic(hwnd)) return native;
+    if (!(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_LAYERED)) return native;
+    const int maxInset = qMin(96, qMin(native.width() / 3, native.height() / 3));
+    if (maxInset < 1) return native;
+    HWND overlay = reinterpret_cast<HWND>(winId());
+    const LONG_PTR overlayEx = GetWindowLongPtrW(overlay, GWL_EXSTYLE);
+    // Probe the OS hit-test surface with the overlay click-through. The style is
+    // restored synchronously before the event loop can deliver another click.
+    SetWindowLongPtrW(overlay, GWL_EXSTYLE, overlayEx | WS_EX_TRANSPARENT);
+    const auto hit = [hwnd, overlay](int x, int y) {
+        POINT point{x, y};
+        HWND h = WindowFromPoint(point);
+        if (!h || h == overlay || GetAncestor(h, GA_ROOT) == overlay) return false;
+        return h == hwnd || IsChild(hwnd, h);
+    };
+    const auto firstHit = [&](bool horizontal, int fixed, int start, int step) {
+        for (int i = 0; i <= maxInset; ++i) {
+            const int v = start + i * step;
+            if (hit(horizontal ? v : fixed, horizontal ? fixed : v)) return v;
+        }
+        return -1;
+    };
+    int left = native.left(), top = native.top();
+    int right = native.right(), bottom = native.bottom();
+    const int cx = native.left() + native.width() / 2;
+    const int cy = native.top() + native.height() / 2;
+    const int ySamples[] = {cy, native.top() + native.height() / 4,
+                            native.top() + native.height() * 3 / 4};
+    const int xSamples[] = {cx, native.left() + native.width() / 4,
+                            native.left() + native.width() * 3 / 4};
+    int found = -1;
+    for (int y : ySamples) {
+        const int v = firstHit(true, y, native.left(), 1);
+        if (v >= 0) found = found < 0 ? v : qMin(found, v);
+    }
+    if (found >= 0) left = found;
+    found = -1;
+    for (int y : ySamples) {
+        const int v = firstHit(true, y, native.right(), -1);
+        if (v >= 0) found = found < 0 ? v : qMax(found, v);
+    }
+    if (found >= 0) right = found;
+    found = -1;
+    for (int x : xSamples) {
+        const int v = firstHit(false, x, native.top(), 1);
+        if (v >= 0) found = found < 0 ? v : qMin(found, v);
+    }
+    if (found >= 0) top = found;
+    found = -1;
+    for (int x : xSamples) {
+        const int v = firstHit(false, x, native.bottom(), -1);
+        if (v >= 0) found = found < 0 ? v : qMax(found, v);
+    }
+    if (found >= 0) bottom = found;
+    SetWindowLongPtrW(overlay, GWL_EXSTYLE, overlayEx);
+    QRect trimmed(left, top, right - left + 1, bottom - top + 1);
+    if (trimmed.width() < 8 || trimmed.height() < 8 || !native.contains(trimmed))
+        return native;
+    if (trimmed == native) return native;   // Fully hit-testable: no shadow rim to refine.
+    // Hit-testing already removed the invisible rim. The remaining self-drawn
+    // shadow is a smooth gradient ending at the image's first strong pixel
+    // step; use the frozen frame to find that step.
+    for (const ScreenFrame &frame : m_frames) {
+        if (frame.image.isNull() || !frame.pixelRect.contains(trimmed.center())) continue;
+        const QRect refined = pixelContentRect(frame.image, frame.pixelRect, trimmed);
+        if (refined.width() >= 8 && refined.height() >= 8 && trimmed.contains(refined))
+            trimmed = refined;
+        break;
+    }
+    return trimmed;
 }
 
 QVector<QRect> CaptureOverlay::handleRects(const QRect &r)

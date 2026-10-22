@@ -151,6 +151,11 @@ Controller::Controller()
 
 void Controller::startCapture()
 {
+    if (m_startingCapture) return;                 // Tray click and F1 can race while the frame freezes.
+    struct ResetFlag { bool &flag; ~ResetFlag() { flag = false; } } reset{m_startingCapture};
+    m_startingCapture = true;
+    if (m_menu.isVisible()) m_menu.close();        // Do not keep the tray popup above the frozen desktop.
+    if (QWidget *popup = QApplication::activePopupWidget()) popup->close();
     if (m_capture && m_capture->isVisible()) { m_capture->raise(); m_capture->activateWindow(); return; }
     const QVector<ScreenFrame> frames = freezeScreens();   // Freeze before showing the selection overlay.
     if (frames.isEmpty()) {

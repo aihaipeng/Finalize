@@ -262,11 +262,16 @@ private:
     // saturates the GUI thread during fast slides, and painting is stateless (frozen frame
     // plus mask), so the union of the old and new rectangles reproduces the surface.
     void updateHoverRegion(const QRect &oldRect, const QRect &newRect);
+    void updateSelectionRegion(const QRect &oldSel, const QRect &newSel);
     void clearHover();
     void handleDetectedRect(const QRect &native, quint64 id);
 
     void updateInspector();
     static QPoint inspectorPosition(const QPoint &cursor, const QSize &size, const QRect &bounds);
+    // A layered window's rect includes its self-drawn shadow. Probe the OS
+    // hit-test surface to drop the invisible margin without app-specific hacks.
+    QRect contentRectFor(const DetectedWindow &win, const QPoint &point) const;
+    QRect trimLayeredContent(HWND hwnd, const QRect &native) const;
 
     void resetSelection();
     QRect windowAt(const QPoint &p) const;
@@ -347,6 +352,8 @@ private:
     mutable QImage m_mosaicFrame;
     QVector<ScreenFrame> m_frames;
     QVector<DetectedWindow> m_windowRects;          // Detected windows (logical, overlay-local) for click-select and snapping.
+    QHash<quintptr, QRect> m_nativeRects;            // hwnd -> raw native window rect before content trimming.
+    mutable QHash<quintptr, QPair<QRect, QRect>> m_contentCache; // hwnd -> raw native, trimmed local.
     DetectionOptions m_detectionOptions;
     QPointer<WindowDetector> m_detector;
     quint64 m_queryId = 0;
@@ -354,6 +361,7 @@ private:
     QPoint m_detectionPoint;
     QVector<QRect> m_hoverHistory;
     bool m_queryPending = false, m_waitingClick = false, m_expanding = false;
+    static constexpr int kDetectionWatchdogMs = 1500;
     bool m_pinAfterDetection = false;
     bool m_dragStarted = false;
     QRect m_hover;                                  // Detected window under the cursor; drives the mask hole while idle.

@@ -38,4 +38,5 @@ private:
     QPointer<CaptureOverlay> m_capture;
     QPointer<HistoryDialog> m_history;
     QAction *m_historyEnabled = nullptr;
+    bool m_startingCapture = false;
 };
