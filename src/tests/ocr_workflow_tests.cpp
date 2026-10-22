@@ -16,7 +16,6 @@
 #include <QStringList>
 #include <QColor>
 #include <QFont>
-#include <QFontDatabase>
 #include <QPaintEvent>
 #include <QApplication>
 #include <QWidget>
@@ -333,8 +332,8 @@ int CaptureOverlay::testOcr(const QString &previewPath)
               && text->toolTip().isEmpty(),
           "top actions sit right; each module has its own footer copy/zoom/count and no section captions");
     if (!previewPath.isEmpty()) check(dialog->grab().save(previewPath+QStringLiteral("-comparison.png")),"save comparison window preview");
-    check(qAbs(text->font().pointSizeF()-qMax(11.25,QFontDatabase::systemFont(QFontDatabase::GeneralFont).pointSizeF()))<0.01
-              && qAbs(dialog->font().pointSizeF()-qMax(9.0,QFontDatabase::systemFont(QFontDatabase::GeneralFont).pointSizeF()))<0.01
+    check(qAbs(text->font().pointSizeF()-qMax(11.25,QApplication::font().pointSizeF()))<0.01
+              && qAbs(dialog->font().pointSizeF()-QApplication::font().pointSizeF())<0.01
               && copy->width()==22 && copy->height()==24 && retry->height()==32
               && copy->iconSize()==QSize(16,16) && textBar->height()==28
               && fitToggle->size()==QSize(22,24),

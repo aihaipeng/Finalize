@@ -94,7 +94,7 @@ public:
         auto *label = new QLabel(title, this);
         label->setObjectName(QStringLiteral("toolLayoutTitle"));
         QFont font = label->font();
-        font.setPointSizeF(font.pointSizeF() * 1.3);
+        font.setPointSizeF(15);   // 20 px panel-title tier.
         label->setFont(font);
         label->setAttribute(Qt::WA_TransparentForMouseEvents);
         row->addWidget(label);

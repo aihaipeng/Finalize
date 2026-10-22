@@ -47,6 +47,7 @@ int main(int argc, char **argv)
     Q_UNUSED(poolDrain);
     app.setApplicationName(QStringLiteral("LensSnip"));
     QFont baseFont = QApplication::font();
+    baseFont.setFamilies(QStringList(QStringLiteral("Inter")) + baseFont.families());   // Latin prefers Inter when installed; otherwise falls back to the system stack.
     baseFont.setPointSizeF(10.5);                              // 96 dpi ≈ 14 px standard UI body.
     app.setFont(baseFont);
     app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);   // Standard dialogs match the dark application chrome.

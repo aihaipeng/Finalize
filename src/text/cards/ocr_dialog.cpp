@@ -30,7 +30,6 @@
 #include <QAbstractButton>
 #include <algorithm>
 #include <QAbstractSlider>
-#include <QFontDatabase>
 #include <QVBoxLayout>
 #include <QDialog>
 #include <QHBoxLayout>
@@ -558,9 +557,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     setAttribute(Qt::WA_TranslucentBackground);
     setMinimumSize(640,360);
     setMouseTracking(true);
-    QFont interfaceFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
-    interfaceFont.setPointSizeF(qMax(9.0,interfaceFont.pointSizeF()));
-    setFont(interfaceFont);
+    const QFont interfaceFont = font();   // Card chrome keeps the app-wide ui font; content panes set their own tiers below.
     // Dark card: zinc chrome, each content on its own near-black rounded block, actions under it.
     const QString surface = QStringLiteral("#18191d"), panel = QStringLiteral("#0c0d10"),
                   hover = QStringLiteral("#222326"), foreground = QStringLiteral("#f4f5f8"),
@@ -1109,7 +1106,7 @@ OcrDialog::OcrDialog(const QImage &image, const QRect &captureRect, bool transla
     updateImageCount();
     m_busy = new QLabel(tr("正在识别…"));
     m_busy->setObjectName(QStringLiteral("ocrBusy"));
-    QFont busyFont = font; busyFont.setPointSizeF(font.pointSizeF()*1.5);
+    QFont busyFont = font; busyFont.setPointSizeF(font.pointSizeF()*4.0/3.0);   // Lands on the 20 px heading tier.
     m_busy->setFont(m_translate ? font : busyFont);   // The translate card says what it is doing in words.
     m_busy->setAlignment(Qt::AlignCenter);
     m_busy->setAttribute(Qt::WA_TransparentForMouseEvents);
