@@ -973,6 +973,22 @@ int CaptureOverlay::testSelectionBorders()
         check(shapes && shapes->count() == 10 && lines && lines->count() == 5
                   && !overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("dashedButton")),
               "the arrow strip offers ten shapes and five line styles without a dash toggle");
+        if (shapes) {
+            QVector<QImage> glyphs;
+            for (int i = 0; i < shapes->count(); ++i)
+                glyphs.append(shapes->itemIcon(i).pixmap(40, 20).toImage());
+            bool visible = true, distinct = true;
+            for (int i = 0; i < glyphs.size(); ++i) {
+                int ink = 0;
+                for (int y = 0; y < glyphs[i].height(); ++y)
+                    for (int x = 0; x < glyphs[i].width(); ++x)
+                        ink += glyphs[i].pixelColor(x, y).alpha() > 0;
+                visible = visible && ink > 20;
+                for (int j = 0; j < i; ++j)
+                    distinct = distinct && glyphs[i] != glyphs[j];
+            }
+            check(visible && distinct, "every arrow shape has a visible, distinct menu glyph");
+        }
         auto renderArrow = [&overlay](Annotation sample) {
             QImage image(300, 200, QImage::Format_ARGB32);
             image.fill(Qt::transparent);

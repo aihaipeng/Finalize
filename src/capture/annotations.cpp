@@ -63,7 +63,6 @@
 #include <QCursor>
 #include <QFontInfo>
 #include <QPolygonF>
-#include <QSvgRenderer>
 #include <qt_windows.h>
 #include <imm.h>
 #include <array>
@@ -71,36 +70,120 @@
 #include <algorithm>
 
 namespace {
-QIcon lucideArrowIcon(int style, qreal dpr)
+QIcon arrowStyleIcon(int style, qreal dpr)
 {
-    // Lucide SVG paths, ISC licensed. The 10 menu entries keep distinct, familiar arrow semantics.
-    static const char *const paths[] = {
-        "<path d='M5 12h14'/><path d='m12 5 7 7-7 7'/>",
-        "<path d='m18 8 4 4-4 4'/><path d='M2 12h20'/><path d='m6 8-4 4 4 4'/>",
-        "<path d='M18 8 22 12 18 16'/><path d='M2 12H22'/>",
-        "<path d='M8 3 4 7l4 4'/><path d='M4 7h16'/><path d='m16 21 4-4-4-4'/><path d='M20 17H4'/>",
-        "<path d='M13.207 19.793a.707.707 0 0 1-1.207-.5V16a1 1 0 0 0-1-1H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h6a1 1 0 0 0 1-1V4.707a.707.707 0 0 1 1.207-.5l6.94 6.94a1.207 1.207 0 0 1 0 1.707z'/>",
-        "<path d='M13.207 19.793a.707.707 0 0 1-1.207-.5V16a1 1 0 0 0-1-1H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h6a1 1 0 0 0 1-1V4.707a.707.707 0 0 1 1.207-.5l6.94 6.94a1.207 1.207 0 0 1 0 1.707z'/>",
-        "<path d='M10 15v-3'/><path d='M14 15v-3'/><path d='M18 15v-3'/><path d='M2 8V4'/><path d='M22 6H2'/><path d='M22 8V4'/><path d='M6 15v-3'/><rect x='2' y='12' width='20' height='8' rx='2'/>",
-        "<path d='M13.207 19.793a.707.707 0 0 1-1.207-.5V16a1 1 0 0 0-1-1H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h6a1 1 0 0 0 1-1V4.707a.707.707 0 0 1 1.207-.5l6.94 6.94a1.207 1.207 0 0 1 0 1.707z'/>",
-        "<path d='m16 3 4 4-4 4'/><path d='M20 7H4'/><path d='m8 21-4-4 4-4'/><path d='M4 17h16'/>",
-        "<path d='M3 5v14'/><path d='M21 12H7'/><path d='m15 18 6-6-6-6'/>"};
-    static const bool filled[] = {false, false, false, false, false, true, false, true, false, false};
+    // One drawing grid for all ten glyphs: the head construction alone tells the styles apart.
     const int index = qBound(0, style, 9);
     QPixmap pm(qCeil(40 * dpr), qCeil(20 * dpr));
     pm.setDevicePixelRatio(dpr);
     pm.fill(Qt::transparent);
-    const QByteArray markup = QByteArrayLiteral(
-        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='")
-        + (filled[index] ? QByteArrayLiteral("white") : QByteArrayLiteral("none"))
-        + QByteArrayLiteral("' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>")
-        + paths[index] + QByteArrayLiteral("</svg>");
-    QSvgRenderer svg(markup);
-    QPainter painter(&pm);
-    painter.setRenderHint(QPainter::Antialiasing);
-    svg.render(&painter, QRectF(2, 0, 36, 20));
-    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
-    painter.fillRect(QRectF(0, 0, 40, 20), Bar::ink);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    constexpr qreal y = 10.0;
+    const QColor ink = Bar::ink;
+    auto stroke = [&](qreal width, Qt::PenCapStyle cap = Qt::RoundCap) {
+        return QPen(ink, width, Qt::SolidLine, cap, Qt::RoundJoin);
+    };
+    auto line = [&](qreal x1, qreal x2) {
+        p.setPen(stroke(2));
+        p.setBrush(Qt::NoBrush);
+        p.drawLine(QPointF(x1, y), QPointF(x2, y));
+    };
+    auto fill = [&](const QPolygonF &polygon) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(ink);
+        p.drawPolygon(polygon);
+    };
+    auto head = [&](qreal tip, qreal dir, bool flat, bool slotted) {
+        const qreal base = tip - dir * 8.0;
+        QPolygonF polygon{QPointF(tip, y), QPointF(base, y - 5.0)};
+        if (flat) {
+            polygon << QPointF(base, y + 5.0);
+        } else {
+            const qreal notch = base + dir * (slotted ? 2.2 : 2.4);
+            if (slotted)
+                polygon << QPointF(notch, y - 0.8) << QPointF(notch, y + 0.8);
+            else
+                polygon << QPointF(notch, y);
+            polygon << QPointF(base, y + 5.0);
+        }
+        fill(polygon);
+    };
+    auto openHead = [&](qreal tip, qreal dir) {
+        p.setPen(stroke(2));
+        p.setBrush(Qt::NoBrush);
+        p.drawLine(QPointF(tip, y), QPointF(tip - dir * 8.0, y - 5.0));
+        p.drawLine(QPointF(tip, y), QPointF(tip - dir * 8.0, y + 5.0));
+    };
+    auto bar = [&](qreal x) {
+        p.setPen(stroke(2.2, Qt::FlatCap));
+        p.setBrush(Qt::NoBrush);
+        p.drawLine(QPointF(x, 4), QPointF(x, 16));
+    };
+
+    switch (index) {
+    case 0:
+        line(6, 35);
+        head(36, 1, false, true);
+        p.setPen(Qt::NoPen);
+        p.setBrush(ink);
+        p.drawEllipse(QPointF(5.5, y), 1.5, 1.5);
+        break;
+    case 1:
+        line(5, 35);
+        head(36, 1, false, true);
+        head(4, -1, false, true);
+        break;
+    case 2:
+        line(5, 36);
+        openHead(36, 1);
+        break;
+    case 3:
+        line(4, 36);
+        openHead(36, 1);
+        openHead(4, -1);
+        break;
+    case 4: {
+        QPolygonF outline;
+        outline << QPointF(5, 8.0) << QPointF(27, 8.0) << QPointF(27, 4.8)
+                << QPointF(36, 10) << QPointF(27, 15.2) << QPointF(27, 12.0)
+                << QPointF(5, 12.0);
+        p.setPen(stroke(1.6));
+        p.setBrush(Qt::NoBrush);
+        p.drawPolygon(outline);
+        break;
+    }
+    case 5: {
+        QPolygonF body;
+        body << QPointF(5, 9.0) << QPointF(28, 7.4) << QPointF(28, 5.0)
+             << QPointF(36, 10) << QPointF(28, 15.0) << QPointF(28, 12.6)
+             << QPointF(5, 11.0);
+        fill(body);
+        break;
+    }
+    case 6:
+        bar(8);
+        bar(32);
+        line(8, 32);
+        break;
+    case 7:
+        line(5, 30);
+        head(36, 1, true, false);
+        break;
+    case 8:
+        line(4, 36);
+        head(36, 1, true, false);
+        head(4, -1, true, false);
+        break;
+    case 9:
+        bar(6);
+        bar(34);
+        line(11, 29);
+        head(7, -1, false, false);
+        head(33, 1, false, false);
+        break;
+    }
     return QIcon(pm);
 }
 
@@ -2143,7 +2226,7 @@ void CaptureOverlay::updateToolOptions()
             m_arrowLineStyle = currentLine;
         }
         addCombo(lay, currentShape, 10,
-                 [this](int k) { return lucideArrowIcon(k, devicePixelRatioF()); },
+                 [this](int k) { return arrowStyleIcon(k, devicePixelRatioF()); },
                  [](int k) {
                      const char *const names[] = {
                          QT_TRANSLATE_NOOP("CaptureOverlay", "直线箭头"),
