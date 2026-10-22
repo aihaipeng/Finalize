@@ -489,7 +489,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
             "QToolButton:hover{background:#222326;}"
             "QToolButton:pressed{background:#2b2d33;}"
             "QToolButton#toolMoreAdjust{color:#f4f5f8;background:#222326;font-size:12px;"
-            "padding:0px 10px;border-radius:6px;}"
+            "padding:0px;border-radius:6px;}"
             "QToolButton#toolMoreAdjust:hover{background:#2b2d33;}"));
         auto *moreLayout = new QHBoxLayout(m_morePanel);
         moreLayout->setContentsMargins(8, 7, 8, 7);
@@ -2304,11 +2304,9 @@ void CaptureOverlay::rebuildMorePanel()
     }
     auto *adjust = new QToolButton(m_morePanel);
     adjust->setObjectName(QStringLiteral("toolMoreAdjust"));
-    adjust->setText(tr("调整"));
-    adjust->setIcon(barIcon(Icon::Sliders, 14));
-    adjust->setIconSize(QSize(14, 14));
-    adjust->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    adjust->setFixedHeight(Bar::button);
+    adjust->setIcon(barIcon(Icon::Sliders, 18));
+    adjust->setIconSize(QSize(18, 18));
+    adjust->setFixedSize(Bar::button, Bar::button);
     adjust->setCursor(Qt::PointingHandCursor);
     adjust->setFocusPolicy(Qt::NoFocus);
     adjust->setToolTip(tr("调整工具栏"));

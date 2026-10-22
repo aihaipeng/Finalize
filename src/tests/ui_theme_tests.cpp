@@ -271,7 +271,7 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
         return b->toolTip() == QStringLiteral("刷新");
     });
     const bool hasAdjust = std::any_of(moreButtons.cbegin(), moreButtons.cend(), [](QToolButton *b) {
-        return b->text() == QStringLiteral("调整");
+        return b->objectName() == QStringLiteral("toolMoreAdjust") && b->text().isEmpty();
     });
     review.check(hasRefresh && hasAdjust,
                  "the dropdown lists hidden tools and the adjustment action");
