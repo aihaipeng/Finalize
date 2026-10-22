@@ -830,24 +830,22 @@ int CaptureOverlay::testSelectionBorders()
         check(overlay.cropped().toImage() == output, "editing borders and nodes never enter exported pixels");
         if (previews) selected.save(prefix + QString::number(t) + QStringLiteral("-editing.png"));
         const QVector<QPoint> anchors = overlay.annAnchors(ann);
-        const QPoint knob = overlay.rotateKnobLocal(ann);
         const QRect box = annotationRect(ann);
+        const QPoint formerKnob(box.center().x(), tool == ATool::Text ? box.top() - 12 : box.bottom() + 22);
+        check(overlay.annHandleAt(ann, formerKnob) == H_None,
+              "the removed rotation stalk has no invisible hit target");
         int extraPixels = 0;
-        const QRect scan = box.adjusted(-8, -8, 8, 8).intersected(overlay.rect());
+        const QRect scan = box.adjusted(-8, -20, 8, 30).intersected(overlay.rect());
         for (int y = scan.top(); y <= scan.bottom(); ++y)
             for (int x = scan.left(); x <= scan.right(); ++x) {
                 const QPoint point(x, y);
                 bool control = false;
                 for (const QPoint &anchor : anchors)
                     control |= QLineF(point, anchor).length() <= 7;
-                if (tool != ATool::Mosaic && tool != ATool::Pen)
-                    control |= QLineF(point, knob).length() <= 7
-                        || (qAbs(x - box.center().x()) <= 2
-                            && (knob.y() < box.top() ? y <= box.top() : y >= box.bottom()));
                 if (!control && selected.pixelColor(qRound(x * dpr), qRound(y * dpr))
                         != plain.pixelColor(qRound(x * dpr), qRound(y * dpr))) ++extraPixels;
             }
-        check(extraPixels == 0, "selection adds nodes and rotation only, never a surrounding rectangle");
+        check(extraPixels == 0, "selection adds only contour nodes, never an outer frame or rotation stalk");
         for (const QPoint &anchor : anchors)
             check(overlay.annHandleAt(ann, mapFromLocal(ann, anchor)) != H_None,
                   "smaller visual circles retain the original resize hit targets");

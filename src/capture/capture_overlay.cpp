@@ -660,17 +660,8 @@ void CaptureOverlay::paintEvent(QPaintEvent *event)
         } else {
         p.save();
         if (!qFuzzyIsNull(ann.rot)) p.setTransform(annTransform(ann), true);
-        const QRect box = annotationRect(ann);
         for (const QPoint &anchor : annAnchors(ann))
             paintHandle(p, anchor);
-        if (ann.tool != ATool::Mosaic) {          // Mosaic regions move and resize without rotation.
-            const QPoint knob = rotateKnobLocal(ann);
-            const QPoint base(box.center().x(),
-                              knob.y() < box.center().y() ? box.top() - 2 : box.bottom() + 2);
-            p.setPen(QPen(Bar::accent, 1));
-            p.drawLine(base, knob);
-            paintHandle(p, knob);
-        }
         p.restore();
         }
     }
@@ -684,32 +675,6 @@ void CaptureOverlay::paintEvent(QPaintEvent *event)
         } else {
             p.drawRect(QRectF(hole).adjusted(0.5, 0.5, -0.5, -0.5));
         }
-    }
-    if (m_mode == Adjusting && m_itemDrag == H_Rotate
-        && m_selAnn >= 0 && m_selAnn < m_anns.size()
-        && m_anns[m_selAnn].tool == ATool::Text) {   // Keep the live angle next to the rotate knob.
-        int angle = qRound(m_anns[m_selAnn].rot) % 360;
-        if (angle > 180) angle -= 360;
-        else if (angle <= -180) angle += 360;
-        const QString label = QStringLiteral("%1°").arg(angle);
-        QFont f = font();
-        f.setPointSizeF(9.5);
-        f.setBold(true);
-        const QFontMetrics fm(f);
-        const QSize size(fm.horizontalAdvance(label) + 16, fm.height() + 10);
-        QPoint at = rotateAnchor(m_anns[m_selAnn]) + QPoint(14, -size.height() - 4);
-        at.setX(std::clamp(at.x(), 4, (std::max)(4, width() - size.width() - 4)));
-        at.setY(std::clamp(at.y(), 4, (std::max)(4, height() - size.height() - 4)));
-        const QRect badge(at, size);
-        p.save();
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(QPen(QColor("#2b2d33"), 1));
-        p.setBrush(QColor(24, 25, 29, 235));
-        p.drawRoundedRect(QRectF(badge).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6);
-        p.setFont(f);
-        p.setPen(QColor("#f4f5f8"));
-        p.drawText(badge, Qt::AlignCenter, label);
-        p.restore();
     }
     if (m_mode == Adjusting && !m_sel.isNull() && m_hover.isNull() && !m_pinEdit)  // Eight resize handles.
         for (const QRect &h : handleRects(m_sel))
@@ -746,14 +711,14 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
     }
     if (e->button() != Qt::LeftButton)
         return;
-    if (editingHandle != H_None) {               // The knob outside the editor still rotates committed text.
+    if (editingHandle != H_None) {               // A text corner still resizes after committing the editor.
         const int index = editingAnn >= 0 ? editingAnn : m_anns.size() - 1;
         if (index >= 0 && index < m_anns.size() && m_anns[index].tool == ATool::Text) {
             m_atool = ATool::Text;
             m_selAnn = index;
             m_pressAnn = m_anns[index];
             m_itemDrag = editingHandle;
-            m_pressPos = e->pos();               // Rotate from the knob press, not the old text click.
+            m_pressPos = e->pos();
             m_dragStarted = false;
             syncToolButtons();
             if (m_toolOptions && m_toolOptions->findChild<QComboBox *>(QStringLiteral("annotationFont")))
@@ -830,7 +795,7 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
     if (m_mode == Adjusting && !m_spaceHeld
         && (m_atool == ATool::Text || m_atool == ATool::None)) {
         // Text is directly re-openable even after it was locked: click the body to
-        // edit, click the control ring to select it for move/resize/rotate.
+        // edit, click the control ring to select it for move/resize.
         if (m_selAnn >= 0 && m_selAnn < m_anns.size()
             && m_anns[m_selAnn].tool == ATool::Text) {
             const Handle h = annHandleAt(m_anns[m_selAnn], e->pos());
@@ -989,9 +954,9 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
             hideToolBars();
             m_inspector->hide();
         }
-        const int margin = m_itemDrag == H_Rotate ? 128 : 24;  // Angle badge sits outside the box.
+        const int margin = 24;
         const QRect dirty = rotatedBounds(m_anns[m_selAnn]).adjusted(-margin, -margin, margin, margin);
-        applyItemDrag(pos, e->modifiers());
+        applyItemDrag(pos);
         update(dirty.united(rotatedBounds(m_anns[m_selAnn])).adjusted(-margin, -margin, margin, margin));
         return;
     }

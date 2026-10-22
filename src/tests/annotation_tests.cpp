@@ -312,7 +312,7 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
         const QImage selectedBrush = overlay.grab(brushPreview).toImage();
         overlay.m_selAnn = -1;
         check(overlay.grab(brushPreview).toImage() == selectedBrush
-                  && overlay.annHandleAt(brush, overlay.rotateAnchor(brush)) == H_None,
+                  && overlay.annHandleAt(brush, QPoint(annotationRect(brush).center().x(), annotationRect(brush).bottom() + 22)) == H_None,
               "selected mosaic brushes show no dashed bounds or invisible rotation handles");
         overlay.m_selAnn = 0;
         const QRect rectanglePreview = annotationRect(overlay.m_anns.first()).adjusted(-30, -30, 30, 30);
@@ -432,8 +432,7 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
                   && overlay.m_anns[1].mosaicCache != redacted,
               "editing lower annotations invalidates the effect cache");
         overlay.m_anns.removeLast();
-        check(overlay.annHandleAt(overlay.m_anns[1], overlay.rotateAnchor(overlay.m_anns[1])) == H_None
-                  && overlay.annAnchors(overlay.m_anns[1]).size() == 8,
+        check(overlay.annAnchors(overlay.m_anns[1]).size() == 8,
               "mosaic regions retain resize handles but expose no rotation handle");
         const QRect beforeMove = overlay.m_anns[1].rect;
         const int countBeforeMove = overlay.m_anns.size();
@@ -561,9 +560,6 @@ int CaptureOverlay::testTextAnnotation()
             for (int x = scan.left(); x <= scan.right(); ++x) {
                 if (edit.pixelColor(x, y) == bg) continue;
                 if (nearCorner(x, y)) continue;
-                if (y > box.bottom() || y < box.top()) {               // Rotation stalk, above text.
-                    if (qAbs(x - box.center().x()) <= 2) continue;
-                }
                 const bool onFrame = (frameBand.contains(x, y)
                         && (qAbs(x - box.left()) <= 1 || qAbs(x - box.right()) <= 1
                             || qAbs(y - box.top()) <= 1 || qAbs(y - box.bottom()) <= 1));
@@ -695,9 +691,9 @@ int CaptureOverlay::testTextAnnotation()
     check(overlay.cropped().toImage() == liveCapture,
           "text pixels do not jump or wrap differently when editing ends at 150 percent DPI");
     const Annotation saved = overlay.m_anns[0];
-    check(overlay.rotateAnchor(saved).y() < saved.rect.top()
-              && overlay.annHandleAt(saved, overlay.rotateAnchor(saved)) == H_Rotate,
-          "the text rotate knob sits above the frame");
+    check(overlay.annHandleAt(saved, QPoint(saved.rect.center().x(), saved.rect.top() - 12)) == H_None
+              && overlay.annHandleAt(saved, QPoint(saved.rect.center().x(), saved.rect.bottom() + 22)) == H_None,
+          "text has no rotation hit target above or below its bounds");
     // The control ring selects for adjustment without opening the editor.
     const QPoint ring = saved.rect.topLeft() + QPoint(2, saved.rect.height() / 2);
     QMouseEvent ringPress(QEvent::MouseButtonPress, ring, overlay.mapToGlobal(ring),
@@ -753,16 +749,16 @@ int CaptureOverlay::testTextAnnotation()
     overlay.redoAnnotation();
     check(overlay.m_anns[0].text != saved.text, "redo restores the edited multiline text");
     overlay.beginTextEdit(overlay.m_anns[0].rect.center(), 0);
-    const QPoint editKnob = overlay.rotateAnchor(overlay.editorAnnotation());
-    QMouseEvent knobPress(QEvent::MouseButtonPress, editKnob, overlay.mapToGlobal(editKnob),
-                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(&overlay, &knobPress);
-    check(!overlay.editorActive() && overlay.m_selAnn == 0 && overlay.m_itemDrag == H_Rotate
-              && overlay.m_pressPos == editKnob && !overlay.m_dragStarted,
-          "the rotate knob still works while the text editor is open");
-    QMouseEvent knobRelease(QEvent::MouseButtonRelease, editKnob, overlay.mapToGlobal(editKnob),
-                            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-    QApplication::sendEvent(&overlay, &knobRelease);
+    const QPoint editCorner = overlay.annAnchors(overlay.editorAnnotation()).last();
+    QMouseEvent cornerPress(QEvent::MouseButtonPress, editCorner, overlay.mapToGlobal(editCorner),
+                           Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&overlay, &cornerPress);
+    check(!overlay.editorActive() && overlay.m_selAnn == 0 && overlay.m_itemDrag == H_BR
+              && overlay.m_pressPos == editCorner && !overlay.m_dragStarted,
+          "corner resizing still works while the text editor is open");
+    QMouseEvent cornerRelease(QEvent::MouseButtonRelease, editCorner, overlay.mapToGlobal(editCorner),
+                             Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&overlay, &cornerRelease);
     const Annotation beforeResize = overlay.m_anns[0];
     overlay.pushUndo();
     overlay.m_selAnn = 0;
@@ -782,12 +778,8 @@ int CaptureOverlay::testTextAnnotation()
     overlay.m_editor->setPlainText(QStringLiteral("旋转文字"));
     check(overlay.m_editor->rotation() == 30,
           "re-editing rotated text retains its native scene rotation");
-    const QPoint editorKnob = overlay.rotateAnchor(overlay.editorAnnotation())
-                            - overlay.m_textView->geometry().topLeft();
-    check(overlay.m_textView->rect().contains(editorKnob)
-              && !overlay.m_textView->mask().isEmpty()
-              && !overlay.m_textView->mask().contains(editorKnob),
-          "the rotated editor leaves the rotate knob clickable");
+    check(overlay.m_textView->mask().isEmpty(),
+          "the text editor no longer leaves a click-through hole for a rotation knob");
     overlay.commitTextEdit();
     check(QLineF(rotatedOrigin, mapFromLocal(overlay.m_anns[0], overlay.m_anns[0].rect.topLeft())).length() < 2,
           "changing rotated text keeps its scene origin stable");
@@ -802,10 +794,8 @@ int CaptureOverlay::testTextAnnotation()
     topText.tool = ATool::Text;
     topText.text = QStringLiteral("顶边");
     topText.rect = QRect(QPoint(origin.x() + 600, -6), QSize(80, 30));
-    const QPoint topKnob = overlay.rotateAnchor(topText);
-    check(overlay.rect().contains(topKnob)
-              && overlay.annHandleAt(topText, topKnob) == H_Rotate,
-          "the text rotate knob stays reachable at the top edge");
+    check(overlay.annHandleAt(topText, QPoint(topText.rect.center().x(), topText.rect.bottom() + 22)) == H_None,
+          "text at the screen edge does not regain a rotation knob below its bounds");
     {   // Text input is fully visible outside the frame; committed content stays clipped.
         const QRect savedSel = overlay.m_sel;
         overlay.m_sel = QRect(origin + QPoint(100, 100), QSize(200, 100));

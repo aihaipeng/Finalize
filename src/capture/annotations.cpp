@@ -415,8 +415,6 @@ QVector<QPoint> CaptureOverlay::annAnchors(const Annotation &ann) const
 CaptureOverlay::Handle CaptureOverlay::annHandleAt(const Annotation &ann, const QPoint &pos) const
 {
     if (ann.tool == ATool::Pen || ann.mosaicBrush || (ann.tool == ATool::Eraser && !ann.fill)) return H_None;
-    if (ann.tool != ATool::Mosaic
-        && QRect(rotateAnchor(ann) - QPoint(6, 6), QSize(12, 12)).contains(pos)) return H_Rotate;
     const QVector<QPoint> anchors = annAnchors(ann);
     static const Handle ids[] = {H_TL, H_TR, H_BL, H_BR, H_L, H_R, H_T, H_B};
     const bool endpoints = ann.tool == ATool::Arrow || (ann.tool == ATool::Marker && !ann.fill);
@@ -433,27 +431,6 @@ CaptureOverlay::Handle CaptureOverlay::annHandleAt(const Annotation &ann, const 
         }
     }
     return H_None;
-}
-
-bool CaptureOverlay::textKnobAbove(const Annotation &ann) const
-{
-    if (ann.tool != ATool::Text) return false;
-    const QRect r = annotationRect(ann);
-    const QPoint above = mapFromLocal(ann, QPoint(r.center().x(), r.top() - 12));
-    return rect().adjusted(6, 6, -6, -6).contains(above);
-}
-
-QPoint CaptureOverlay::rotateKnobLocal(const Annotation &ann) const
-{
-    const QRect r = annotationRect(ann);
-    if (ann.tool == ATool::Text && !textKnobAbove(ann))
-        return QPoint(r.center().x(), r.bottom() + 22);   // Flip below when the top edge is off screen.
-    return QPoint(r.center().x(), ann.tool == ATool::Text ? r.top() - 12 : r.bottom() + 22);
-}
-
-QPoint CaptureOverlay::rotateAnchor(const Annotation &ann) const
-{
-    return mapFromLocal(ann, rotateKnobLocal(ann));
 }
 
 void CaptureOverlay::paintHandle(QPainter &p, const QPointF &center)
@@ -553,19 +530,12 @@ void CaptureOverlay::translateAnnotation(Annotation &ann, const QPoint &d)
     ann.stroke.translate(d);
 }
 
-void CaptureOverlay::applyItemDrag(const QPoint &pos, Qt::KeyboardModifiers mods)
+void CaptureOverlay::applyItemDrag(const QPoint &pos)
 {
     if (m_selAnn < 0 || m_selAnn >= m_anns.size()) { stopItemDrag(); return; }
     Annotation ann = m_pressAnn;                 // Always computed from the press snapshot.
     if (m_itemDrag == H_Move) translateAnnotation(ann, pos - m_pressPos);
-    else if (m_itemDrag == H_Rotate) {           // Drag the stalk to rotate around the center.
-        const QPointF c = QPointF(annotationRect(ann).center());
-        qreal delta = QLineF(c, QPointF(m_pressPos)).angle()
-                    - QLineF(c, QPointF(pos)).angle();
-        qreal rot = ann.rot + delta;
-        if (mods & Qt::ShiftModifier) rot = qRound(rot / 15.0) * 15.0;   // Snap to 15 degrees.
-        ann.rot = rot;
-    } else {
+    else {
         QPoint local = mapToLocal(ann, pos);   // Handle math runs in item space.
         if (ann.tool == ATool::Arrow || (ann.tool == ATool::Marker && !ann.fill)) {
             if (m_itemDrag == H_TL) ann.a = local; else ann.b = local;
@@ -616,7 +586,7 @@ void CaptureOverlay::applyItemDrag(const QPoint &pos, Qt::KeyboardModifiers mods
         }
     }
     m_anns[m_selAnn] = ann;
-    if (m_itemDrag != H_Rotate) syncSizeInput();   // Rotation does not change font or width.
+    syncSizeInput();
 }
 
 QVector<CaptureOverlay::Annotation> CaptureOverlay::annotationSnapshot() const
@@ -817,14 +787,6 @@ void CaptureOverlay::syncTextEditorGeometry()
                          std::clamp(qRound(m_editor->pos().y()), 0, (std::max)(0, height() - 1)), 1, 1);
     m_textView->setGeometry(viewRect);
     m_textView->setSceneRect(QRectF(viewRect));
-    const QPoint knob = rotateAnchor(editorAnnotation()) - viewRect.topLeft();
-    const QRect view = m_textView->rect();
-    if (view.contains(knob)) {                   // Leave the visible rotate knob clickable through the view.
-        const QRect hole = QRect(knob - QPoint(8, 8), QSize(16, 16)) & view;
-        m_textView->setMask(QRegion(view) - QRegion(hole));
-    } else {
-        m_textView->clearMask();
-    }
     update();
 }
 

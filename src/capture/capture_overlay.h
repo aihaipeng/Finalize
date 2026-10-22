@@ -110,7 +110,7 @@ protected:
     void contextMenuEvent(QContextMenuEvent *e) override;
 private:
     bool m_eatContextMenu = false;                   // The right press already acted (finish/deselect).
-    enum Handle : int { H_None = 0, H_New, H_Move, H_TL, H_TR, H_BL, H_BR, H_L, H_R, H_T, H_B, H_Rotate };
+    enum Handle : int { H_None = 0, H_New, H_Move, H_TL, H_TR, H_BL, H_BR, H_L, H_R, H_T, H_B };
 
     // ---------- instant annotation ----------
     struct Annotation {
@@ -162,9 +162,6 @@ private:
     // Area anchors follow the shape contour; lines have endpoints and freehand strokes have none.
     QVector<QPoint> annAnchors(const Annotation &ann) const;
     Handle annHandleAt(const Annotation &ann, const QPoint &pos) const;
-    QPoint rotateAnchor(const Annotation &ann) const;
-    QPoint rotateKnobLocal(const Annotation &ann) const;
-    bool textKnobAbove(const Annotation &ann) const;
     void paintMosaicBorder(QPainter &p, const Annotation &ann, bool selected) const;
     static void paintHandle(QPainter &p, const QPointF &center);
     static QCursor mosaicBrushCursor(qreal width, qreal dpr);
@@ -173,7 +170,7 @@ private:
     static QPainterPath eraserMask(const Annotation &ann);
     void updateAnnotationCursor(const QPoint &pos);
     static void translateAnnotation(Annotation &ann, const QPoint &d);
-    void applyItemDrag(const QPoint &pos, Qt::KeyboardModifiers mods = Qt::NoModifier);
+    void applyItemDrag(const QPoint &pos);
     QVector<Annotation> annotationSnapshot() const;
     void pushUndo();
     void syncUndoButtons();

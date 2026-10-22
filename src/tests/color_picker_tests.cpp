@@ -640,7 +640,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     check(overlay.m_selAnn == -1 && overlay.isVisible(),
           "escape deselects the annotation before closing");
     // Behavior parity round: right click finishes input, +/- width, WASD nudge,
-    // rotation, and undo/redo button enable state.
+    // removed rotation controls, and undo/redo button enable state.
     const int annCount = overlay.m_anns.size();
     overlay.selectTool(ATool::Marker);
     const QPoint fin = annOrigin + QPoint(16, 12);
@@ -666,16 +666,14 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     QApplication::sendEvent(&overlay, &keyW);
     check(overlay.m_anns.last().a == beforeNudge + QPoint(-1, -1),
           "WASD keys nudge the selected annotation one pixel");
-    const QPoint knob = overlay.rotateAnchor(overlay.m_anns.last());
-    mouse(QEvent::MouseButtonPress, knob);
-    mouse(QEvent::MouseMove, knob + QPoint(30, 0));
-    mouse(QEvent::MouseButtonRelease, knob + QPoint(30, 0));
-    check(!qFuzzyIsNull(overlay.m_anns.last().rot), "the rotate handle spins the annotation");
+    const QRect markerBounds = CaptureOverlay::annotationRect(overlay.m_anns.last());
+    check(overlay.annHandleAt(overlay.m_anns.last(), QPoint(markerBounds.center().x(), markerBounds.bottom() + 22)) == H_None,
+          "the removed rotate handle has no invisible hit target");
     const QPoint inside = CaptureOverlay::annotationRect(overlay.m_anns.last()).center()
                           + QPoint(2, 3);
     mouse(QEvent::MouseButtonPress, inside);
     check(overlay.m_selAnn == overlay.m_anns.size() - 1,
-          "rotated annotations stay selectable through the inverse transform");
+          "annotations remain selectable without a rotation control");
     mouse(QEvent::MouseButtonRelease, inside);
     QKeyEvent keyDel(QEvent::KeyPress, Qt::Key_Delete, Qt::NoModifier);
     QApplication::sendEvent(&overlay, &keyDel);
