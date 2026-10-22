@@ -40,7 +40,7 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
     static const char *const names[] = {
         "save", "copy", "pin", "long_shot", "icons8-ocr", "cancel", "rect", "ellipse", "arrow", "pen", "marker",
         "text", "number", "mosaic", "eraser", "undo", "redo", "bold", "italic", "minimize", "maximize",
-        "restore", "refresh", "fill", "dashed", "icons8-line-width", "marker_rect", "fit_view", "search",
+        "restore", "refresh", "fill", "icons8-line-width", "marker_rect", "fit_view", "search",
         "text_format", "split_columns", "split_rows", "chevron_up", "chevron_down", "chevron_right",
         "icons8-wavy-line", "icons8-underline", "icons8-strikethrough", "check", "icons8-data-transfer", "card-view",
         "card-fit", "card-translate", "card-reload", "card-copy",
@@ -48,7 +48,7 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
         "card-restore", "card-close", "card-search", "card-up", "card-down", "card-right", "card-format",
         "back", "crop", "crop_start", "crop_end", "barcode", "card-link", "round_rect",
         "corner_square", "corner_rounded", "aspect_lock", "warning", "sliders", "clock", "picker",
-        "magic_eraser"};
+        "magic_eraser", "watermark", "more"};
     // A shared stroke grid keeps primary tools and card actions visually aligned.
     const char *path = nullptr;
     const char *markup = nullptr;
@@ -78,6 +78,10 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
     case Icon::Eraser: path = "M3 14l10-10 8 8-9 9H9z M9 8l8 8 M12 21h10"; break;
     // A smaller eraser plus two sparkles separates the content-aware mode from plain erasing.
     case Icon::MagicEraser: path = "M2 16l8-8 6 6-8 8H6z M7 11l6 6 M12 22h10 M19 2v4 M17 4h4 M21 9v2 M20 10h2"; break;
+    case Icon::Watermark:
+        // A water drop with a small text bar: the annotation-tool glyph for a text watermark.
+        markup = R"(<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3C9.2 7.6 6 10.3 6 14a6 6 0 0 0 12 0c0-3.7-3.2-6.4-6-11z'/><path d='M9 13h6 M12 13v4'/></svg>)";
+        break;
     case Icon::Undo: path = "M8 6L3 11l5 5 M4 11h10a6 6 0 0 1 6 6"; break;
     case Icon::Redo: path = "M16 6l5 5-5 5 M20 11H10a6 6 0 0 0-6 6"; break;
     case Icon::Cancel: case Icon::CardClose: path = "M6 6l12 12 M18 6L6 18"; break;
@@ -99,7 +103,6 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
     case Icon::Maximize: case Icon::CardMaximize: path = "M5 5h14v14H5z"; break;
     case Icon::View: path = "M2 12c6-9 14-9 20 0-6 9-14 9-20 0 M15 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0"; break;
     case Icon::Warning: path = "M12 3L2 21h20z M12 9v6 M12 18v.1"; break;
-    case Icon::Sliders: path = "M4 7h6 M14 7h6 M12 4v6 M4 12h10 M18 12h2 M16 9v6 M4 17h4 M12 17h8 M10 14v6"; break;
     case Icon::Check: path = "M4 12l5 5L20 6"; break;
     case Icon::Clock: path = "M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0 M12 7v5l3 2"; break;
     case Icon::Picker: path = "M14 3l7 7 M17 3l4 4 M13 6l5 5-9 9H4v-5z"; break;

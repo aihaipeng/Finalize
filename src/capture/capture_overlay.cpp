@@ -105,6 +105,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
 {
     m_liveDetection = liveDetection;
     m_initialTargets = nativeWindows;
+    loadWatermarkSettings();
     if (m_embedded) {
         // A child canvas inside the pin: no session chrome, no freeze, no
         // foreground claim. The single frame is the pin's current pixels.
@@ -398,7 +399,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         setCursor(Qt::CrossCursor);
         update();
     });
-    m_toolBtn.fill(nullptr, int(ATool::Eraser) + 1);
+    m_toolBtn.fill(nullptr, int(ATool::Watermark) + 1);
     m_toolBtn[int(ATool::Rect)] = m_shapeButton;
     m_toolBtn[int(ATool::Ellipse)] = m_shapeButton;
     struct { ATool tool; Icon icon; const char *tip; } const tools[] = {
@@ -409,6 +410,7 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         {ATool::Number, Icon::Number, QT_TRANSLATE_NOOP("CaptureOverlay", "序号 (N)")},
         {ATool::Mosaic, Icon::Mosaic, QT_TRANSLATE_NOOP("CaptureOverlay", "马赛克 (M)")},
         {ATool::Eraser, Icon::Eraser, QT_TRANSLATE_NOOP("CaptureOverlay", "橡皮 (E)")},
+        {ATool::Watermark, Icon::Watermark, QT_TRANSLATE_NOOP("CaptureOverlay", "水印 (W)")},
     };
     for (const auto &t : tools) {
         auto *button = barButton(t.icon, tr(t.tip));
@@ -426,22 +428,24 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         connect(done, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
         m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
                          m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
-                         m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)], undo, redo, done};
+                         m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)],
+                         m_toolBtn[int(ATool::Watermark)], undo, redo, done};
     } else {
         m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
                          m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
-                         m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)], undo, redo};
+                         m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)],
+                         m_toolBtn[int(ATool::Watermark)], undo, redo};
         m_toolButtons += outputButtons;
     }
     const QStringList toolIds = pinEdit
         ? QStringList{QStringLiteral("shape"), QStringLiteral("arrow"), QStringLiteral("pen"),
                       QStringLiteral("marker"), QStringLiteral("mosaic"), QStringLiteral("text"),
-                      QStringLiteral("number"), QStringLiteral("eraser"), QStringLiteral("undo"),
-                      QStringLiteral("redo"), QStringLiteral("done")}
+                      QStringLiteral("number"), QStringLiteral("eraser"), QStringLiteral("watermark"),
+                      QStringLiteral("undo"), QStringLiteral("redo"), QStringLiteral("done")}
         : QStringList{QStringLiteral("shape"), QStringLiteral("arrow"), QStringLiteral("pen"),
                       QStringLiteral("marker"), QStringLiteral("mosaic"), QStringLiteral("text"),
-                      QStringLiteral("number"), QStringLiteral("eraser"), QStringLiteral("undo"),
-                      QStringLiteral("redo"), QStringLiteral("scroll"), QStringLiteral("ocr"),
+                      QStringLiteral("number"), QStringLiteral("eraser"), QStringLiteral("watermark"),
+                      QStringLiteral("undo"), QStringLiteral("redo"), QStringLiteral("scroll"), QStringLiteral("ocr"),
                       QStringLiteral("translate"), QStringLiteral("barcode"), QStringLiteral("pin"),
                       QStringLiteral("refresh"), QStringLiteral("save"), QStringLiteral("copy")};
     const bool canEditLayout = !pinEdit && !m_embedded;
@@ -466,8 +470,8 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     if (canEditLayout) {
         m_moreButton = new QToolButton(m_tools);
         m_moreButton->setObjectName(QStringLiteral("toolMoreButton"));
-        m_moreButton->setIcon(barIcon(Icon::ChevronDown, 14));
-        m_moreButton->setIconSize(QSize(12, 12));
+        m_moreButton->setIcon(barIcon(Icon::More, 16));
+        m_moreButton->setIconSize(QSize(16, 16));
         m_moreButton->setFixedSize(16, Bar::button);
         m_moreButton->setCheckable(true);
         m_moreButton->setCursor(Qt::PointingHandCursor);
@@ -853,6 +857,10 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
     }
     if (m_mode == Adjusting && m_atool != ATool::None
         && !m_spaceHeld && hitHandle(e->pos()) == H_Move) { // A tool acts inside the selection.
+        if (m_atool == ATool::Watermark) {
+            if (m_watermarkEdit) m_watermarkEdit->setFocus();
+            return;
+        }
         if (m_atool == ATool::Text) { beginTextEdit(e->pos()); return; }
         if (m_atool == ATool::Number) {          // Click drops the next sequence number.
             pushUndo();
@@ -1038,6 +1046,7 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
         m_sel = m_pressWindow;                  // Click without drag: select the whole window.
     }
     m_mode = Adjusting;
+    ensureAutoWatermark();
     clearHover();
     setCursor(Qt::SizeAllCursor);
     placeToolBars();
@@ -1146,6 +1155,7 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
         m_sel = m_sel == current ? rect() : current;
         if (m_lockAspect && m_sel.height() > 0) m_aspect = qreal(m_sel.width()) / m_sel.height();
         m_mode = Adjusting;
+        ensureAutoWatermark();
         clearHover();
         placeToolBars(); showToolBars(); updateTip(); update();
         updateInspector();
@@ -1271,7 +1281,8 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
                 : key == Qt::Key_T ? ATool::Text
                 : key == Qt::Key_N ? ATool::Number
                 : key == Qt::Key_M ? ATool::Mosaic
-                : key == Qt::Key_E ? ATool::Eraser : ATool::None;
+                : key == Qt::Key_E ? ATool::Eraser
+                : key == Qt::Key_W ? ATool::Watermark : ATool::None;
             if (tool != ATool::None)
                 selectTool(tool == m_atool ? ATool::None : tool);   // Same key toggles off.
         }
@@ -2141,8 +2152,7 @@ void CaptureOverlay::relayoutToolButtons()
         if (id == QStringLiteral("more")) {
             const bool vertical = side == QStringLiteral("left") || side == QStringLiteral("right");
             button->setFixedSize(vertical ? QSize(Bar::button, 16) : QSize(16, Bar::button));
-            static_cast<QToolButton *>(button)->setIcon(
-                barIcon(vertical ? Icon::ChevronRight : Icon::ChevronDown, 14));
+            static_cast<QToolButton *>(button)->setIcon(barIcon(Icon::More, 16));
         } else {
             button->setFixedSize(Bar::button, Bar::button);
         }
@@ -2232,7 +2242,7 @@ QVector<ToolLayoutItem> CaptureOverlay::currentToolLayout() const
     QVector<ToolLayoutItem> result;
     for (const QString &id : m_toolOrder) {
         if (id == QStringLiteral("more")) {
-            result.append(ToolLayoutItem{id, tr("下拉"), Icon::ChevronDown,
+            result.append(ToolLayoutItem{id, tr("下拉"), Icon::More,
                                          toolSide(id), true});
             continue;
         }
@@ -2295,7 +2305,9 @@ void CaptureOverlay::rebuildMorePanel()
     auto *adjust = new QToolButton(m_morePanel);
     adjust->setObjectName(QStringLiteral("toolMoreAdjust"));
     adjust->setText(tr("调整"));
-    adjust->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    adjust->setIcon(barIcon(Icon::Sliders, 14));
+    adjust->setIconSize(QSize(14, 14));
+    adjust->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     adjust->setFixedHeight(Bar::button);
     adjust->setCursor(Qt::PointingHandCursor);
     adjust->setFocusPolicy(Qt::NoFocus);
@@ -2310,10 +2322,7 @@ void CaptureOverlay::rebuildMorePanel()
 void CaptureOverlay::toggleMorePanel(bool open)
 {
     if (!m_morePanel || !m_moreButton) return;
-    const QString side = toolSide(QStringLiteral("more"));
-    const bool vertical = side == QStringLiteral("left") || side == QStringLiteral("right");
-    if (vertical) m_moreButton->setIcon(barIcon(Icon::ChevronRight, 14));
-    else m_moreButton->setIcon(barIcon(open ? Icon::ChevronUp : Icon::ChevronDown, 14));
+    // The kebab glyph never flips: open state is carried by the checked background.
     if (!open) {
         m_morePanel->hide();
         return;
@@ -2459,6 +2468,7 @@ QString CaptureOverlay::toolDisplayName(const QString &id) const
     if (id == QStringLiteral("text")) return tr("文字");
     if (id == QStringLiteral("number")) return tr("序号");
     if (id == QStringLiteral("eraser")) return tr("橡皮");
+    if (id == QStringLiteral("watermark")) return tr("水印");
     if (id == QStringLiteral("undo")) return tr("撤销");
     if (id == QStringLiteral("redo")) return tr("重做");
     if (id == QStringLiteral("scroll")) return tr("长截图");
@@ -2484,6 +2494,7 @@ Icon CaptureOverlay::toolIcon(const QString &id) const
     if (id == QStringLiteral("text")) return Icon::Text;
     if (id == QStringLiteral("number")) return Icon::Number;
     if (id == QStringLiteral("eraser")) return Icon::Eraser;
+    if (id == QStringLiteral("watermark")) return Icon::Watermark;
     if (id == QStringLiteral("undo")) return Icon::Undo;
     if (id == QStringLiteral("redo")) return Icon::Redo;
     if (id == QStringLiteral("scroll")) return Icon::LongShot;
@@ -2495,7 +2506,7 @@ Icon CaptureOverlay::toolIcon(const QString &id) const
     if (id == QStringLiteral("save")) return Icon::Save;
     if (id == QStringLiteral("copy")) return Icon::Copy;
     if (id == QStringLiteral("done")) return Icon::Check;
-    if (id == QStringLiteral("more")) return Icon::ChevronDown;
+    if (id == QStringLiteral("more")) return Icon::More;
     return Icon::Rect;
 }
 
@@ -2735,9 +2746,6 @@ void CaptureOverlay::hideToolBars()
     if (m_moreButton && m_moreButton->isChecked()) {
         const QSignalBlocker block(m_moreButton);
         m_moreButton->setChecked(false);
-        const QString side = toolSide(QStringLiteral("more"));
-        const bool vertical = side == QStringLiteral("left") || side == QStringLiteral("right");
-        m_moreButton->setIcon(barIcon(vertical ? Icon::ChevronRight : Icon::ChevronDown, 14));
     }
 }
 
@@ -2761,6 +2769,7 @@ void CaptureOverlay::presetSelection(const QRect &localSel, ATool tool)
     m_sel = localSel.normalized();
     if (m_sel.width() < 4 || m_sel.height() < 4) { m_sel = {}; return; }
     m_mode = Adjusting;
+    ensureAutoWatermark();
     clearHover();
     m_drag = H_None;
     if (!m_pinEdit) setCursor(Qt::SizeAllCursor);   // Region moving is a capture-only gesture.
@@ -3663,6 +3672,7 @@ void CaptureOverlay::saveCapture()
 
 bool CaptureOverlay::saveCaptureTo(const QString &path)
 {
+    ensureAutoWatermark();
     const QPixmap pix = cropped();
     if (!saveImageAtomic(pix.toImage(), path)) {
         showOutputError(tr("保存失败，请检查路径或磁盘空间后重试"));
@@ -3676,6 +3686,7 @@ bool CaptureOverlay::saveCaptureTo(const QString &path)
 void CaptureOverlay::copyCapture()
 {
     commitTextEdit();
+    ensureAutoWatermark();
     const QPixmap pix = cropped();
     if (!copyImageToClipboard(pix.toImage())) {
         showOutputError(tr("复制失败，剪贴板可能被占用，请重试"));
@@ -3697,6 +3708,7 @@ void CaptureOverlay::showOutputError(const QString &message)
 void CaptureOverlay::pinCapture()
 {
     commitTextEdit();
+    ensureAutoWatermark();
     const QPixmap pix = cropped();
     if (pix.isNull()) {
         showOutputError(tr("贴图失败，请确认选区有效并检查内存后重试"));

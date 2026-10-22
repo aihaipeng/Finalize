@@ -380,7 +380,7 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
         {QStringLiteral("pen"), QStringLiteral("画笔"), Icon::Pen, QStringLiteral("bottom"), false},
         {QStringLiteral("refresh"), QStringLiteral("刷新"), Icon::Refresh, QStringLiteral("hidden"), false},
         {QStringLiteral("ocr"), QStringLiteral("文字识别"), Icon::Ocr, QStringLiteral("left"), false},
-        {QStringLiteral("more"), QStringLiteral("下拉"), Icon::ChevronDown, QStringLiteral("bottom"), true}};
+        {QStringLiteral("more"), QStringLiteral("下拉"), Icon::More, QStringLiteral("bottom"), true}};
     QVector<ToolLayoutItem> defaultItems;
     for (const ToolLayoutItem &item : dialogItems) {
         ToolLayoutItem entry = item;
