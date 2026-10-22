@@ -1440,25 +1440,25 @@ void CaptureOverlay::syncSizeInput()
         m_mosaicSlider->setToolTip(tr("马赛克强度 %1：拖动调节，数值越大像素块越大").arg(mosaicStrength()));
     }
     if (m_sizeButton) {                          // Line-width glyph with the value beside it.
-        // Glyph and value pill share one fixed 16+4+28 canvas, so the button never resizes as the value changes.
+        // Glyph and value pill share one fixed 22+4+28 canvas, so the button never resizes as the value changes.
         const qreal dpr = devicePixelRatioF();
-        QPixmap glyph(qCeil(48 * dpr), qCeil(24 * dpr));
+        QPixmap glyph(qCeil(54 * dpr), qCeil(24 * dpr));
         glyph.setDevicePixelRatio(dpr);
         glyph.fill(Qt::transparent);
         QPainter painter(&glyph);
-        painter.drawPixmap(QPoint(0, 4), barIcon(Icon::LineWidth, 16).pixmap(QSize(16, 16), dpr));
+        painter.drawPixmap(QPoint(0, 1), barIcon(Icon::LineWidth, 22).pixmap(QSize(22, 22), dpr));
         painter.setRenderHint(QPainter::Antialiasing);   // Value sits in a rounded field 4px after the glyph.
         painter.setPen(Qt::NoPen);
         painter.setBrush(Bar::field);
-        painter.drawRoundedRect(QRectF(20, 0, 28, 24), 6, 6);
+        painter.drawRoundedRect(QRectF(26, 0, 28, 24), 6, 6);
         painter.setFont(m_sizeButton->font());
         painter.setPen(Bar::ink);
         // Number size may carry a half step shared with text; the button shows whole values only.
         const QString value = QString::number(qRound(widthControlValue()));
-        painter.drawText(QRect(20, 0, 28, 24), Qt::AlignCenter, value);
+        painter.drawText(QRect(26, 0, 28, 24), Qt::AlignCenter, value);
         painter.end();
         m_sizeButton->setToolButtonStyle(Qt::ToolButtonIconOnly);   // The value is drawn in the glyph.
-        m_sizeButton->setIconSize(QSize(48, 24));
+        m_sizeButton->setIconSize(QSize(54, 24));
         m_sizeButton->setIcon(QIcon(glyph));
         m_sizeButton->setText(value);
     }
@@ -2059,7 +2059,7 @@ void CaptureOverlay::updateToolOptions()
             m_sizeButton->setObjectName(QStringLiteral("sizeButton"));
             m_sizeButton->setAccessibleName(tool == ATool::Number ? tr("大小") : tr("粗细"));
             m_sizeButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-            m_sizeButton->setIconSize(QSize(48, 24));
+            m_sizeButton->setIconSize(QSize(54, 24));
             m_sizeButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);   // Width hugs glyph + value.
             m_sizeButton->setFixedHeight(Bar::button);
             m_sizeButton->setFocusPolicy(Qt::NoFocus);

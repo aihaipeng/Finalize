@@ -67,8 +67,8 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
         markup = R"(<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='3' y='3' width='18' height='18' rx='1.5' fill='none' stroke='white' stroke-width='1.6'/><path fill='white' d='M5 5h4v4H5z M13 5h4v4h-4z M9 9h4v4H9z M17 9h4v4h-4z M5 13h4v4H5z M13 13h4v4h-4z M9 17h4v4H9z M17 17h4v4h-4z'/></svg>)";
         break;
     case Icon::LineWidth:
-        // Four strokes from hairline to bold, matching the 50-unit source icon.
-        markup = R"(<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 50 50' fill='white'><path d='M6 10h38v2H6z M6 17h38v3H6z M6 25h38v4H6z M6 34h38v6H6z'/></svg>)";
+        // Four strokes from hairline to bold; the box crops the source icon's empty margin.
+        markup = R"(<svg xmlns='http://www.w3.org/2000/svg' viewBox='4 8 42 34' fill='white'><path d='M6 10h38v2H6z M6 17h38v3H6z M6 25h38v4H6z M6 34h38v6H6z'/></svg>)";
         break;
     case Icon::Eraser: path = "M3 14l10-10 8 8-9 9H9z M9 8l8 8 M12 21h10"; break;
     // A smaller eraser plus two sparkles separates the content-aware mode from plain erasing.
