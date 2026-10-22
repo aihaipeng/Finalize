@@ -46,7 +46,8 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
         "card-zoom-in", "card-zoom-out", "card-actual", "card-pin", "card-minimize", "card-maximize",
         "card-restore", "card-close", "card-search", "card-up", "card-down", "card-right", "card-format",
         "back", "crop", "crop_start", "crop_end", "barcode", "card-link", "round_rect",
-        "corner_square", "corner_rounded", "aspect_lock", "warning", "sliders", "clock", "picker"};
+        "corner_square", "corner_rounded", "aspect_lock", "warning", "sliders", "clock", "picker",
+        "magic_eraser"};
     // A shared stroke grid keeps primary tools and card actions visually aligned.
     const char *path = nullptr;
     const char *markup = nullptr;
@@ -66,6 +67,8 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
         markup = R"(<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='3' y='3' width='18' height='18' rx='1.5' fill='none' stroke='white' stroke-width='1.6'/><path fill='white' d='M5 5h4v4H5z M13 5h4v4h-4z M9 9h4v4H9z M17 9h4v4h-4z M5 13h4v4H5z M13 13h4v4h-4z M9 17h4v4H9z M17 17h4v4h-4z'/></svg>)";
         break;
     case Icon::Eraser: path = "M3 14l10-10 8 8-9 9H9z M9 8l8 8 M12 21h10"; break;
+    // A smaller eraser plus two sparkles separates the content-aware mode from plain erasing.
+    case Icon::MagicEraser: path = "M2 16l8-8 6 6-8 8H6z M7 11l6 6 M12 22h10 M19 2v4 M17 4h4 M21 9v2 M20 10h2"; break;
     case Icon::Undo: path = "M8 6L3 11l5 5 M4 11h10a6 6 0 0 1 6 6"; break;
     case Icon::Redo: path = "M16 6l5 5-5 5 M20 11H10a6 6 0 0 0-6 6"; break;
     case Icon::Cancel: case Icon::CardClose: path = "M6 6l12 12 M18 6L6 18"; break;

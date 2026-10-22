@@ -514,11 +514,12 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     {
         const auto *strip = static_cast<QBoxLayout *>(overlay.m_toolOptions->layout());
         const auto *brushButton = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserBrush"));
-        check(!overlay.eraserRect() && strip->count() == 3 && brushButton && brushButton->isChecked()
+        check(!overlay.eraserRect() && strip->count() == 4 && brushButton && brushButton->isChecked()
                   && strip->itemAt(0)->widget() == brushButton
                   && strip->itemAt(1)->widget()->objectName() == QStringLiteral("eraserRectangle")
-                  && strip->itemAt(2)->widget() == overlay.m_sizeButton && !overlay.m_colorBoard,
-              "the eraser starts in brush mode: brush, rectangle, then the width button, no colors");
+                  && strip->itemAt(2)->widget()->objectName() == QStringLiteral("eraserSmart")
+                  && strip->itemAt(3)->widget() == overlay.m_sizeButton && !overlay.m_colorBoard,
+              "the eraser starts in brush mode: brush, rectangle, smart, then the width button, no colors");
     }
     overlay.selectEraserMode(true);
     check(overlay.m_sizeButton != nullptr, "rectangle erasing keeps the width button");
@@ -1032,8 +1033,9 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
             check(strip->itemAt(strip->count() - 1)->widget() == overlay.m_sizeButton
                       && overlay.m_sizeButton->text().toInt() == overlay.toolSize()
                       && overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserBrush"))
-                      && overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserRectangle")),
-                  "the eraser strip is brush, rectangle, then the width button");
+                      && overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserRectangle"))
+                      && overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserSmart")),
+                  "the eraser strip is brush, rectangle, smart, then the width button");
         } else if (tool != ATool::Mosaic && tool != ATool::Text) {
             const auto *strip = static_cast<QBoxLayout *>(overlay.m_toolOptions->layout());
             check(!overlay.m_sizeInput && strip->itemAt(0)->widget() == overlay.m_sizeButton

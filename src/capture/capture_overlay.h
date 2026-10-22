@@ -119,7 +119,7 @@ private:
         int mosaicStrength = 6;                      // Pixel block size (3-24), independent of brush width.
         bool mosaicBrush = false;
         bool mosaicBlur = false;
-        bool mosaicSmart = false;                     // Third effect: content-aware erase.
+        bool mosaicSmart = false;                     // Content-aware erase, created by the eraser's smart mode.
         int mosaicLevels[2] = {6, 6};
         quint32 mosaicSeed = 1;
         mutable int mosaicCacheStrength = 0;
@@ -200,14 +200,15 @@ private:
     bool mosaicBrush() const;
     int mosaicStrength() const;
     bool mosaicBlur() const;
-    bool mosaicSmart() const;
     void switchMosaicEffect();
     void setMosaicStrength(int value);
     void selectMosaicMode(bool brush);
     void scheduleSmartErase(int index, const QImage &source);   // Async erase for the annotation at index.
     static QImage smartEraseMask(const Annotation &ann, const QSize &deviceSize, qreal dpr);
     void selectEraserMode(bool rect);
+    void toggleEraserSmart();
     bool eraserRect() const;
+    bool eraserSmart() const;
     // Rectangle mosaics and rectangle erasures: movable regions that keep their frame while their tool is armed.
     static bool regionItem(const Annotation &ann);
     qreal toolSize() const;
@@ -406,7 +407,6 @@ private:
     int m_apen = 3;
     int m_mosaicLevels[2] = {6, 6}, m_mosaicWidth = 14;
     bool m_mosaicBrush = true, m_mosaicBlur = false, m_mosaicDragUndo = false;
-    bool m_mosaicSmart = false;
     int m_smartEpoch = 0;                         // Bumped whenever the annotation list is rebuilt.
     qreal m_afont = 15;                              // Base text/number font size (pt).
     QString m_afamily = QStringLiteral("Microsoft YaHei UI");
@@ -424,6 +424,7 @@ private:
     Annotation m_pressAnn;                           // Snapshot for move/resize drags.
     Handle m_itemDrag = H_None;
     bool m_eraserRect = false;                       // Eraser starts in brush mode.
+    bool m_eraserSmart = false;                      // Magic eraser: content-aware fill instead of pixel erasure.
     int m_eraserWidth = 14;
     QVector<QVector<Annotation>> m_undoStack, m_redoStack;
     QTimer m_detectionWatchdog;

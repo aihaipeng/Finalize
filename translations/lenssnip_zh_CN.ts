@@ -17,6 +17,10 @@
 <context>
     <name>CaptureOverlay</name>
     <message>
+        <source>智能擦除：自动填补背景，使用当前画笔或矩形范围</source>
+        <translation>智能擦除：自动填补背景，使用当前画笔或矩形范围</translation>
+    </message>
+    <message>
         <location filename="../src/capture/annotations.cpp" line="+1207"/>
         <source>智能擦除：点击切换为像素化</source>
         <translation>智能擦除：点击切换为像素化</translation>

@@ -790,7 +790,8 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
         && (m_atool == ATool::Mosaic || m_atool == ATool::Eraser || m_atool == ATool::None)) {
         const bool regionTool = m_atool == ATool::None || (m_atool == ATool::Mosaic ? !m_mosaicBrush : m_eraserRect);
         const auto ownRegion = [this](const Annotation &ann) {   // An armed tool only grabs its own regions.
-            return regionItem(ann) && (m_atool == ATool::None || ann.tool == m_atool);
+            return regionItem(ann) && (m_atool == ATool::None || ann.tool == m_atool
+                || (m_atool == ATool::Eraser && ann.tool == ATool::Mosaic && ann.mosaicSmart));
         };
         if (regionTool && m_selAnn >= 0 && m_selAnn < m_anns.size() && ownRegion(m_anns[m_selAnn])) {
             const Annotation &ann = m_anns[m_selAnn];

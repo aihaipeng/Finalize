@@ -21,13 +21,14 @@
 #include <QMouseEvent>
 #include <QToolButton>
 #include <QSlider>
+#include <QBoxLayout>
 #include <QtMath>
 #include <cstdio>
 #include <cstdlib>
 
-// Covers the mosaic tool's smart-erase mode: asset gating, mask polarity and
-// geometry, live inference (deterministic, hole-only changes, boundary-driven
-// fill), the option-strip states, undo/redo re-runs and the failure fallback.
+// Covers the eraser tool's smart mode: mask polarity and geometry, live inference
+// (deterministic, hole-only changes, boundary-driven fill), the option-strip
+// states, undo/redo re-runs and the failure fallback.
 int CaptureOverlay::testSmartErase(const QString &previewPath)
 {
     auto check = [](bool ok, const char *message) {
@@ -167,21 +168,29 @@ int CaptureOverlay::testSmartErase(const QString &previewPath)
                 QApplication::sendEvent(&overlay, &event);
             };
             const QImage original = overlay.cropped().toImage();
-            overlay.m_toolBtn[int(ATool::Mosaic)]->click();
-            auto *preview = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicEffectPreview"));
-            check(preview && overlay.m_toolOptions->findChild<QSlider *>(QStringLiteral("mosaicStrength")),
-                  "the mosaic strip starts in pixelate mode with a strength slider");
-            preview->click();
-            check(overlay.mosaicBlur() && !overlay.mosaicSmart(), "the first click switches pixelate to blur");
-            preview->click();
-            const QSlider *strength = overlay.m_toolOptions->findChild<QSlider *>(QStringLiteral("mosaicStrength"));
-            check(overlay.mosaicSmart() && !overlay.mosaicBlur() && strength && !strength->isVisible(),
-                  "the second click reaches the smart mode and hides the strength slider");
-            overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicRectangle"))->click();
-            check(!overlay.mosaicBrush(), "the rectangle drawing tool arms for the smart mode");
+            overlay.m_toolBtn[int(ATool::Eraser)]->click();
+            auto *smart = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserSmart"));
+            const auto *strip = static_cast<QBoxLayout *>(overlay.m_toolOptions->layout());
+            check(smart && overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserRectangle"))
+                      && strip->count() == 4 && strip->itemAt(2)->widget() == smart
+                      && strip->itemAt(3)->widget() == overlay.m_sizeButton,
+                  "the eraser strip places smart erase before the width button");
+            check(smart->icon().pixmap(QSize(16, 16)).toImage()
+                      != barIcon(Icon::Eraser).pixmap(QSize(16, 16)).toImage(),
+                  "the smart erase icon differs from the plain eraser");
+            smart->click();
+            check(overlay.eraserSmart() && !overlay.m_toolOptions->findChild<QSlider *>(QStringLiteral("mosaicStrength")),
+                  "the smart mode arms from the eraser strip without a mosaic strength slider");
+            overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserRectangle"))->click();
+            check(overlay.eraserSmart() && overlay.eraserRect(),
+                  "choosing a rectangle keeps the smart mode armed");
+            if (!previewPath.isEmpty() && dpr == 1.0)
+                check(overlay.grab(overlay.m_tools->geometry().united(overlay.m_toolOptions->geometry()))
+                          .save(previewPath + QStringLiteral(".toolbar.png")),
+                      "save the smart eraser toolbar preview");
             const int before = overlay.m_mosaicLevels[0];
             overlay.setMosaicStrength(before + 4);
-            check(overlay.m_mosaicLevels[0] == before, "the smart mode ignores strength changes");
+            check(overlay.m_mosaicLevels[0] == before, "the smart mode ignores mosaic strength changes");
             mouse(QEvent::MouseButtonPress, QPoint(150, 100));
             mouse(QEvent::MouseMove, QPoint(250, 180));
             mouse(QEvent::MouseButtonRelease, QPoint(250, 180));
@@ -246,6 +255,22 @@ int CaptureOverlay::testSmartErase(const QString &previewPath)
             check(failed.pixel(hole.center().x(), hole.center().y()) == qRgb(0, 0, 0)
                       && failed.pixel(2, 2) == original.pixel(2, 2),
                   "a failed erase renders black inside the hole only");
+            overlay.selectEraserMode(false);         // The same mode also erases along a brush stroke.
+            mouse(QEvent::MouseButtonPress, QPoint(300, 220));
+            mouse(QEvent::MouseMove, QPoint(360, 220));
+            mouse(QEvent::MouseButtonRelease, QPoint(360, 220));
+            overlay.cropped();                       // Hidden widgets get no paint event.
+            QElapsedTimer brushGuard;
+            brushGuard.start();
+            while (overlay.m_anns.size() == 2 && overlay.m_anns[1].smartPending) {
+                QApplication::processEvents(QEventLoop::AllEvents, 50);
+                overlay.cropped();
+                if (brushGuard.elapsed() > 120000) break;
+            }
+            check(overlay.m_anns.size() == 2 && overlay.m_anns[1].mosaicBrush
+                      && overlay.m_anns[1].mosaicSmart && !overlay.m_anns[1].smartPending
+                      && !overlay.m_anns[1].smartFailed && !overlay.m_anns[1].smartResult.isNull(),
+                  "the smart brush erases along its stroke");
         }
     }
 

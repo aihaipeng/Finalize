@@ -375,19 +375,15 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
             check(darkest >= 0x80, "effect preview glyph keeps >=3:1 contrast on the dark bar");
             overlay.m_mosaicPreview->click();
         }
-        overlay.m_mosaicPreview->click();
-        check(!overlay.mosaicBlur() && !overlay.mosaicSmart() && overlay.mosaicStrength() == 12
-                  && overlay.toolSize() == oldWidth,
-              "effect preview cycles back to the pixelate strength without changing width");
+        check(!overlay.mosaicBlur() && overlay.mosaicStrength() == 12 && overlay.toolSize() == oldWidth,
+              "effect preview cycles pixelate and blur without changing width");
         overlay.m_mosaicPreview->click();
         overlay.m_mosaicSlider->setValue(11);
-        check(overlay.mosaicBlur() && !overlay.mosaicSmart() && overlay.mosaicStrength() == 11
-                  && overlay.toolSize() == oldWidth,
+        check(overlay.mosaicBlur() && overlay.mosaicStrength() == 11 && overlay.toolSize() == oldWidth,
               "switching to blur takes its own strength independently of width");
         overlay.m_mosaicPreview->click();
-        check(overlay.mosaicSmart() && overlay.m_mosaicLevels[1] == 11,
-              "the cycle reaches the smart erase and remembers the blur strength");
-        overlay.m_mosaicPreview->click();
+        check(!overlay.mosaicBlur() && overlay.mosaicStrength() == 12,
+              "the effect preview returns to the remembered pixelate strength");
         overlay.m_anns.clear();
         overlay.m_selAnn = -1;
         const QImage empty = overlay.cropped().toImage();

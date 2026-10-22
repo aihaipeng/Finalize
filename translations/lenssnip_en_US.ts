@@ -61,6 +61,10 @@
         <translation>Drag buttons to reorder; click again when done</translation>
     </message>
     <message>
+        <source>智能擦除：自动填补背景，使用当前画笔或矩形范围</source>
+        <translation>Smart erase: fills the background automatically within the current brush or rectangle</translation>
+    </message>
+    <message>
         <location filename="../src/capture/annotations.cpp" line="+1207"/>
         <source>智能擦除：点击切换为像素化</source>
         <translation>Smart Erase: click to switch to Pixelate</translation>

@@ -1133,9 +1133,13 @@ void CaptureOverlay::nudgeSelected(int key)                       // Arrows / WA
 CaptureOverlay::ATool CaptureOverlay::optionsTool() const
 {
     if (editorActive()) return ATool::Text;
-    if (m_live) return m_ann.tool;
-    if (m_atool != ATool::Eraser && m_selAnn >= 0 && m_selAnn < m_anns.size())
-        return m_anns[m_selAnn].tool;
+    if (m_live)
+        return m_atool == ATool::Eraser && m_ann.mosaicSmart ? ATool::Eraser : m_ann.tool;
+    if (m_selAnn >= 0 && m_selAnn < m_anns.size()) {
+        const Annotation &ann = m_anns[m_selAnn];
+        if (ann.tool == ATool::Mosaic && ann.mosaicSmart) return ATool::Eraser;
+        if (m_atool != ATool::Eraser) return ann.tool;
+    }
     return m_atool;
 }
 
@@ -1160,22 +1164,23 @@ bool CaptureOverlay::mosaicBlur() const
     return m_mosaicBlur;
 }
 
-bool CaptureOverlay::mosaicSmart() const
+bool CaptureOverlay::eraserSmart() const
 {
     if (m_live) return m_ann.mosaicSmart;
-    if (m_selAnn >= 0 && m_selAnn < m_anns.size()) return m_anns[m_selAnn].mosaicSmart;
-    return m_mosaicSmart;
+    if (m_selAnn >= 0 && m_selAnn < m_anns.size()) {
+        const Annotation &ann = m_anns[m_selAnn];
+        if (ann.tool == ATool::Mosaic) return ann.mosaicSmart;
+        if (ann.tool == ATool::Eraser) return false;
+    }
+    return m_eraserSmart;
 }
 
 void CaptureOverlay::switchMosaicEffect()
 {
     if (optionsTool() != ATool::Mosaic) return;
-    // Cycle pixelate -> blur -> smart -> pixelate.
-    const bool smart = mosaicSmart(), blur = mosaicBlur() && !smart;
-    const bool nextSmart = blur;
-    const bool nextBlur = !blur && !smart;
+    // Cycle pixelate <-> blur. Smart erasing lives in the eraser strip.
+    const bool nextBlur = !mosaicBlur();
     m_mosaicBlur = nextBlur;
-    m_mosaicSmart = nextSmart;
     Annotation *ann = m_live ? &m_ann : nullptr;
     if (!ann && m_selAnn >= 0 && m_selAnn < m_anns.size()) {
         pushUndo();
@@ -1183,10 +1188,9 @@ void CaptureOverlay::switchMosaicEffect()
     }
     if (ann) {
         ann->mosaicBlur = nextBlur;
-        ann->mosaicSmart = nextSmart;
+        ann->mosaicSmart = false;
         ann->mosaicStrength = ann->mosaicLevels[nextBlur ? 1 : 0];
         ann->mosaicCacheStrength = 0;
-        if (nextSmart) ann->smartResult = {};       // Repaint schedules a fresh erase.
     }
     // Rebuilding the strip here would delete the button mid-click; toggle instead.
     syncSizeInput();
@@ -1195,7 +1199,7 @@ void CaptureOverlay::switchMosaicEffect()
 
 void CaptureOverlay::setMosaicStrength(int value)
 {
-    if (optionsTool() != ATool::Mosaic || mosaicSmart()) return;   // The smart mode has no strength.
+    if (optionsTool() != ATool::Mosaic) return;
     value = qBound(3, value, 24);
     if (value != mosaicStrength()) {
         m_mosaicLevels[mosaicBlur()] = value;
@@ -1287,6 +1291,12 @@ void CaptureOverlay::selectEraserMode(bool rect)
     selectTool(ATool::Eraser);
 }
 
+void CaptureOverlay::toggleEraserSmart()
+{
+    m_eraserSmart = !eraserSmart();
+    selectTool(ATool::Eraser);
+}
+
 bool CaptureOverlay::eraserRect() const
 {
     if (m_live) return m_ann.fill;
@@ -1333,33 +1343,27 @@ void CaptureOverlay::setWidthControl(int value)
 void CaptureOverlay::syncSizeInput()
 {
     if (m_mosaicPreview) {
-        if (mosaicSmart()) {
-            m_mosaicPreview->setIcon(barIcon(Icon::Eraser));
-            m_mosaicPreview->setToolTip(tr("智能擦除：点击切换为像素化"));
-        } else {
-            QImage preview(24, 24, QImage::Format_ARGB32);
-            preview.fill(Qt::transparent);
-            QPainter painter(&preview);
-            painter.setRenderHint(QPainter::Antialiasing);
-            painter.setPen(Qt::NoPen);                // Solid light disc: whole tiles stay bright on the dark bar.
-            painter.setBrush(Bar::ink);
-            painter.drawEllipse(QRectF(4, 4, 16, 16));
-            painter.end();
-            preview = mosaicBlur() ? mosaicBlurred(preview, mosaicStrength())
-                                   : mosaicTiles(preview, mosaicStrength(), 1).scaled(24, 24);
-            m_mosaicPreview->setIcon(QIcon(QPixmap::fromImage(preview)));
-            m_mosaicPreview->setToolTip(mosaicBlur()
-                ? tr("模糊：点击切换为智能擦除")
-                : tr("像素化：点击切换为模糊，滚轮调强度"));
-        }
+        QImage preview(24, 24, QImage::Format_ARGB32);
+        preview.fill(Qt::transparent);
+        QPainter painter(&preview);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);                // Solid light disc: whole tiles stay bright on the dark bar.
+        painter.setBrush(Bar::ink);
+        painter.drawEllipse(QRectF(4, 4, 16, 16));
+        painter.end();
+        preview = mosaicBlur() ? mosaicBlurred(preview, mosaicStrength())
+                               : mosaicTiles(preview, mosaicStrength(), 1).scaled(24, 24);
+        m_mosaicPreview->setIcon(QIcon(QPixmap::fromImage(preview)));
+        m_mosaicPreview->setToolTip(mosaicBlur()
+            ? tr("模糊：点击切换为像素化")
+            : tr("像素化：点击切换为模糊，滚轮调强度"));
     }
-    const bool smartMosaic = mosaicSmart();
     if (m_mosaicStrengthLabel) {
         m_mosaicStrengthLabel->setText(QString::number(mosaicStrength()));
-        m_mosaicStrengthLabel->setVisible(!smartMosaic);   // The smart mode has no strength.
+        m_mosaicStrengthLabel->setVisible(true);
     }
     if (m_mosaicSlider) {
-        m_mosaicSlider->setVisible(!smartMosaic);
+        m_mosaicSlider->setVisible(true);
         const QSignalBlocker lock(m_mosaicSlider);
         m_mosaicSlider->setValue(mosaicStrength());
         m_mosaicSlider->setToolTip(tr("马赛克强度 %1：拖动调节，数值越大像素块越大").arg(mosaicStrength()));
@@ -1539,15 +1543,26 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
         m_ann.pen = m_mosaicWidth;
         m_ann.mosaicBrush = m_mosaicBrush;
         m_ann.mosaicBlur = m_mosaicBlur;
-        m_ann.mosaicSmart = m_mosaicSmart;
         m_ann.mosaicLevels[0] = m_mosaicLevels[0];
         m_ann.mosaicLevels[1] = m_mosaicLevels[1];
         m_ann.mosaicStrength = m_mosaicLevels[m_mosaicBlur];
         m_ann.mosaicSeed = QRandomGenerator::global()->generate();
     }
     if (m_atool == ATool::Eraser) {
-        m_ann.fill = m_eraserRect;
         m_ann.pen = m_eraserWidth;
+        if (m_eraserSmart) {
+            // Smart erasure reuses the mosaic renderer, which already samples the layers below.
+            m_ann.tool = ATool::Mosaic;
+            m_ann.mosaicBrush = !m_eraserRect;
+            m_ann.mosaicSmart = true;
+            m_ann.mosaicBlur = false;
+            m_ann.mosaicLevels[0] = m_mosaicLevels[0];
+            m_ann.mosaicLevels[1] = m_mosaicLevels[1];
+            m_ann.mosaicStrength = m_mosaicLevels[0];
+            m_ann.mosaicSeed = QRandomGenerator::global()->generate();
+        } else {
+            m_ann.fill = m_eraserRect;
+        }
     }
     if (m_atool == ATool::Rect || m_atool == ATool::Ellipse) m_ann.fill = m_afill;
     if (m_atool == ATool::Marker) m_ann.fill = m_markerFill;
@@ -2248,14 +2263,18 @@ void CaptureOverlay::updateToolOptions()
         addSize();                               // Brush width stays visible in both modes.
         break;
     }
-    case ATool::Eraser: {                        // Brush and rectangle modes; only the brush has a width.
+    case ATool::Eraser: {                        // Brush and rectangle shapes, plus the smart fill mode.
         const bool rect = eraserRect();
         addOption(lay, Icon::Pen, tr("画笔橡皮擦"), !rect, [this] { selectEraserMode(false); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("eraserBrush"));
         addOption(lay, Icon::Rect, tr("矩形橡皮擦"), rect, [this] { selectEraserMode(true); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("eraserRectangle"));
+        addOption(lay, Icon::MagicEraser,
+                  tr("智能擦除：自动填补背景，使用当前画笔或矩形范围"), eraserSmart(),
+                  [this] { toggleEraserSmart(); });
+        lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("eraserSmart"));
         addSize();
-        lay->removeWidget(m_sizeButton);         // Brush, rectangle, then the width button.
+        lay->removeWidget(m_sizeButton);         // Brush, rectangle, smart, then the width button.
         lay->addWidget(m_sizeButton);
         break;
     }
