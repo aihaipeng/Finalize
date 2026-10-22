@@ -79,6 +79,10 @@ QIcon arrowStyleIcon(int style, qreal dpr)
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
+    // Map the 4..36 design span to 1.5..38.5 so previews fill the dropdown bar.
+    p.translate(1.5, 0);
+    p.scale(37.0 / 32.0, 1.0);
+    p.translate(-4.0, 0);
 
     constexpr qreal y = 10.0;
     const QColor ink = Bar::ink;
@@ -2241,11 +2245,11 @@ void CaptureOverlay::updateToolOptions()
                          QT_TRANSLATE_NOOP("CaptureOverlay", "尺寸箭头")};
                      return QCoreApplication::translate("CaptureOverlay", names[k]);
                  },
-                 [this](int k) { pickArrowStyle(k); }, /*stretch=*/false);
+                 [this](int k) { pickArrowStyle(k); }, /*stretch=*/true);
         auto *shapeCombo = qobject_cast<QComboBox *>(lay->itemAt(lay->count() - 1)->widget());
         shapeCombo->setObjectName(QStringLiteral("arrowStyleCombo"));
         shapeCombo->setFixedSize(72, 24);
-        shapeCombo->setIconSize(QSize(40, 20));
+        shapeCombo->setIconSize(QSize(48, 20));
         auto lineIcon = [this](int style) {
             const qreal dpr = devicePixelRatioF();
             QPixmap pm(qCeil(48 * dpr), qCeil(20 * dpr));
