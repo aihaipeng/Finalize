@@ -1288,6 +1288,7 @@ void CaptureOverlay::selectEraserMode(bool rect)
 {
     if (m_live) { m_live = false; commitAnnotation(); }
     m_eraserRect = rect;
+    m_eraserSmart = false;
     selectTool(ATool::Eraser);
 }
 
@@ -2265,12 +2266,13 @@ void CaptureOverlay::updateToolOptions()
     }
     case ATool::Eraser: {                        // Brush and rectangle shapes, plus the smart fill mode.
         const bool rect = eraserRect();
-        addOption(lay, Icon::Pen, tr("画笔橡皮擦"), !rect, [this] { selectEraserMode(false); });
+        const bool smart = eraserSmart();
+        addOption(lay, Icon::Pen, tr("画笔橡皮擦"), !rect && !smart, [this] { selectEraserMode(false); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("eraserBrush"));
-        addOption(lay, Icon::Rect, tr("矩形橡皮擦"), rect, [this] { selectEraserMode(true); });
+        addOption(lay, Icon::Rect, tr("矩形橡皮擦"), rect && !smart, [this] { selectEraserMode(true); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("eraserRectangle"));
         addOption(lay, Icon::MagicEraser,
-                  tr("智能擦除：自动填补背景，使用当前画笔或矩形范围"), eraserSmart(),
+                  tr("智能擦除：自动填补背景，使用当前画笔或矩形范围"), smart,
                   [this] { toggleEraserSmart(); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("eraserSmart"));
         addSize();

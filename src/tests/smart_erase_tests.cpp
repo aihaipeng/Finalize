@@ -178,12 +178,14 @@ int CaptureOverlay::testSmartErase(const QString &previewPath)
             check(smart->icon().pixmap(QSize(16, 16)).toImage()
                       != barIcon(Icon::Eraser).pixmap(QSize(16, 16)).toImage(),
                   "the smart erase icon differs from the plain eraser");
-            smart->click();
-            check(overlay.eraserSmart() && !overlay.m_toolOptions->findChild<QSlider *>(QStringLiteral("mosaicStrength")),
-                  "the smart mode arms from the eraser strip without a mosaic strength slider");
             overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserRectangle"))->click();
-            check(overlay.eraserSmart() && overlay.eraserRect(),
-                  "choosing a rectangle keeps the smart mode armed");
+            check(!overlay.eraserSmart() && overlay.eraserRect(),
+                  "choosing the rectangle shape leaves the plain eraser armed");
+            smart = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserSmart"));
+            smart->click();
+            check(overlay.eraserSmart() && overlay.eraserRect()
+                      && !overlay.m_toolOptions->findChild<QSlider *>(QStringLiteral("mosaicStrength")),
+                  "the smart mode uses the chosen rectangle without a mosaic strength slider");
             if (!previewPath.isEmpty() && dpr == 1.0)
                 check(overlay.grab(overlay.m_tools->geometry().united(overlay.m_toolOptions->geometry()))
                           .save(previewPath + QStringLiteral(".toolbar.png")),
@@ -256,6 +258,7 @@ int CaptureOverlay::testSmartErase(const QString &previewPath)
                       && failed.pixel(2, 2) == original.pixel(2, 2),
                   "a failed erase renders black inside the hole only");
             overlay.selectEraserMode(false);         // The same mode also erases along a brush stroke.
+            overlay.toggleEraserSmart();
             mouse(QEvent::MouseButtonPress, QPoint(300, 220));
             mouse(QEvent::MouseMove, QPoint(360, 220));
             mouse(QEvent::MouseButtonRelease, QPoint(360, 220));
