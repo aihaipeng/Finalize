@@ -122,6 +122,8 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
     const QRect bars = overlay.m_tools->geometry().united(overlay.m_toolOptions->geometry());
     review.save(overlay.grab(bars), QStringLiteral("-capture-bars"));
     overlay.selectTool(ATool::Arrow);
+    const QRect arrowBars = overlay.m_tools->geometry().united(overlay.m_toolOptions->geometry());
+    review.save(overlay.grab(arrowBars), QStringLiteral("-arrow-bars"));
     auto *arrowCombo = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("arrowStyleCombo"));
     auto *lineCombo = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("arrowLineStyleCombo"));
     review.check(arrowCombo && arrowCombo->count() == 10 && lineCombo && lineCombo->count() == 5,

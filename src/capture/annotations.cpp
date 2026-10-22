@@ -203,8 +203,7 @@ public:
         if (size.isEmpty() || size.width() <= 0) size = icon.actualSize(option.rect.size());
         // Line-style samples fill the dropdown; arrow and badge glyphs keep their designed size.
         const bool longPreview = m_stretch && size.width() >= size.height() * 2;
-        const int available = qMax(1, option.rect.width() - 8);
-        const QSize targetSize(qMin(longPreview ? qMax(size.width(), available) : size.width(),
+        const QSize targetSize(qMin(longPreview ? option.rect.width() : size.width(),
                                     option.rect.width()),
                                qMin(size.height(), option.rect.height()));
         const QRect target(QPoint(option.rect.center().x() - targetSize.width() / 2,
@@ -2157,7 +2156,7 @@ void CaptureOverlay::updateToolOptions()
             sample.setCapStyle(Qt::FlatCap);
             sample.setJoinStyle(Qt::BevelJoin);
             painter.setPen(sample);
-            painter.drawLine(QPointF(2, 10), QPointF(38, 10));
+            painter.drawLine(QPointF(1, 10), QPointF(39, 10));
             return QIcon(pm);
         };
         auto *styleCombo = new FlatComboBox(true, true);   // Line samples span the popup width.
@@ -2249,7 +2248,7 @@ void CaptureOverlay::updateToolOptions()
         shapeCombo->setIconSize(QSize(40, 20));
         auto lineIcon = [this](int style) {
             const qreal dpr = devicePixelRatioF();
-            QPixmap pm(qCeil(40 * dpr), qCeil(20 * dpr));
+            QPixmap pm(qCeil(48 * dpr), qCeil(20 * dpr));
             pm.setDevicePixelRatio(dpr);
             pm.fill(Qt::transparent);
             QPainter painter(&pm);
@@ -2259,7 +2258,7 @@ void CaptureOverlay::updateToolOptions()
             sample.setCapStyle(Qt::FlatCap);
             sample.setJoinStyle(Qt::BevelJoin);
             painter.setPen(sample);
-            painter.drawLine(QPointF(2, 10), QPointF(38, 10));
+            painter.drawLine(QPointF(1, 10), QPointF(47, 10));
             return QIcon(pm);
         };
         addCombo(lay, currentLine, 5,
@@ -2277,7 +2276,7 @@ void CaptureOverlay::updateToolOptions()
         auto *lineCombo = qobject_cast<QComboBox *>(lay->itemAt(lay->count() - 1)->widget());
         lineCombo->setObjectName(QStringLiteral("arrowLineStyleCombo"));
         lineCombo->setFixedSize(72, 24);
-        lineCombo->setIconSize(QSize(40, 20));
+        lineCombo->setIconSize(QSize(48, 20));
         addSize();
         addSeparator(lay);
         addSwatches(lay, ATool::Arrow);
