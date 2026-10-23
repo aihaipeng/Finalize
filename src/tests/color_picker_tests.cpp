@@ -67,7 +67,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     bool sampled = false;
     for (const ScreenFrame &live : liveFrames)
         if (probe.setSample(live, QPoint(native.x, native.y))) sampled = true;
-    check(sampled && probe.colorText() == QStringLiteral("1, 4, 9"), "live desktop capture preserves native calibration pixels");
+    check(sampled && probe.colorText() == QStringLiteral("1 , 4 , 9"), "live desktop capture preserves native calibration pixels");
     {
         CaptureOverlay liveOverlay(liveFrames);
         liveOverlay.setAttribute(Qt::WA_DeleteOnClose, false);
@@ -123,11 +123,11 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         liveOverlay.m_sel = QRect(local - QPoint(60, 40), QSize(180, 120));
         liveOverlay.m_mode = Adjusting;
         liveOverlay.updateInspector();
-        check(liveOverlay.m_inspector->isVisible() && liveOverlay.m_inspector->colorText() == QStringLiteral("1, 4, 9"),
+        check(liveOverlay.m_inspector->isVisible() && liveOverlay.m_inspector->colorText() == QStringLiteral("1 , 4 , 9"),
               "a locked selection immediately permits sampling the frozen native pixel");
         QKeyEvent copy(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier);
         QApplication::sendEvent(&liveOverlay, &copy);
-        check(clipboard->text() == QStringLiteral("1, 4, 9") && liveOverlay.isVisible(),
+        check(clipboard->text() == QStringLiteral("1 , 4 , 9") && liveOverlay.isVisible(),
               "C copies a color after selection without copying or closing the image");
         mouse(QEvent::MouseButtonPress, center);
         check(!liveOverlay.m_inspector->isVisible(), "moving the entire region hides the card on press");
@@ -163,7 +163,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     calibration.hide();
     QImage image(240, 180, QImage::Format_RGB32);
     image.fill(QColor(1, 4, 9));
-    image.setPixelColor(110, 83, QColor(90, 150, 210));
+    image.setPixelColor(112, 86, QColor(90, 150, 210));
     ScreenFrame frame{QRect(QGuiApplication::primaryScreen()->geometry().topLeft(), QSize(160, 120)),
                       QRect(-320, -240, 240, 180), image};
     CaptureOverlay overlay({frame});
@@ -174,27 +174,55 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     const QPoint sample = frame.pixelRect.topLeft() + QPoint(120, 90);
     check(inspector->setSample(frame, sample), "native pixel sample with negative screen origin");
     inspector->show();
-    check(inspector->colorText() == QStringLiteral("1, 4, 9"), "RGB channel order and formatting");
+    check(inspector->colorText() == QStringLiteral("1 , 4 , 9"), "RGB channel order and formatting");
     for (const QSize logical : {QSize(240, 180), QSize(160, 120), QSize(120, 90)}) {
         frame.logicalRect.setSize(logical);
-        check(inspector->setSample(frame, sample) && inspector->colorText() == QStringLiteral("1, 4, 9"),
+        check(inspector->setSample(frame, sample) && inspector->colorText() == QStringLiteral("1 , 4 , 9"),
               "100/150/200 percent scaling must not resample native colors");
     }
     QImage panel(inspector->size(), QImage::Format_RGB32);
+    panel.fill(Qt::black);
     inspector->render(&panel);
-    const int left = (inspector->width() - 177) / 2;
-    check(inspector->size() == QSize(230, 220), "the compact card uses a 25 by 17 sample at sevenfold magnification");
-    check(panel.pixelColor(left + 88, 72) == QColor(1, 4, 9), "highlighted pixel retains its raw color");
-    check(panel.pixelColor(left + 15, 20) == QColor(90, 150, 210), "nearest-neighbor magnifier preserves neighboring pixels");
+    check(inspector->size() == QSize(152, 225), "the compact card uses a 19 by 13 sample at eightfold magnification");
+    check(panel.pixelColor(75, 51) == QColor(1, 4, 9), "highlighted pixel retains its raw color");
+    check(panel.pixelColor(11, 19) == QColor(90, 150, 210), "nearest-neighbor magnifier preserves neighboring pixels");
+    check(panel.pixelColor(0, 0) == QColor(Qt::white) && panel.pixelColor(151, 0) == QColor(Qt::white)
+              && panel.pixelColor(0, 103) == QColor(Qt::white) && panel.pixelColor(151, 103) == QColor(Qt::white),
+          "the magnifier carries a 1px white hairline on every side");
+    check(panel.pixelColor(1, 20) == QColor(1, 4, 9), "the magnifier starts at the card edge without black margins");
+    int inkLeft = -1, inkRight = -1;
+    for (int x = 0; x < 152; ++x) {
+        if (panel.pixelColor(x, 120).lightness() > 60) {
+            if (inkLeft < 0) inkLeft = x;
+            inkRight = x;
+        }
+    }
+    check(inkLeft >= 0 && qAbs(inkLeft + inkRight - 151) <= 4, "coordinate text is horizontally centered");
+    check(inspector->coordinateText() == QStringLiteral("( -200 , -150 )"), "global native coordinates are displayed");
     QImage translucent(inspector->size(), QImage::Format_ARGB32_Premultiplied);
     translucent.fill(Qt::transparent);
     inspector->render(&translucent, QPoint(), QRegion(), QWidget::DrawChildren);
-    check(translucent.pixelColor(1, 170) == QColor("#18191d"), "the magnifier uses the approved opaque surface without fading sampled pixels");
-    check(translucent.pixelColor(left + 88, 72) == QColor(1, 4, 9), "the center color retains its original opaque pixels");
+    const QColor tint = translucent.pixelColor(1, 170);
+    check(tint.alpha() > 120 && tint.alpha() < 200 && tint.red() < 16,
+          "the information panel is semi-transparent black");
+    check(translucent.pixelColor(1, 1) == QColor(1, 4, 9), "no transparent chrome is left around the magnifier");
+    check(translucent.pixelColor(75, 51) == QColor(1, 4, 9), "the center color retains its original opaque pixels");
+    QKeyEvent toggleP(QEvent::KeyPress, Qt::Key_P, Qt::NoModifier);
+    QApplication::sendEvent(&overlay, &toggleP);
+    check(inspector->relativeCoordinates() && inspector->coordinateText() == QStringLiteral("( 120 , 90 )"),
+          "P switches to screen-relative coordinates");
+    QApplication::sendEvent(&overlay, &toggleP);
+    check(!inspector->relativeCoordinates() && inspector->coordinateText() == QStringLiteral("( -200 , -150 )"),
+          "P switches back to global coordinates");
+    check(inspector->setSample(frame, sample, QRectF(110, 84, 30, 20)), "a selection origin is available for relative coordinates");
+    QApplication::sendEvent(&overlay, &toggleP);
+    check(inspector->coordinateText() == QStringLiteral("( 10 , 6 )"),
+          "relative coordinates are measured from the selection origin");
+    QApplication::sendEvent(&overlay, &toggleP);
     check(inspector->setSample(frame, sample, QRectF(0, 0, 121, 91)), "a magnifier may preview the selection boundary");
     inspector->render(&panel);
-    check(panel.pixelColor(left + 165, 100) != QColor(1, 4, 9)
-              && inspector->colorText() == QStringLiteral("1, 4, 9"),
+    check(panel.pixelColor(115, 70) != QColor(1, 4, 9)
+              && inspector->colorText() == QStringLiteral("1 , 4 , 9"),
           "the magnified mask is visual only and never replaces the raw copied color");
     check(inspector->setSample(frame, sample), "restore the unmasked sample preview");
     inspector->render(&panel);
@@ -203,10 +231,10 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     check(overlay.m_shot.devicePixelRatio() == 1.5, "frozen desktop preserves high-DPI capture resolution");
     const QPointF localOrigin = overlay.mapFromGlobal(QPointF(frame.logicalRect.topLeft()));
     const QPoint origin(qRound(localOrigin.x() * 1.5), qRound(localOrigin.y() * 1.5));
-    check(frozen.pixelColor(origin + QPoint(110, 83)) == QColor(90, 150, 210), "frozen capture retains native pixel detail");
+    check(frozen.pixelColor(origin + QPoint(112, 86)) == QColor(90, 150, 210), "frozen capture retains native pixel detail");
     QKeyEvent copyRgb(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier);
     QApplication::sendEvent(&overlay, &copyRgb);
-    check(clipboard->text() == QStringLiteral("1, 4, 9") && overlay.isVisible(), "C copies RGB without closing capture");
+    check(clipboard->text() == QStringLiteral("1 , 4 , 9") && overlay.isVisible(), "C copies RGB without closing capture");
     QKeyEvent shift(QEvent::KeyPress, Qt::Key_Shift, Qt::ShiftModifier);
     QApplication::sendEvent(&overlay, &shift);
     check(inspector->colorText() == QStringLiteral("#010409"), "Shift switches to six-digit HEX");
@@ -216,7 +244,7 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     QApplication::sendEvent(&overlay, &copyRgb);
     check(clipboard->text() == QStringLiteral("#010409"), "C copies the displayed HEX format");
     QApplication::sendEvent(&overlay, &shift);
-    check(inspector->colorText() == QStringLiteral("1, 4, 9"), "Shift switches back to RGB");
+    check(inspector->colorText() == QStringLiteral("1 , 4 , 9"), "Shift switches back to RGB");
     for (const QPoint pixel : {QPoint(0, 0), QPoint(239, 0), QPoint(0, 179), QPoint(239, 179)})
         check(inspector->setSample(frame, frame.pixelRect.topLeft() + pixel), "screen-edge samples remain valid");
     check(!inspector->setSample(frame, frame.pixelRect.topLeft() - QPoint(1, 0)), "outside-screen sample is rejected");
@@ -1269,3 +1297,5 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     std::puts("PASS: pixel sampling, magnifier, color shortcuts, and capture regression checks");
     return 0;
 }
+
+

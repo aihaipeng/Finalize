@@ -1982,6 +1982,18 @@ Put the runtime and models back in the program folder and try again.</translatio
         <source>&lt;div align=&apos;center&apos; style=&apos;color:white&apos;&gt;按 &lt;b&gt;C&lt;/b&gt; 复制颜色值&lt;br&gt;按 &lt;b&gt;Shift&lt;/b&gt; 切换 RGB/HEX&lt;/div&gt;</source>
         <translation>&lt;div align=&apos;center&apos; style=&apos;color:white&apos;&gt;Press &lt;b&gt;C&lt;/b&gt; to copy the color value&lt;br&gt;Press &lt;b&gt;Shift&lt;/b&gt; to switch RGB/HEX&lt;/div&gt;</translation>
     </message>
+    <message>
+        <source>切换颜色格式</source>
+        <translation>Switch color format</translation>
+    </message>
+    <message>
+        <source>复制颜色值</source>
+        <translation>Copy color value</translation>
+    </message>
+    <message>
+        <source>切换全局/相对坐标</source>
+        <translation>Toggle global/relative coordinates</translation>
+    </message>
 </context>
 <context>
     <name>SmartErase</name>

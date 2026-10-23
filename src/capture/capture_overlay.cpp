@@ -1259,6 +1259,9 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
     case Qt::Key_Shift:
         if (!e->isAutoRepeat()) m_inspector->toggleFormat();
         break;
+    case Qt::Key_P:
+        if (!e->isAutoRepeat()) m_inspector->toggleCoordinates();
+        break;
     case Qt::Key_S:
         if (e->modifiers() & Qt::ControlModifier && !m_live && !m_embedded) saveCapture();
         else if (e->modifiers() == Qt::NoModifier && !e->isAutoRepeat())

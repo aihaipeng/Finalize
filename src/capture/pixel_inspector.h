@@ -24,14 +24,21 @@ public:
     bool setSample(const ScreenFrame &frame, const QPoint &globalPixel,
                    const QRectF &selectionPixels = {});
     QString colorText() const;
+    QString coordinateText() const;
     QColor color() const { return m_color; }
+    QPoint position() const { return m_position; }
+    bool relativeCoordinates() const { return m_relative; }
     void toggleFormat();
+    void toggleCoordinates();
 protected:
     void paintEvent(QPaintEvent *) override;
 private:
     QImage m_patch;
     QColor m_color;
+    QPoint m_position;
+    QPoint m_relativeOrigin;
     bool m_hex = false;
+    bool m_relative = false;
 };
 
 // Full-screen modal sampler over the frozen capture frames. The host hides its

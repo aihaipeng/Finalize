@@ -7,6 +7,8 @@
 #include <QString>
 #include <QColor>
 #include <QFont>
+#include <QFontMetricsF>
+#include <QClipboard>
 #include <QPaintEvent>
 #include <QWidget>
 #include <QPainter>
@@ -22,12 +24,11 @@
 PixelInspector::PixelInspector(QWidget *parent) : QWidget(parent)
 {
     setAttribute(Qt::WA_TransparentForMouseEvents);
-    QFont f(QStringLiteral("Consolas"));
-    f.setPointSize(11);
+    setAttribute(Qt::WA_TranslucentBackground);
+    QFont f = font();
     f.setStyleStrategy(QFont::StyleStrategy(QFont::PreferAntialias | QFont::NoSubpixelAntialias));
     setFont(f);
-    setAttribute(Qt::WA_TranslucentBackground);
-    setFixedSize(230, 220);
+    setFixedSize(152, 225);
     hide();
 }
 
@@ -39,8 +40,12 @@ bool PixelInspector::setSample(const ScreenFrame &frame, const QPoint &globalPix
         return false;
     const QPoint pixel = globalPixel - frame.pixelRect.topLeft();
     m_color = frame.image.pixelColor(pixel);
-    const QPoint origin = pixel - QPoint(12, 8);
-    m_patch = frame.image.copy(QRect(origin, QSize(25, 17)));
+    m_position = globalPixel;
+    m_relativeOrigin = frame.pixelRect.topLeft();
+    if (!selectionPixels.isEmpty())
+        m_relativeOrigin += selectionPixels.topLeft().toPoint();
+    const QPoint origin = pixel - QPoint(9, 6);
+    m_patch = frame.image.copy(QRect(origin, QSize(19, 13)));
     m_patch.setDevicePixelRatio(1);
     if (!selectionPixels.isEmpty()) {
         QPainter p(&m_patch);
@@ -61,42 +66,97 @@ QString PixelInspector::colorText() const
     if (!m_color.isValid())
         return QString();
     return m_hex ? m_color.name(QColor::HexRgb)
-                 : QStringLiteral("%1, %2, %3").arg(m_color.red()).arg(m_color.green()).arg(m_color.blue());
+                 : QStringLiteral("%1 , %2 , %3").arg(m_color.red()).arg(m_color.green()).arg(m_color.blue());
+}
+
+QString PixelInspector::coordinateText() const
+{
+    if (!m_color.isValid())
+        return QString();
+    const QPoint p = m_relative ? m_position - m_relativeOrigin : m_position;
+    return QStringLiteral("( %1 , %2 )").arg(p.x()).arg(p.y());
 }
 
 void PixelInspector::toggleFormat() { m_hex = !m_hex; update(); }
 
+void PixelInspector::toggleCoordinates() { m_relative = !m_relative; update(); }
+
 void PixelInspector::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(Bar::divider,1));p.setBrush(Bar::surface);
-    p.drawRoundedRect(QRectF(rect()).adjusted(0.5,0.5,-0.5,-0.5),8,8);
-    p.setBrush(Qt::NoBrush);
-    const QRect view((width() - 177) / 2, 12, 177, 121);
-    p.setRenderHint(QPainter::SmoothPixmapTransform, false);
+    p.setRenderHint(QPainter::Antialiasing, false);
+
+    p.fillRect(QRect(0, 104, 152, 121), QColor(0, 0, 0, 188));
+
+    const QRect view(0, 0, 152, 104);
     p.save();
     p.setClipRect(view);
-    p.drawImage(view.adjusted(1, 1, -1, -1), m_patch);
-    const QRect pixel(view.left() + 85, view.top() + 57, 7, 7);
-    QColor crosshair = Bar::accent;
-    crosshair.setAlpha(88);
-    p.fillRect(QRect(pixel.left(), view.top() + 1, 7, 119), crosshair);
-    p.fillRect(QRect(view.left() + 1, pixel.top(), 175, 7), crosshair);
-    p.fillRect(pixel, m_color);
-    p.setPen(Qt::black);
-    p.drawRect(pixel.adjusted(-1, -1, 0, 0));
-    p.setPen(Qt::white);
-    p.drawRect(pixel.adjusted(0, 0, -1, -1));
+    p.fillRect(view, Qt::black);
+    if (!m_patch.isNull()) {
+        p.setRenderHint(QPainter::SmoothPixmapTransform, false);
+        p.drawImage(view, m_patch);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    }
+    p.setPen(QPen(QColor(175, 175, 175, 97), 1));
+    for (int x = 8; x < view.width(); x += 8)
+        p.drawLine(view.left() + x, view.top(), view.left() + x, view.bottom());
+    for (int y = 8; y < view.height(); y += 8)
+        p.drawLine(view.left(), view.top() + y, view.right(), view.top() + y);
+
+    p.fillRect(QRect(72, 0, 8, 104), QColor(53, 106, 153, 235));
+    p.fillRect(QRect(0, 48, 152, 8), QColor(53, 106, 153, 235));
+
+    const QRect center(71, 47, 10, 10);
+    p.fillRect(center, Qt::white);
+    p.fillRect(center.adjusted(1, 1, -1, -1), Qt::black);
+    p.fillRect(center.adjusted(2, 2, -2, -2), m_color);
     p.restore();
-    p.setPen(Qt::white);
-    p.drawRect(view.adjusted(0, 0, -1, -1));
-    QFont valueFont=font();valueFont.setPixelSize(14);p.setFont(valueFont);
-    p.setPen(Bar::ink);p.setBrush(m_color);p.drawRoundedRect(QRect(20,150,20,20),4,4);
-    p.drawText(QRect(52,148,160,24),Qt::AlignVCenter,m_color.name(QColor::HexRgb).toUpper());
-    QFont rgb=valueFont;rgb.setPixelSize(12);p.setFont(rgb);p.setPen(Bar::muted);
-    p.drawText(QRect(20,180,190,20),Qt::AlignVCenter,
-        QStringLiteral("RGB  %1, %2, %3").arg(m_color.red()).arg(m_color.green()).arg(m_color.blue()));
+
+    // A 1px white hairline keeps the magnifier readable on bright desktops;
+    // it also separates the magnifier from the borderless information panel.
+    p.fillRect(QRect(0, 0, 152, 1), Qt::white);
+    p.fillRect(QRect(0, 103, 152, 1), Qt::white);
+    p.fillRect(QRect(0, 0, 1, 104), Qt::white);
+    p.fillRect(QRect(151, 0, 1, 104), Qt::white);
+
+    QFont ui = font();
+    ui.setPixelSize(14);
+    p.setFont(ui);
+    const QFontMetricsF fm(ui);
+    const QColor text(0xd0, 0xd0, 0xd0);
+    const QColor bright(0xf2, 0xf2, 0xf2);
+
+    p.setPen(text);
+    p.drawText(QRect(0, 110, 152, 20), Qt::AlignHCenter | Qt::AlignVCenter, coordinateText());
+
+    const QString value = colorText();
+    const qreal valueWidth = fm.horizontalAdvance(value);
+    const int rowLeft = qRound((152 - (15 + 8 + valueWidth)) / 2);
+    p.fillRect(QRect(rowLeft, 134, 15, 15), Qt::white);
+    p.fillRect(QRect(rowLeft + 1, 135, 13, 13), m_color);
+    p.setPen(bright);
+    p.drawText(QRectF(rowLeft + 23, 132, valueWidth + 2, 20),
+               Qt::AlignLeft | Qt::AlignVCenter, value);
+
+    const QString labels[3] = { QStringLiteral("Shift:"), QStringLiteral("C:"), QStringLiteral("P:") };
+    const QString descs[3] = { tr("切换颜色格式"), tr("复制颜色值"), tr("切换全局/相对坐标") };
+    QFont keyFont = ui;
+    keyFont.setBold(true);
+    const QFontMetricsF keyMetrics(keyFont);
+    for (int i = 0; i < 3; ++i) {
+        const qreal y = 154 + i * 18;
+        const qreal labelWidth = keyMetrics.horizontalAdvance(labels[i]);
+        const qreal gap = fm.horizontalAdvance(QLatin1Char(' '));
+        const qreal descWidth = fm.horizontalAdvance(descs[i]);
+        const int left = qRound((152 - (labelWidth + gap + descWidth)) / 2);
+        p.setFont(keyFont);
+        p.setPen(bright);
+        p.drawText(QRectF(left, y, labelWidth + 2, 18), Qt::AlignLeft | Qt::AlignVCenter, labels[i]);
+        p.setFont(ui);
+        p.setPen(text);
+        p.drawText(QRectF(left + labelWidth + gap, y, descWidth + 2, 18),
+                   Qt::AlignLeft | Qt::AlignVCenter, descs[i]);
+    }
 }
 
 namespace {
@@ -210,5 +270,20 @@ void ScreenColorPicker::keyPressEvent(QKeyEvent *event)
         accept();
         return;
     }
+    if (event->key() == Qt::Key_Shift && !event->isAutoRepeat()) {
+        m_inspector->toggleFormat();
+        return;
+    }
+    if (event->key() == Qt::Key_P && !event->isAutoRepeat()) {
+        m_inspector->toggleCoordinates();
+        return;
+    }
+    if (event->key() == Qt::Key_C
+        && !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+        const QString text = m_inspector->colorText();
+        if (!text.isEmpty()) QGuiApplication::clipboard()->setText(text);
+        return;
+    }
     QDialog::keyPressEvent(event);
 }
+
