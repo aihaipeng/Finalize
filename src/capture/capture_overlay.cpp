@@ -1613,6 +1613,7 @@ void CaptureOverlay::handleDetectedRect(const QRect &native, quint64 id)
             m_sel = detected;
             if (m_sel.width() >= 4 && m_sel.height() >= 4) {
                 m_mode = Adjusting;
+                ensureAutoWatermark();
                 showToolBars();
                 placeToolBars();
                 if (m_pinAfterDetection) { m_pinAfterDetection = false; pinCapture(); return; }
@@ -2207,6 +2208,10 @@ void CaptureOverlay::loadToolLayout()
     QStringList all = m_defaultToolOrder;
     if (m_moreButton) all << QStringLiteral("more");
     if (order.isEmpty()) order = all;
+    // The reference keeps watermark in the secondary tool area; users who use it
+    // often can drag it to a primary side in the toolbar editor.
+    if (!sides.contains(QStringLiteral("watermark")))
+        sides.insert(QStringLiteral("watermark"), QStringLiteral("hidden"));
     for (const QString &id : all)
         if (!order.contains(id)) {
             order << id;

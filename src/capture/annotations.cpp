@@ -1,4 +1,5 @@
 #include "shared/dialog_chrome.h"
+#include "shared/settings.h"
 #include "capture/capture_overlay.h"
 #include <QClipboard>
 #include <QAbstractItemView>
@@ -54,6 +55,11 @@
 #include <QVBoxLayout>
 #include <QDialog>
 #include <QRegularExpression>
+#include <QDateTime>
+#include <QDialogButtonBox>
+#include <QPushButton>
+#include <QPalette>
+#include <QAction>
 #include <QDoubleValidator>
 #include <QLineEdit>
 #include <QHBoxLayout>
@@ -276,6 +282,11 @@ protected:
         QStylePainter painter(this);
         QStyleOptionComboBox option;
         initStyleOption(&option);
+        // CE_ComboBoxLabel reads ButtonText; the stylesheet color lands in Text.
+        // These controls only appear on the dark overlay, so keep the label legible
+        // even when a dialog's palette leaves ButtonText at its light-theme black.
+        option.palette.setColor(QPalette::ButtonText, QColor(QStringLiteral("#f4f5f8")));
+        option.palette.setColor(QPalette::Text, QColor(QStringLiteral("#f4f5f8")));
         if (m_glyphOnly) option.currentText.clear();
         const QRect arrow = style()->subControlRect(QStyle::CC_ComboBox, &option,
                                                     QStyle::SC_ComboBoxArrow, this);
@@ -373,6 +384,7 @@ bool CaptureOverlay::annotationHit(const Annotation &ann, const QPoint &pos)
 {
     const int tol = qMax(5, ann.pen / 2 + 4);
     if (ann.tool == ATool::Eraser && !ann.fill) return false;   // Brush erasures are not selectable.
+    if (ann.tool == ATool::Watermark) return false;             // Controlled from the strip, never selected.
     if (ann.tool == ATool::Mosaic && ann.mosaicBrush) {
         if (ann.stroke.isEmpty()) return false;
         for (int i = 1; i < ann.stroke.size(); ++i)
@@ -542,6 +554,10 @@ void CaptureOverlay::updateAnnotationCursor(const QPoint &pos)
 {
     if (m_mode != Adjusting) { setCursor(Qt::CrossCursor); return; }
     if (overToolChrome(pos)) {
+        setCursor(Qt::ArrowCursor);
+        return;
+    }
+    if (m_atool == ATool::Watermark) {
         setCursor(Qt::ArrowCursor);
         return;
     }
@@ -1580,6 +1596,7 @@ void CaptureOverlay::tuneWidth(int dir, const QPoint &at)
 
 void CaptureOverlay::beginAnnotation(const QPoint &pos)
 {
+    if (m_atool == ATool::Watermark) return;      // Watermark is edited from the strip, not drawn.
     m_live = true;
     m_selAnn = -1;                               // A canvas press releases the previous item, even if nothing is drawn.
     m_ann = Annotation();
@@ -1741,6 +1758,10 @@ void CaptureOverlay::selectTool(ATool tool)                      // Shared by to
     if (m_live) { m_live = false; commitAnnotation(); }
     stopItemDrag();
     commitTextEdit();
+    if (tool != ATool::Watermark) {
+        m_wmTextUndo = false;
+        if (m_watermarkStylePopup) m_watermarkStylePopup->close();
+    }
     m_atool = tool;
     if (tool == ATool::Rect) m_shapeEllipse = false;        // R/O/popup pick the sub-shape.
     else if (tool == ATool::Ellipse) m_shapeEllipse = true;
@@ -1991,6 +2012,472 @@ void CaptureOverlay::syncTextOptions()
     }
 }
 
+int CaptureOverlay::watermarkIndex() const
+{
+    for (int i = 0; i < m_anns.size(); ++i)
+        if (m_anns[i].tool == ATool::Watermark) return i;
+    return -1;
+}
+
+CaptureOverlay::Annotation *CaptureOverlay::watermark()
+{
+    const int i = watermarkIndex();
+    return i < 0 ? nullptr : &m_anns[i];
+}
+
+const CaptureOverlay::Annotation *CaptureOverlay::watermark() const
+{
+    const int i = watermarkIndex();
+    return i < 0 ? nullptr : &m_anns[i];
+}
+
+CaptureOverlay::Annotation *CaptureOverlay::ensureWatermarkItem()
+{
+    if (Annotation *item = watermark()) return item;
+    Annotation ann;
+    ann.tool = ATool::Watermark;
+    ann.rect = m_sel.normalized().isEmpty() ? QRect(0, 0, width(), height()) : m_sel.normalized();
+    ann.text = m_wmText;
+    ann.family = m_wmFamily;
+    ann.font = m_wmSize;
+    ann.color = m_wmColor;
+    ann.createdAt = m_captureTime > 0 ? m_captureTime : QDateTime::currentMSecsSinceEpoch();
+    ann.watermarkPosition = m_wmPosition;
+    ann.watermarkOpacity = m_wmOpacity;
+    ann.watermarkGap = m_wmGap;
+    ann.watermarkAngle = m_wmAngle;
+    m_anns.append(ann);
+    return &m_anns.last();
+}
+
+void CaptureOverlay::ensureAutoWatermark()
+{
+    if (!m_autoWatermark || m_autoWatermarkAdded || m_pinEdit || m_embedded
+        || m_sel.isEmpty() || m_wmText.trimmed().isEmpty()) return;
+    if (watermark()) {
+        m_autoWatermarkAdded = true;
+        return;
+    }
+    pushUndo();
+    Annotation ann;
+    ann.tool = ATool::Watermark;
+    ann.rect = m_sel.normalized();
+    ann.text = m_wmText;
+    ann.family = m_wmFamily;
+    ann.font = m_wmSize;
+    ann.color = m_wmColor;
+    ann.createdAt = m_captureTime > 0 ? m_captureTime : QDateTime::currentMSecsSinceEpoch();
+    ann.watermarkPosition = m_wmPosition;
+    ann.watermarkOpacity = m_wmOpacity;
+    ann.watermarkGap = m_wmGap;
+    ann.watermarkAngle = m_wmAngle;
+    m_anns.append(ann);
+    m_autoWatermarkAdded = true;
+}
+
+QString CaptureOverlay::watermarkString(const QString &text, qint64 createdAt)
+{
+    if (!text.contains(QLatin1Char('$'))) return text;
+    QString out;
+    int cursor = 0;
+    while (cursor < text.size()) {
+        const int open = text.indexOf(QLatin1Char('$'), cursor);
+        if (open < 0) {
+            out += text.mid(cursor);
+            break;
+        }
+        out += text.mid(cursor, open - cursor);
+        const int close = text.indexOf(QLatin1Char('$'), open + 1);
+        if (close < 0) return text;               // The source leaves an unclosed token untouched.
+        if (close == open + 1) {
+            out += QLatin1Char('$');
+        } else {
+            const QString format = text.mid(open + 1, close - open - 1);
+            out += QDateTime::fromMSecsSinceEpoch(createdAt > 0 ? createdAt
+                                                                : QDateTime::currentMSecsSinceEpoch())
+                       .toString(format);
+        }
+        cursor = close + 1;
+    }
+    return out;
+}
+
+void CaptureOverlay::paintWatermark(QPainter &p, const Annotation &ann, const QRect &area)
+{
+    if (area.isEmpty() || ann.text.isEmpty()) return;
+    const QString shown = watermarkString(ann.text, ann.createdAt);
+    if (shown.isEmpty()) return;
+    QFont font(ann.family);
+    font.setPointSizeF(qMax(1.0, ann.font));
+    const QFontMetricsF metrics(font);
+
+    // The watermark's own tile is text plus padding. Tile mode repeats that tile
+    // through a transformed brush; corner modes draw one tile at the anchor.
+    QRectF textRect;
+    const QStringList lines = shown.split(QLatin1Char('\n'));
+    for (const QString &line : lines) {
+        if (line.isEmpty()) {
+            textRect.setHeight(textRect.height() + metrics.height());
+            continue;
+        }
+        QRectF lineRect = metrics.boundingRect(line);
+        lineRect.moveTop(textRect.height() == 0 ? 0 : textRect.bottom());
+        textRect = textRect.united(lineRect);
+    }
+    if (textRect.isEmpty()) return;
+    const bool tile = ann.watermarkPosition == 0;
+    const qreal padding = tile ? 2.0 * qMax<qreal>(0, ann.watermarkGap) * metrics.height() / 100.0
+                               : metrics.height() * 0.1;
+    const QRectF cell = textRect.adjusted(-padding, -padding, padding, padding);
+    const QSize logicalSize(qMax(1, qCeil(cell.width()) + 2), qMax(1, qCeil(cell.height())));
+    // Rasterize at the painter's device scale so mixed-DPI captures stay sharp.
+    const qreal textureDpr = qMax<qreal>(1.0, qMax(p.worldTransform().m11(),
+                                                  p.device()->devicePixelRatioF()));
+    QPixmap texture((QSizeF(logicalSize) * textureDpr).toSize());
+    texture.setDevicePixelRatio(textureDpr);
+    texture.fill(Qt::transparent);
+    {
+        QPainter tp(&texture);
+        tp.setRenderHint(QPainter::Antialiasing);
+        tp.setRenderHint(QPainter::TextAntialiasing);
+        tp.setFont(font);
+        QColor color = ann.color;
+        color.setAlphaF(qBound(0.0, ann.watermarkOpacity / 100.0, 1.0));
+        tp.setPen(color);
+        qreal lineTop = 0;
+        for (const QString &line : lines) {
+            if (line.isEmpty()) {
+                lineTop += metrics.height();
+                continue;
+            }
+            const QRectF lineRect = metrics.boundingRect(line);
+            // Draw with a point, not a constrained rect: fallback fonts must not be clipped
+            // or wrapped by a width estimate that is a pixel short. lineTop is relative to
+            // textRect, whose first line was moved to y=0 above.
+            tp.drawText(QPointF(padding - textRect.left() + (textRect.width() - lineRect.width()) / 2,
+                                padding + lineTop + metrics.ascent()), line);
+            lineTop += lineRect.height();
+        }
+    }
+    QBrush brush(texture);
+    if (tile) brush.setTransform(QTransform().rotate(ann.watermarkAngle));
+
+    p.save();
+    p.setClipRect(area);
+    p.setRenderHint(QPainter::Antialiasing);
+    if (tile) {
+        p.fillRect(QRectF(area), brush);
+    } else {
+        const QSizeF size(logicalSize);
+        const QRectF box(area);
+        QRectF target;
+        switch (ann.watermarkPosition) {
+        case 1: target = QRectF(box.bottomRight() - QPointF(size.width(), size.height()), size); break;
+        case 2: target = QRectF(box.bottomLeft() - QPointF(0, size.height()), size); break;
+        case 3: target = QRectF(box.topRight() - QPointF(size.width(), 0), size); break;
+        case 4: target = QRectF(box.topLeft(), size); break;
+        case 5: target = QRectF(QPointF(box.center().x() - size.width() / 2, box.top()), size); break;
+        case 6: target = QRectF(QPointF(box.center().x() - size.width() / 2, box.bottom() - size.height()), size); break;
+        case 7: target = QRectF(box.center() - QPointF(size.width() / 2, size.height() / 2), size); break;
+        default: target = QRectF(box.topLeft(), size); break;
+        }
+        // One tile at an anchor: drawPixmap keeps it single even on fractional-DPI
+        // screens, where a texture brush can otherwise repeat a partial tile.
+        p.drawPixmap(target.topLeft(), texture);
+    }
+    p.restore();
+}
+
+void CaptureOverlay::setWatermarkText(const QString &text)
+{
+    if (!m_wmTextUndo) {
+        pushUndo();
+        m_wmTextUndo = true;
+    }
+    m_wmText = text;
+    if (Annotation *item = ensureWatermarkItem()) item->text = text;
+    saveWatermarkSettings();
+    update();
+}
+
+void CaptureOverlay::setWatermarkPosition(int position)
+{
+    position = qBound(0, position, 7);
+    if (position == m_wmPosition) return;
+    pushUndo();
+    m_wmPosition = position;
+    if (Annotation *item = watermark()) item->watermarkPosition = position;
+    if (m_watermarkStylePopup) {
+        if (QWidget *row = m_watermarkStylePopup->findChild<QWidget *>(QStringLiteral("watermarkGapRow")))
+            row->setVisible(position == 0);
+    }
+    saveWatermarkSettings();
+    update();
+}
+
+void CaptureOverlay::setWatermarkColor(const QColor &color, bool undoable)
+{
+    if (!color.isValid()) return;
+    if (undoable) pushUndo();
+    m_wmColor = color;
+    if (Annotation *item = watermark()) item->color = color;
+    if (m_watermarkColorBoard) m_watermarkColorBoard->setCurrentColor(color);
+    saveWatermarkSettings();
+    update();
+}
+
+void CaptureOverlay::setWatermarkFamily(const QString &family)
+{
+    if (family.isEmpty() || family == m_wmFamily) return;
+    pushUndo();
+    m_wmFamily = family;
+    if (Annotation *item = watermark()) item->family = family;
+    saveWatermarkSettings();
+    update();
+}
+
+void CaptureOverlay::setWatermarkSize(int size, bool undoable)
+{
+    size = qBound(1, size, 400);
+    if (size == m_wmSize) return;
+    if (undoable) pushUndo();
+    m_wmSize = size;
+    if (Annotation *item = watermark()) item->font = size;
+    saveWatermarkSettings();
+    update();
+}
+
+void CaptureOverlay::setWatermarkOpacity(int opacity, bool undoable)
+{
+    opacity = qBound(0, opacity, 100);
+    if (opacity == m_wmOpacity) return;
+    if (undoable) pushUndo();
+    m_wmOpacity = opacity;
+    if (Annotation *item = watermark()) item->watermarkOpacity = opacity;
+    saveWatermarkSettings();
+    update();
+}
+
+void CaptureOverlay::setWatermarkGap(int gap, bool undoable)
+{
+    gap = qBound(0, gap, 200);
+    if (gap == m_wmGap) return;
+    if (undoable) pushUndo();
+    m_wmGap = gap;
+    if (Annotation *item = watermark()) item->watermarkGap = gap;
+    saveWatermarkSettings();
+    update();
+}
+
+void CaptureOverlay::insertWatermarkTime(const QString &format)
+{
+    if (!m_watermarkEdit && m_toolOptions)
+        m_watermarkEdit = m_toolOptions->findChild<QLineEdit *>(QStringLiteral("watermarkText"));
+    if (!m_watermarkEdit || format.isEmpty()) return;
+    m_watermarkEdit->insert(QLatin1Char('$') + format + QLatin1Char('$'));
+    m_watermarkEdit->setFocus();
+    LensSnipSettings().setValue(QStringLiteral("Watermark/LastTimeFormat"), format);
+}
+
+void CaptureOverlay::showWatermarkTimeDialog()
+{
+    static const char *const formats[] = {
+        "yyyy-MM-dd HH:mm:ss",       "yyyy/MM/dd HH:mm:ss",      "dd/MM/yyyy HH:mm:ss",
+        "MM/dd/yyyy HH:mm:ss",       "yyyy-MM-dd",              "HH:mm:ss",
+        "hh:mm:ss AP",               "yyyy-MM-dd ddd HH:mm:ss", "yyyy-MM-dd HH:mm:ss.zzz",
+        "yyyyMMdd_HHmmss",           "MM/dd/yyyy hh:mm:ss AP"};
+    static const char *const labels[] = {
+        QT_TRANSLATE_NOOP("CaptureOverlay", "中国、日本、韩国、ISO 标准（24 小时）"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "中国和日本常用斜杠格式"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "大多数欧洲国家"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "美国 月-日-年"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "国际日期（仅日期）"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "时间（24 小时）"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "时间（12 小时 AM/PM）"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "带缩写星期的日期和时间"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "编程和日志（毫秒）"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "数据库和文件名紧凑格式"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "美国和加拿大 12 小时 AM/PM")};
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("添加时间"));
+    dialog.setStyleSheet(QStringLiteral(
+        "QDialog{background:#18191d;} QLabel{color:#f4f5f8;font-size:12px;}"
+        "QComboBox{color:#f4f5f8;background:#0c0d10;border:none;border-radius:8px;padding:4px 8px;}"
+        "QComboBox QAbstractItemView{color:#f4f5f8;background:#18191d;border:1px solid #2b2d33;"
+        "selection-background-color:#5e6ad2;selection-color:#ffffff;}"
+        "QPushButton{color:#f4f5f8;background:#222326;border:none;border-radius:6px;padding:5px 14px;}"
+        "QPushButton:hover{background:#2b2d33;}"));
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(16, 14, 16, 14);
+    layout->setSpacing(10);
+    layout->addWidget(new QLabel(tr("时间格式"), &dialog));
+    auto *combo = new QComboBox(&dialog);
+    combo->setObjectName(QStringLiteral("watermarkTimeFormat"));
+    for (int i = 0; i < int(sizeof(formats) / sizeof(formats[0])); ++i)
+        combo->addItem(tr(labels[i]), QString::fromLatin1(formats[i]));
+    combo->setFixedWidth(300);
+    const QString last = LensSnipSettings().value(QStringLiteral("Watermark/LastTimeFormat"),
+                                                  QStringLiteral("yyyy-MM-dd HH:mm:ss")).toString();
+    for (int i = 0; i < combo->count(); ++i)
+        if (combo->itemData(i).toString() == last) { combo->setCurrentIndex(i); break; }
+    layout->addWidget(combo);
+    auto *preview = new QLabel(&dialog);
+    preview->setObjectName(QStringLiteral("watermarkTimePreview"));
+    preview->setStyleSheet(QStringLiteral("color:#9c9da1;font-size:12px;"));
+    layout->addWidget(preview);
+    const auto refreshPreview = [combo, preview] {
+        preview->setText(QCoreApplication::translate("CaptureOverlay", "预览：%1")
+                             .arg(QDateTime::currentDateTime().toString(combo->currentData().toString())));
+    };
+    connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog,
+            [refreshPreview](int) { refreshPreview(); });
+    refreshPreview();
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("应用"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(tr("取消"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() == QDialog::Accepted)
+        insertWatermarkTime(combo->currentData().toString());
+}
+
+void CaptureOverlay::showWatermarkColorDialog()
+{
+    if (m_watermarkStylePopup) m_watermarkStylePopup->close();
+    auto *dialog = new ColorDialog(m_wmColor, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setOption(QColorDialog::DontUseNativeDialog);
+    dialog->setWindowTitle(tr("选择水印颜色"));
+    connect(dialog, &QDialog::finished, this, [this, dialog](int result) {
+        if (result == QDialog::Accepted && dialog->currentColor().isValid())
+            setWatermarkColor(dialog->currentColor());
+        if (isVisible()) setFocus();
+    });
+    dialog->open();
+}
+
+void CaptureOverlay::showWatermarkStylePopup(QToolButton *anchor)
+{
+    if (m_watermarkStylePopup) {
+        m_watermarkStylePopup->close();
+        return;
+    }
+    const Annotation *item = watermark();
+    const int position = item ? item->watermarkPosition : m_wmPosition;
+    auto *popup = new QDialog(this, Qt::Popup | Qt::FramelessWindowHint);
+    m_watermarkStylePopup = popup;
+    popup->setObjectName(QStringLiteral("watermarkStylePopup"));
+    popup->setAttribute(Qt::WA_DeleteOnClose);
+    popup->setStyleSheet(QStringLiteral(
+        "QDialog{background:#18191d;border:1px solid #2b2d33;border-radius:8px;}"
+        "QLabel{color:#f4f5f8;font-size:12px;}"));
+    auto *layout = new QVBoxLayout(popup);
+    layout->setContentsMargins(12, 10, 12, 10);
+    layout->setSpacing(8);
+
+    const auto addRow = [this, popup, layout](const QString &name, int minimum, int maximum, int value,
+                                             const std::function<void(int, bool)> &setter,
+                                             const QString &objectName) {
+        auto *row = new QWidget(popup);
+        row->setObjectName(objectName);
+        auto *line = new QHBoxLayout(row);
+        line->setContentsMargins(0, 0, 0, 0);
+        line->setSpacing(8);
+        auto *label = new QLabel(name, row);
+        label->setFixedWidth(52);
+        auto *slider = new QSlider(Qt::Horizontal, row);
+        slider->setRange(minimum, maximum);
+        slider->setPageStep(1);
+        slider->setFixedSize(128, 22);
+        slider->setFocusPolicy(Qt::NoFocus);
+        slider->setStyleSheet(darkSliderQss);
+        auto *valueLabel = new QLabel(QString::number(value), row);
+        valueLabel->setFixedWidth(30);
+        valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        line->addWidget(label);
+        line->addWidget(slider);
+        line->addWidget(valueLabel);
+        layout->addWidget(row);
+        QSignalBlocker block(slider);
+        slider->setValue(value);
+        connect(slider, &QSlider::valueChanged, popup, [slider, valueLabel, setter](int v) {
+            valueLabel->setText(QString::number(v));
+            setter(v, !slider->property("wmUndoPushed").toBool());
+        });
+        connect(slider, &QSlider::sliderPressed, popup, [this, slider] {
+            pushUndo();
+            slider->setProperty("wmUndoPushed", true);
+        });
+        connect(slider, &QSlider::sliderReleased, popup, [slider] {
+            slider->setProperty("wmUndoPushed", false);
+        });
+        return row;
+    };
+    addRow(tr("不透明度"), 0, 100, item ? qRound(item->watermarkOpacity) : m_wmOpacity,
+           [this](int v, bool undoable) { setWatermarkOpacity(v, undoable); },
+           QStringLiteral("watermarkOpacityRow"));
+    addRow(tr("大小"), 1, 200, item ? qRound(item->font) : m_wmSize,
+           [this](int v, bool undoable) { setWatermarkSize(v, undoable); },
+           QStringLiteral("watermarkSizeRow"));
+    QWidget *gapRow = addRow(tr("间距"), 0, 200, item ? qRound(item->watermarkGap) : m_wmGap,
+                             [this](int v, bool undoable) { setWatermarkGap(v, undoable); },
+                             QStringLiteral("watermarkGapRow"));
+    gapRow->setVisible(position == 0);
+
+    m_watermarkColorBoard = new ColorBoard(item ? item->color : m_wmColor, popup);
+    m_watermarkColorBoard->setObjectName(QStringLiteral("watermarkColors"));
+    connect(m_watermarkColorBoard, &ColorBoard::presetPicked, this,
+            [this](const QColor &color) { setWatermarkColor(color); });
+    connect(m_watermarkColorBoard, &ColorBoard::customRequested, this,
+            &CaptureOverlay::showWatermarkColorDialog);
+    layout->addWidget(m_watermarkColorBoard);
+
+    popup->adjustSize();
+    const QRect screen = (QGuiApplication::screenAt(anchor->mapToGlobal(QPoint()))
+                          ?: QGuiApplication::primaryScreen())->availableGeometry();
+    const QPoint below = anchor->mapToGlobal(QPoint(0, anchor->height() + Bar::gap));
+    const QPoint above = anchor->mapToGlobal(QPoint(0, -popup->height() - Bar::gap));
+    const QPoint target(below.x(), below.y() + popup->height() <= screen.bottom() + 1 ? below.y() : above.y());
+    popup->move(qBound(screen.left(), target.x(), qMax(screen.left(), screen.right() + 1 - popup->width())),
+                qBound(screen.top(), target.y(), qMax(screen.top(), screen.bottom() + 1 - popup->height())));
+    connect(popup, &QDialog::finished, this, [this] {
+        if (isVisible()) setFocus();
+    });
+    popup->show();
+    popup->raise();
+}
+
+void CaptureOverlay::loadWatermarkSettings()
+{
+    LensSnipSettings settings;
+    m_wmText = settings.value(QStringLiteral("Watermark/Text")).toString();
+    const QColor color(settings.value(QStringLiteral("Watermark/Color")).toString());
+    if (color.isValid()) m_wmColor = color;
+    m_wmFamily = settings.value(QStringLiteral("Watermark/FontFamily"), m_wmFamily).toString();
+    m_wmSize = qBound(1, settings.value(QStringLiteral("Watermark/FontSize"), m_wmSize).toInt(), 400);
+    m_wmOpacity = qBound(0, settings.value(QStringLiteral("Watermark/Opacity"), m_wmOpacity).toInt(), 100);
+    m_wmGap = qBound(0, settings.value(QStringLiteral("Watermark/Gap"), m_wmGap).toInt(), 200);
+    m_wmPosition = qBound(0, settings.value(QStringLiteral("Watermark/Position"), m_wmPosition).toInt(), 7);
+    m_wmAngle = settings.value(QStringLiteral("Watermark/Angle"), m_wmAngle).toDouble();
+    m_autoWatermark = settings.value(QStringLiteral("Watermark/AutoAdd"), false).toBool();
+    m_captureTime = QDateTime::currentMSecsSinceEpoch();
+}
+
+void CaptureOverlay::saveWatermarkSettings() const
+{
+    LensSnipSettings settings;
+    settings.setValue(QStringLiteral("Watermark/Text"), m_wmText);
+    settings.setValue(QStringLiteral("Watermark/Color"), m_wmColor.name(QColor::HexArgb));
+    settings.setValue(QStringLiteral("Watermark/FontFamily"), m_wmFamily);
+    settings.setValue(QStringLiteral("Watermark/FontSize"), m_wmSize);
+    settings.setValue(QStringLiteral("Watermark/Opacity"), m_wmOpacity);
+    settings.setValue(QStringLiteral("Watermark/Gap"), m_wmGap);
+    settings.setValue(QStringLiteral("Watermark/Position"), m_wmPosition);
+    settings.setValue(QStringLiteral("Watermark/Angle"), m_wmAngle);
+    settings.setValue(QStringLiteral("Watermark/AutoAdd"), m_autoWatermark);
+}
+
 void CaptureOverlay::updateToolOptions()
 {
     if (m_colorDialog) m_colorDialog->close();
@@ -2004,6 +2491,8 @@ void CaptureOverlay::updateToolOptions()
     }
     m_sizeInput = nullptr;
     m_sizeButton = nullptr;
+    m_watermarkEdit = nullptr;
+    if (m_watermarkStylePopup) m_watermarkStylePopup->close();
     if (m_sizePopup) m_sizePopup->close();
     m_mosaicSlider = nullptr;
     m_mosaicStrengthLabel = nullptr;
@@ -2160,6 +2649,106 @@ void CaptureOverlay::updateToolOptions()
         addSize();
         addSeparator(lay);
         addSwatches(lay, ATool::Rect);
+        break;
+    }
+    case ATool::Watermark: {
+        const Annotation *item = watermark();
+        auto *edit = new QLineEdit;
+        m_watermarkEdit = edit;
+        edit->setObjectName(QStringLiteral("watermarkText"));
+        edit->setPlaceholderText(tr("输入水印"));
+        edit->setClearButtonEnabled(false);
+        auto *clearWatermark = edit->addAction(barIcon(Icon::Cancel, 14), QLineEdit::TrailingPosition);
+        clearWatermark->setToolTip(tr("清除水印"));
+        clearWatermark->setVisible(false);
+        edit->setText(item ? item->text : m_wmText);
+        edit->setCursorPosition(0);               // Long templates read from the start, not their tail.
+        edit->setFixedSize(150, 24);
+        edit->setFocusPolicy(Qt::ClickFocus);
+        edit->setStyleSheet(QStringLiteral(
+            "QLineEdit{color:#f4f5f8;background:#0c0d10;border:none;border-radius:12px;"
+            "padding:1px 22px 1px 10px;selection-background-color:#5e6ad2;selection-color:#ffffff;}"));
+        edit->setToolTip(tr("输入水印；$格式$ 会替换为截图时间，例如 $yyyy-MM-dd HH:mm:ss$"));
+        clearWatermark->setVisible(!edit->text().isEmpty());
+        connect(clearWatermark, &QAction::triggered, edit, &QLineEdit::clear);
+        connect(edit, &QLineEdit::textChanged, this, [this, clearWatermark](const QString &text) {
+            clearWatermark->setVisible(!text.isEmpty());
+            setWatermarkText(text);
+        });
+        connect(edit, &QLineEdit::editingFinished, this, [this] {
+            saveWatermarkSettings();
+            m_wmTextUndo = false;               // A later edit starts a new undo group.
+        });
+        lay->addWidget(edit);
+
+        const QIcon icons[] = {
+            [&] {                                   // Tile: a repeating 3x3 field.
+                QPixmap pm(16, 16); pm.fill(Qt::transparent);
+                QPainter p(&pm); p.setPen(QPen(Bar::ink, 1.2));
+                for (int y = 2; y <= 12; y += 5)
+                    for (int x = 2; x <= 12; x += 5) p.fillRect(QRect(x, y, 2, 2), Bar::ink);
+                return QIcon(pm);
+            }(),
+            [&] {                                   // Anchors: a frame with one filled cell.
+                QPixmap pm(16, 16); pm.fill(Qt::transparent);
+                QPainter p(&pm); p.setPen(QPen(Bar::ink, 1.0)); p.drawRect(QRect(1, 1, 14, 14));
+                p.fillRect(QRect(9, 9, 4, 4), Bar::ink); return QIcon(pm);
+            }(),
+            [&] { QPixmap pm(16,16); pm.fill(Qt::transparent); QPainter p(&pm); p.setPen(QPen(Bar::ink,1.0)); p.drawRect(QRect(1,1,14,14)); p.fillRect(QRect(3,9,4,4),Bar::ink); return QIcon(pm); }(),
+            [&] { QPixmap pm(16,16); pm.fill(Qt::transparent); QPainter p(&pm); p.setPen(QPen(Bar::ink,1.0)); p.drawRect(QRect(1,1,14,14)); p.fillRect(QRect(9,3,4,4),Bar::ink); return QIcon(pm); }(),
+            [&] { QPixmap pm(16,16); pm.fill(Qt::transparent); QPainter p(&pm); p.setPen(QPen(Bar::ink,1.0)); p.drawRect(QRect(1,1,14,14)); p.fillRect(QRect(3,3,4,4),Bar::ink); return QIcon(pm); }(),
+            [&] { QPixmap pm(16,16); pm.fill(Qt::transparent); QPainter p(&pm); p.setPen(QPen(Bar::ink,1.0)); p.drawRect(QRect(1,1,14,14)); p.fillRect(QRect(6,3,4,4),Bar::ink); return QIcon(pm); }(),
+            [&] { QPixmap pm(16,16); pm.fill(Qt::transparent); QPainter p(&pm); p.setPen(QPen(Bar::ink,1.0)); p.drawRect(QRect(1,1,14,14)); p.fillRect(QRect(6,9,4,4),Bar::ink); return QIcon(pm); }(),
+            [&] { QPixmap pm(16,16); pm.fill(Qt::transparent); QPainter p(&pm); p.setPen(QPen(Bar::ink,1.0)); p.drawRect(QRect(1,1,14,14)); p.fillRect(QRect(6,6,4,4),Bar::ink); return QIcon(pm); }()};
+        auto *position = new FlatComboBox;
+        position->setObjectName(QStringLiteral("watermarkPosition"));
+        const char *const positionNames[] = {
+            QT_TRANSLATE_NOOP("CaptureOverlay", "平铺"), QT_TRANSLATE_NOOP("CaptureOverlay", "右下"),
+            QT_TRANSLATE_NOOP("CaptureOverlay", "左下"), QT_TRANSLATE_NOOP("CaptureOverlay", "右上"),
+            QT_TRANSLATE_NOOP("CaptureOverlay", "左上"), QT_TRANSLATE_NOOP("CaptureOverlay", "上中"),
+            QT_TRANSLATE_NOOP("CaptureOverlay", "下中"), QT_TRANSLATE_NOOP("CaptureOverlay", "居中")};
+        for (int i = 0; i < 8; ++i) position->addItem(icons[i], tr(positionNames[i]));
+        position->setCurrentIndex(item ? qBound(0, item->watermarkPosition, 7) : m_wmPosition);
+        position->setFocusPolicy(Qt::NoFocus);
+        position->setFixedSize(88, 24);
+        position->setIconSize(QSize(16, 16));
+        position->setAccessibleName(position->currentText());
+        connect(position, QOverload<int>::of(&QComboBox::activated), this,
+                [this, position](int index) {
+                    setWatermarkPosition(index);
+                    position->setAccessibleName(position->itemText(index));
+                    setFocus();
+                });
+        lay->addWidget(position);
+
+        auto *style = barButton(Icon::Watermark, tr("水印样式：不透明度、大小、间距与颜色"));
+        style->setObjectName(QStringLiteral("watermarkStyle"));
+        style->setFocusPolicy(Qt::NoFocus);
+        connect(style, &QToolButton::clicked, this, [this, style] { showWatermarkStylePopup(style); });
+        lay->addWidget(style);
+
+        auto *time = barButton(Icon::Text, tr("添加时间"));
+        time->setObjectName(QStringLiteral("watermarkAddTime"));
+        time->setFocusPolicy(Qt::NoFocus);
+        connect(time, &QToolButton::clicked, this, &CaptureOverlay::showWatermarkTimeDialog);
+        lay->addWidget(time);
+
+        auto *font = new FlatComboBox;
+        font->setObjectName(QStringLiteral("watermarkFont"));
+        font->setEditable(false);
+        font->addItems(QFontDatabase().families());
+        font->setFocusPolicy(Qt::NoFocus);
+        font->setFixedSize(140, 24);
+        font->view()->setMinimumWidth(200);
+        const QString family = item ? item->family : m_wmFamily;
+        font->setCurrentText(family);
+        font->setAccessibleName(tr("水印字体"));
+        font->setToolTip(tr("水印字体：%1").arg(family));
+        connect(font, &QComboBox::currentTextChanged, this, [this, font](const QString &value) {
+            font->setToolTip(tr("水印字体：%1").arg(value));
+            setWatermarkFamily(value);
+        });
+        lay->addWidget(font);
         break;
     }
     case ATool::Marker:
@@ -2480,11 +3069,15 @@ void CaptureOverlay::paintAnnotations(QPainter &p, const QPointF &origin, qreal 
             } else drawAnnotation(layer, ann, source, index);
         }
     };
-    for (int i = 0; i < m_anns.size(); ++i)
+    for (int i = 0; i < m_anns.size(); ++i) {
+        if (m_anns[i].tool == ATool::Watermark) continue;   // Watermark keeps a high z-order.
         if (!editorActive() || i != m_editAnn) paint(m_anns[i], i);
         else paint(editorAnnotation(), m_editAnn, includeEditor);
+    }
     if (editorActive() && m_editAnn < 0) paint(editorAnnotation(), -1, includeEditor);
     if (m_live) paint(m_ann, -1);
+    for (const Annotation &ann : m_anns)
+        if (ann.tool == ATool::Watermark) drawAnnotation(out, ann, lower, -1);
     if (layerPainter.isActive()) {
         layerPainter.end();
         p.save();
@@ -2632,6 +3225,11 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         washPen.setJoinStyle(Qt::RoundJoin);
         p.setPen(washPen);
         p.drawLine(ann.a, ann.b);
+        break;
+    }
+    case ATool::Watermark: {
+        const QRect area = m_sel.normalized().isEmpty() ? ann.rect.normalized() : m_sel.normalized();
+        paintWatermark(p, ann, area);
         break;
     }
     case ATool::Text: {

@@ -639,6 +639,134 @@
         <source>笔宽</source>
         <translation>Stroke width</translation>
     </message>
+    <message>
+        <source>水印</source>
+        <translation>Watermark</translation>
+    </message>
+    <message>
+        <source>水印 (W)</source>
+        <translation>Watermark (W)</translation>
+    </message>
+    <message>
+        <source>输入水印</source>
+        <translation>Input watermark</translation>
+    </message>
+    <message>
+        <source>输入水印；$格式$ 会替换为截图时间，例如 $yyyy-MM-dd HH:mm:ss$</source>
+        <translation>Enter watermark; $format$ is replaced with the capture time, e.g. $yyyy-MM-dd HH:mm:ss$</translation>
+    </message>
+    <message>
+        <source>平铺</source>
+        <translation>Tile</translation>
+    </message>
+    <message>
+        <source>右下</source>
+        <translation>Bottom right</translation>
+    </message>
+    <message>
+        <source>左下</source>
+        <translation>Bottom left</translation>
+    </message>
+    <message>
+        <source>右上</source>
+        <translation>Top right</translation>
+    </message>
+    <message>
+        <source>左上</source>
+        <translation>Top left</translation>
+    </message>
+    <message>
+        <source>上中</source>
+        <translation>Top center</translation>
+    </message>
+    <message>
+        <source>下中</source>
+        <translation>Bottom center</translation>
+    </message>
+    <message>
+        <source>居中</source>
+        <translation>Center</translation>
+    </message>
+    <message>
+        <source>水印样式：不透明度、大小、间距与颜色</source>
+        <translation>Watermark style: opacity, size, spacing and color</translation>
+    </message>
+    <message>
+        <source>添加时间</source>
+        <translation>Add time</translation>
+    </message>
+    <message>
+        <source>水印字体</source>
+        <translation>Watermark font</translation>
+    </message>
+    <message>
+        <source>水印字体：%1</source>
+        <translation>Watermark font: %1</translation>
+    </message>
+    <message>
+        <source>选择水印颜色</source>
+        <translation>Choose watermark color</translation>
+    </message>
+    <message>
+        <source>时间格式</source>
+        <translation>Time format</translation>
+    </message>
+    <message>
+        <source>预览：%1</source>
+        <translation>Preview: %1</translation>
+    </message>
+    <message>
+        <source>应用</source>
+        <translation>Apply</translation>
+    </message>
+    <message>
+        <source>间距</source>
+        <translation>Spacing</translation>
+    </message>
+    <message>
+        <source>中国、日本、韩国、ISO 标准（24 小时）</source>
+        <translation>China, Japan, Korea, ISO standard (24-hour)</translation>
+    </message>
+    <message>
+        <source>中国和日本常用斜杠格式</source>
+        <translation>China and Japan common slash format</translation>
+    </message>
+    <message>
+        <source>大多数欧洲国家</source>
+        <translation>Most European countries</translation>
+    </message>
+    <message>
+        <source>美国 月-日-年</source>
+        <translation>United States month-day-year</translation>
+    </message>
+    <message>
+        <source>国际日期（仅日期）</source>
+        <translation>International date only</translation>
+    </message>
+    <message>
+        <source>时间（24 小时）</source>
+        <translation>Time only (24-hour)</translation>
+    </message>
+    <message>
+        <source>时间（12 小时 AM/PM）</source>
+        <translation>Time only (12-hour AM/PM)</translation>
+    </message>
+    <message>
+        <source>带缩写星期的日期和时间</source>
+        <translation>Date and time with abbreviated weekday</translation>
+    </message>
+    <message>
+        <source>编程和日志（毫秒）</source>
+        <translation>Programming and logs (milliseconds)</translation>
+    </message>
+    <message>
+        <source>数据库和文件名紧凑格式</source>
+        <translation>Database and filename compact format</translation>
+    </message>
+    <message>
+        <source>美国和加拿大 12 小时 AM/PM</source>
+        <translation>United States and Canada 12-hour AM/PM</translation>
+    </message>
 </context>
 <context>
     <name>ColorBoard</name>
@@ -746,6 +874,14 @@
         <translation>Press F1 or left-click the tray icon to take a screenshot.
 Right-click the tray icon to open this menu.
 Pin, scrolling capture, and OCR are available from the capture toolbar.</translation>
+    </message>
+    <message>
+        <source>标注</source>
+        <translation>Annotation</translation>
+    </message>
+    <message>
+        <source>截图时自动添加水印</source>
+        <translation>Automatically add watermark when taking screenshot</translation>
     </message>
 </context>
 <context>

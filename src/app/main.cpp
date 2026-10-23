@@ -31,6 +31,7 @@
 #include <QThreadPool>
 #include <QTranslator>
 #include <QSettings>
+#include <QDir>
 #include <QStyleHints>
 #include <qt_windows.h>
 #include <cstdio>
@@ -54,6 +55,12 @@ int main(int argc, char **argv)
     QObject::connect(qApp, &QCoreApplication::aboutToQuit, [] { HistoryStore::waitForPending(); });
     QTranslator applicationTranslator, qtTranslator;
     const bool i18nTest = app.arguments().contains(QStringLiteral("--test-i18n"));
+    if (I18n::isTestMode(app.arguments())) {
+        // Regression runs must never overwrite the user's real preferences.
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                           QDir::tempPath() + QStringLiteral("/LensSnip-tests-%1")
+                               .arg(QCoreApplication::applicationPid()));
+    }
     I18n::install(&applicationTranslator, &qtTranslator, I18n::effectiveLocale(app.arguments()),
                   !I18n::isTestMode(app.arguments()) || i18nTest);
     // One palette for every unstyled control: menus, tooltips, message boxes and the color dialog.
@@ -218,6 +225,10 @@ int main(int argc, char **argv)
         return CaptureOverlay::testWindowDetection();
     if (app.arguments().contains(QStringLiteral("--test-text-annotation")))
         return CaptureOverlay::testTextAnnotation();
+    if (app.arguments().contains(QStringLiteral("--test-watermark"))) {
+        const QString preview = app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-watermark")) + 1);
+        return CaptureOverlay::testWatermark(preview);
+    }
     if (app.arguments().contains(QStringLiteral("--test-color-wheel")))
         return ColorBoard::testRendering();
     const int probe = app.arguments().indexOf(QStringLiteral("--probe-uia"));

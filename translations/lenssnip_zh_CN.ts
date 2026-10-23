@@ -595,6 +595,134 @@
         <source>笔宽</source>
         <translation>笔宽</translation>
     </message>
+    <message>
+        <source>水印</source>
+        <translation>水印</translation>
+    </message>
+    <message>
+        <source>水印 (W)</source>
+        <translation>水印 (W)</translation>
+    </message>
+    <message>
+        <source>输入水印</source>
+        <translation>输入水印</translation>
+    </message>
+    <message>
+        <source>输入水印；$格式$ 会替换为截图时间，例如 $yyyy-MM-dd HH:mm:ss$</source>
+        <translation>输入水印；$格式$ 会替换为截图时间，例如 $yyyy-MM-dd HH:mm:ss$</translation>
+    </message>
+    <message>
+        <source>平铺</source>
+        <translation>平铺</translation>
+    </message>
+    <message>
+        <source>右下</source>
+        <translation>右下</translation>
+    </message>
+    <message>
+        <source>左下</source>
+        <translation>左下</translation>
+    </message>
+    <message>
+        <source>右上</source>
+        <translation>右上</translation>
+    </message>
+    <message>
+        <source>左上</source>
+        <translation>左上</translation>
+    </message>
+    <message>
+        <source>上中</source>
+        <translation>上中</translation>
+    </message>
+    <message>
+        <source>下中</source>
+        <translation>下中</translation>
+    </message>
+    <message>
+        <source>居中</source>
+        <translation>居中</translation>
+    </message>
+    <message>
+        <source>水印样式：不透明度、大小、间距与颜色</source>
+        <translation>水印样式：不透明度、大小、间距与颜色</translation>
+    </message>
+    <message>
+        <source>添加时间</source>
+        <translation>添加时间</translation>
+    </message>
+    <message>
+        <source>水印字体</source>
+        <translation>水印字体</translation>
+    </message>
+    <message>
+        <source>水印字体：%1</source>
+        <translation>水印字体：%1</translation>
+    </message>
+    <message>
+        <source>选择水印颜色</source>
+        <translation>选择水印颜色</translation>
+    </message>
+    <message>
+        <source>时间格式</source>
+        <translation>时间格式</translation>
+    </message>
+    <message>
+        <source>预览：%1</source>
+        <translation>预览：%1</translation>
+    </message>
+    <message>
+        <source>应用</source>
+        <translation>应用</translation>
+    </message>
+    <message>
+        <source>间距</source>
+        <translation>间距</translation>
+    </message>
+    <message>
+        <source>中国、日本、韩国、ISO 标准（24 小时）</source>
+        <translation>中国、日本、韩国、ISO 标准（24 小时）</translation>
+    </message>
+    <message>
+        <source>中国和日本常用斜杠格式</source>
+        <translation>中国和日本常用斜杠格式</translation>
+    </message>
+    <message>
+        <source>大多数欧洲国家</source>
+        <translation>大多数欧洲国家</translation>
+    </message>
+    <message>
+        <source>美国 月-日-年</source>
+        <translation>美国 月-日-年</translation>
+    </message>
+    <message>
+        <source>国际日期（仅日期）</source>
+        <translation>国际日期（仅日期）</translation>
+    </message>
+    <message>
+        <source>时间（24 小时）</source>
+        <translation>时间（24 小时）</translation>
+    </message>
+    <message>
+        <source>时间（12 小时 AM/PM）</source>
+        <translation>时间（12 小时 AM/PM）</translation>
+    </message>
+    <message>
+        <source>带缩写星期的日期和时间</source>
+        <translation>带缩写星期的日期和时间</translation>
+    </message>
+    <message>
+        <source>编程和日志（毫秒）</source>
+        <translation>编程和日志（毫秒）</translation>
+    </message>
+    <message>
+        <source>数据库和文件名紧凑格式</source>
+        <translation>数据库和文件名紧凑格式</translation>
+    </message>
+    <message>
+        <source>美国和加拿大 12 小时 AM/PM</source>
+        <translation>美国和加拿大 12 小时 AM/PM</translation>
+    </message>
 </context>
 <context>
     <name>ColorBoard</name>
@@ -690,6 +818,14 @@
         <translation>F1 或左键单击托盘图标开始截图。
 右键单击托盘图标打开此菜单。
 贴图、长截图与 OCR 可在截图工具栏中使用。</translation>
+    </message>
+    <message>
+        <source>标注</source>
+        <translation>标注</translation>
+    </message>
+    <message>
+        <source>截图时自动添加水印</source>
+        <translation>截图时自动添加水印</translation>
     </message>
 </context>
 <context>

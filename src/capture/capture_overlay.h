@@ -61,7 +61,7 @@ public:
     ~CaptureOverlay() override;
     // Instant annotation tools, shared with callers that reopen existing
     // pixels (pin edit) in this overlay.
-    enum class ATool { None, Rect, Ellipse, Arrow, Pen, Marker, Text, Number, Mosaic, Eraser };
+    enum class ATool { None, Rect, Ellipse, Arrow, Pen, Marker, Text, Number, Mosaic, Eraser, Watermark };
     // Embedded mode: the same annotation engine as a child canvas inside a pin
     // window. The pin toolbar arms tools; the option strip detaches as a small
     // top-level bar the pin positions below its own toolbar.
@@ -90,6 +90,7 @@ public:
     static int testSmartErase(const QString &previewPath);
     static int testWindowDetection();
     static int testTextAnnotation();
+    static int testWatermark(const QString &previewPath = QString());
     static int testOutput();
 signals:
     void grabbed(const QPixmap &pix, const QRect &globalRegion);
@@ -146,6 +147,12 @@ private:
         bool underline = false;
         qreal rot = 0;                               // Rotation around the box center (degrees).
         bool fill = false;                           // Rect / Ellipse solid fill; Marker / Eraser rectangle mode.
+        qint64 createdAt = 0;                        // Watermark time token base (ms since epoch).
+        int watermarkPosition = 0;                   // 0 tile; 1 bottom-right; 2 bottom-left; 3 top-right;
+                                                     // 4 top-left; 5 top-center; 6 bottom-center; 7 center.
+        qreal watermarkOpacity = 30;                 // 0..100 percent.
+        qreal watermarkGap = 0;                      // Extra tile padding as a percentage of text height.
+        qreal watermarkAngle = 315;                  // Tile texture rotation; 315 == -45 degrees.
     };
     static QRect annotationRect(const Annotation &ann);
     // Rotation helpers: item geometry stays in local space, the angle only transforms paint and hit tests.
@@ -238,6 +245,28 @@ private:
     void setTextUnderline(bool on);
     void setTextFamily(const QFont &font);
     void syncTextOptions();
+    // Watermark: one whole-selection text overlay. It is controlled from the strip, not
+    // selected as a regular item, so its geometry always follows the current selection.
+    int watermarkIndex() const;
+    Annotation *watermark();
+    const Annotation *watermark() const;
+    Annotation *ensureWatermarkItem();
+    void ensureAutoWatermark();
+    static QString watermarkString(const QString &text, qint64 createdAt);
+    static void paintWatermark(QPainter &p, const Annotation &ann, const QRect &area);
+    void setWatermarkText(const QString &text);
+    void setWatermarkPosition(int position);
+    void setWatermarkColor(const QColor &color, bool undoable = true);
+    void setWatermarkFamily(const QString &family);
+    void setWatermarkSize(int size, bool undoable = true);
+    void setWatermarkOpacity(int opacity, bool undoable = true);
+    void setWatermarkGap(int gap, bool undoable = true);
+    void insertWatermarkTime(const QString &format);
+    void showWatermarkTimeDialog();
+    void showWatermarkStylePopup(QToolButton *anchor);
+    void showWatermarkColorDialog();
+    void loadWatermarkSettings();
+    void saveWatermarkSettings() const;
     // Options strip under the toolbar: contents follow the armed tool.
     void updateToolOptions();
     // Shared by the overlay (logical coords, origin 0, scale 1) and cropped() (native crop
@@ -402,9 +431,9 @@ private:
     QWidget *m_layoutCardWidget = nullptr;
     ATool m_atool = ATool::None;
     QColor m_acolor = QColor("#ed1c24");             // Red first: the loudest marking color.
-    // Indexed by ATool: None, Rect, Ellipse, Arrow, Pen, Marker, Text, Number, Mosaic, Eraser.
+    // Indexed by ATool: None, Rect, Ellipse, Arrow, Pen, Marker, Text, Number, Mosaic, Eraser, Watermark.
     // Marker stores a fifth of its drawn width, so 3 renders as the default 15 logical px.
-    int m_toolPens[10] = {0, 5, 5, 8, 5, 3, 15, 15, 15, 15};
+    int m_toolPens[11] = {0, 5, 5, 8, 5, 3, 15, 15, 15, 15, 20};
     int m_mosaicLevels[2] = {6, 6}, m_mosaicWidth = 15;
     bool m_mosaicBrush = true, m_mosaicBlur = false, m_mosaicDragUndo = false;
     int m_smartEpoch = 0;                         // Bumped whenever the annotation list is rebuilt.
@@ -478,6 +507,16 @@ private:
     int m_shapeStyle = 0;                            // Current rect / ellipse outline, see Annotation::strokeStyle.
     int m_numberStyle = 0, m_numberFormat = 0;       // See Annotation::numberStyle / numberFormat.
     bool m_markerFill = false;                       // Marker drags a translucent rectangle.
+    // Watermark defaults, persisted as the next watermark's starting style.
+    QString m_wmText, m_wmFamily = QStringLiteral("Microsoft YaHei");
+    QColor m_wmColor = QColor(QStringLiteral("#ed1c24"));
+    int m_wmSize = 20, m_wmOpacity = 30, m_wmGap = 0, m_wmPosition = 0;
+    qreal m_wmAngle = 315;
+    bool m_autoWatermark = false, m_autoWatermarkAdded = false, m_wmTextUndo = false;
+    qint64 m_captureTime = 0;
+    QPointer<QDialog> m_watermarkStylePopup;
+    QPointer<ColorBoard> m_watermarkColorBoard;
+    QLineEdit *m_watermarkEdit = nullptr;
     bool m_abold = false, m_aitalic = false, m_aunderline = false;       // Text tool defaults.
     bool m_editBold = false, m_editItalic = false, m_editUnderline = false; // Live editor style.
 };

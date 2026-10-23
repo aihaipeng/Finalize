@@ -115,6 +115,14 @@ Controller::Controller()
         }
         settings.setValue(QStringLiteral("Snip/exclude_from_detection"), names);
     });
+    QMenu *annotation = m->addMenu(tr("标注"));
+    annotation->setIcon(barIcon(Icon::Watermark));
+    QAction *autoWatermark = annotation->addAction(tr("截图时自动添加水印"));
+    autoWatermark->setCheckable(true);
+    autoWatermark->setChecked(LensSnipSettings().value(QStringLiteral("Watermark/AutoAdd"), false).toBool());
+    connect(autoWatermark, &QAction::toggled, this, [](bool enabled) {
+        LensSnipSettings().setValue(QStringLiteral("Watermark/AutoAdd"), enabled);
+    });
     QMenu *language = m->addMenu(tr("语言"));
     QActionGroup *languageGroup = new QActionGroup(language);
     languageGroup->setExclusive(true);

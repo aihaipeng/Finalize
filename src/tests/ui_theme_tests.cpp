@@ -106,13 +106,20 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
     CaptureOverlay overlay({ScreenFrame{source, QRect(nativeFromLogical(source).topLeft(), desktop.size()), desktop}});
     overlay.setAttribute(Qt::WA_DeleteOnClose, false);
     overlay.presetSelection(overlay.localScreenRect(QRect(source.topLeft() + QPoint(280, 180), QSize(900, 480))), ATool::Pen);
+    overlay.m_wmSize = 22; overlay.m_wmOpacity = 30; overlay.m_wmGap = 0;
+    overlay.m_wmText = QStringLiteral("内部资料 $yyyy-MM-dd HH:mm$");
+    if (auto *wm = overlay.ensureWatermarkItem()) {
+        wm->text = overlay.m_wmText; wm->font = 22; wm->watermarkOpacity = 30;
+        wm->watermarkGap = 0; wm->watermarkPosition = 0;
+    }
     QApplication::processEvents();
     review.save(overlay.grab(overlay.localScreenRect(source)), QStringLiteral("-capture"));
     overlay.m_mode=Selecting; overlay.m_hover=overlay.m_sel; overlay.update();QApplication::processEvents();
     review.save(overlay.grab(overlay.localScreenRect(source)),QStringLiteral("-02-detection"));
     overlay.m_mode=Adjusting;overlay.m_hover={};
     for(const auto &entry:QList<QPair<ATool,QString>>{{ATool::Rect,QStringLiteral("01-rect")},{ATool::Text,QStringLiteral("03-text")},
-           {ATool::Mosaic,QStringLiteral("04-mosaic")},{ATool::Pen,QStringLiteral("19-pen")}}){
+           {ATool::Mosaic,QStringLiteral("04-mosaic")},{ATool::Pen,QStringLiteral("19-pen")},
+           {ATool::Watermark,QStringLiteral("20-watermark")}}){
         overlay.selectTool(entry.first);overlay.update();QApplication::processEvents();
         if(entry.first==ATool::Text){overlay.beginTextEdit(overlay.m_sel.topLeft()+QPoint(100,100));overlay.m_editor->setPlainText(QStringLiteral("把重点留在画面里。"));}
         review.save(overlay.grab(overlay.localScreenRect(source)),QStringLiteral("-")+entry.second);

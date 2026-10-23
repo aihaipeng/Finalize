@@ -13,4 +13,5 @@ SOURCES += $$PWD/test_support.cpp \
            $$PWD/smart_erase_tests.cpp \
            $$PWD/widgets_tests.cpp \
            $$PWD/ui_theme_tests.cpp \
+           $$PWD/watermark_tests.cpp \
            $$PWD/window_detection_tests.cpp
