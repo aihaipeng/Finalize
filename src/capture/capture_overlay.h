@@ -261,8 +261,7 @@ private:
     void setWatermarkSize(int size, bool undoable = true);
     void setWatermarkOpacity(int opacity, bool undoable = true);
     void setWatermarkGap(int gap, bool undoable = true);
-    void insertWatermarkTime(const QString &format);
-    void showWatermarkTimeDialog();
+    void showWatermarkInputDialog();
     void showWatermarkStylePopup(QToolButton *anchor);
     void showWatermarkColorDialog();
     void loadWatermarkSettings();

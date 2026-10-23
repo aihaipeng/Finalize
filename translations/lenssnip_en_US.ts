@@ -767,6 +767,10 @@
         <source>美国和加拿大 12 小时 AM/PM</source>
         <translation>United States and Canada 12-hour AM/PM</translation>
     </message>
+    <message>
+        <source>时间：</source>
+        <translation>Time:</translation>
+    </message>
 </context>
 <context>
     <name>ColorBoard</name>

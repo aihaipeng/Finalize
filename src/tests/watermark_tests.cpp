@@ -1,15 +1,19 @@
 #include "capture/capture_overlay.h"
 #include "shared/settings.h"
 #include "tests/test_support.h"
+#include <QAction>
 #include <QApplication>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDialog>
-#include <QDialogButtonBox>
 #include <QGuiApplication>
 #include <QImage>
+#include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
+#include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSlider>
 #include <QTimer>
 #include <QToolButton>
@@ -31,6 +35,25 @@ int CaptureOverlay::testWatermark(const QString &previewPath)
           "a doubled dollar renders one literal dollar");
     check(watermarkString(QStringLiteral("$HH:mm:ss$"), stamp) == QStringLiteral("09:08:07"),
           "watermark supports time-only tokens");
+    check(watermarkString(QStringLiteral("$yyyy:MM:dd HH:mm:ss$"), stamp)
+              == QStringLiteral("2026:05:14 09:08:07"),
+          "watermark supports the EXIF date-time form");
+    check(QRegularExpression(QStringLiteral("^2026-05-14T09:08:07[+-]\\d{2}:\\d{2}$"))
+              .match(watermarkString(QStringLiteral("$@iso-offset$"), stamp)).hasMatch(),
+          "ISO 8601 offset tokens append the local timezone offset");
+    check(watermarkString(QStringLiteral("$@iso-utc$"), stamp).endsWith(QLatin1Char('Z')),
+          "ISO 8601 UTC tokens use the Z designator");
+    check(QRegularExpression(QStringLiteral("^2026-05-14T09:08:07\\.\\d{3}[+-]\\d{2}:\\d{2}$"))
+              .match(watermarkString(QStringLiteral("$@rfc3339-ms$"), stamp)).hasMatch(),
+          "RFC 3339 milliseconds keep the numeric offset");
+    check(QRegularExpression(QStringLiteral(
+              "^[A-Z][a-z]{2}, \\d{2} [A-Z][a-z]{2} 2026 \\d{2}:\\d{2}:\\d{2} GMT$"))
+              .match(watermarkString(QStringLiteral("$@rfc1123$"), stamp)).hasMatch(),
+          "RFC 1123 tokens use English names and GMT");
+    check(QRegularExpression(QStringLiteral(
+              "^[A-Z][a-z]{2}, \\d{2} [A-Z][a-z]{2} 2026 \\d{2}:\\d{2}:\\d{2} [+-]\\d{4}$"))
+              .match(watermarkString(QStringLiteral("$@rfc2822$"), stamp)).hasMatch(),
+          "RFC 2822 tokens append a numeric offset");
 
     // The widget callbacks persist the last-used style; restore the real settings afterwards.
     LensSnipSettings settings;
@@ -100,10 +123,12 @@ int CaptureOverlay::testWatermark(const QString &previewPath)
     auto *edit = overlay.m_toolOptions->findChild<QLineEdit *>(QStringLiteral("watermarkText"));
     auto *position = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("watermarkPosition"));
     auto *style = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("watermarkStyle"));
-    auto *addTime = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("watermarkAddTime"));
     auto *font = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("watermarkFont"));
-    check(edit && position && style && addTime && font,
-          "watermark strip exposes content, position, style, time and font controls");
+    check(edit && position && style && font,
+          "watermark strip exposes content, position, style and font controls");
+    check(!overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("watermarkAddTime")),
+          "the content field replaces the separate add-time button");
+    check(edit->isReadOnly(), "the strip content field opens the dialog instead of inline editing");
     edit->setText(QStringLiteral("HELLO $yyyy$"));
     check(overlay.watermark() && overlay.watermark()->text == QStringLiteral("HELLO $yyyy$"),
           "typing in the watermark field updates the overlay");
@@ -123,27 +148,91 @@ int CaptureOverlay::testWatermark(const QString &previewPath)
         check(overlay.m_watermarkStylePopup->grab().save(previewPath + QStringLiteral(".style.png")),
               "save watermark style popup preview");
     overlay.m_watermarkStylePopup->close();
-    edit->setCursorPosition(edit->text().size());
-    overlay.insertWatermarkTime(QStringLiteral("HH:mm:ss"));
-    check(edit->text().contains(QStringLiteral("$HH:mm:ss$")), "add time inserts a QDateTime token at the cursor");
-    QTimer::singleShot(80, [previewPath] {
+    // Clicking the read-only content field opens the input dialog: a multiline
+    // editor, a standards menu with submenus, a live preview and Apply/Cancel.
+    settings.setValue(QStringLiteral("Watermark/LastTimeFormat"),
+                      QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+    overlay.m_captureTime = stamp;
+    QTimer::singleShot(80, [&check, previewPath] {
         for (QWidget *w : QApplication::topLevelWidgets()) {
             auto *dialog = qobject_cast<QDialog *>(w);
             if (!dialog || !dialog->isVisible()) continue;
-            auto *combo = dialog->findChild<QComboBox *>(QStringLiteral("watermarkTimeFormat"));
-            if (!combo) continue;
-            if (!previewPath.isEmpty())
-                dialog->grab().save(previewPath + QStringLiteral(".time-dialog.png"));
-            combo->setCurrentIndex(2);
-            if (auto *buttons = dialog->findChild<QDialogButtonBox *>()) {
-                if (QPushButton *ok = buttons->button(QDialogButtonBox::Ok)) ok->click();
+            auto *text = dialog->findChild<QPlainTextEdit *>(QStringLiteral("watermarkInputText"));
+            auto *timeButton = dialog->findChild<QToolButton *>(QStringLiteral("watermarkTimeFormat"));
+            auto *preview = dialog->findChild<QLabel *>(QStringLiteral("watermarkTimePreview"));
+            if (!text || !timeButton || !preview) continue;
+            check(text->toPlainText() == QStringLiteral("HELLO $yyyy$"),
+                  "the input dialog opens with the current watermark text");
+            check(timeButton->text().contains(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
+                  "the time button defaults to the ISO date-time format");
+            auto *menu = timeButton->menu();
+            check(menu != nullptr, "the time button opens a format menu");
+            int isoItems = 0;
+            int rfcItems = 0;
+            int exifItems = 0;
+            int httpItems = 0;
+            int mailItems = 0;
+            bool hasSeparator = false;
+            for (QAction *action : menu->actions()) {
+                if (action->isSeparator()) hasSeparator = true;
+                if (!action->menu()) continue;
+                if (action->menu()->title() == QStringLiteral("ISO 8601"))
+                    isoItems = action->menu()->actions().size();
+                if (action->menu()->title() == QStringLiteral("RFC 3339"))
+                    rfcItems = action->menu()->actions().size();
+                if (action->menu()->title() == QStringLiteral("EXIF 2.3"))
+                    exifItems = action->menu()->actions().size();
+                if (action->menu()->title() == QStringLiteral("RFC 1123"))
+                    httpItems = action->menu()->actions().size();
+                if (action->menu()->title() == QStringLiteral("RFC 2822"))
+                    mailItems = action->menu()->actions().size();
             }
+            check(!hasSeparator, "the time menu has no separator line");
+            check(isoItems == 6, "ISO 8601 exposes six forms in its submenu");
+            check(rfcItems == 2, "RFC 3339 has its own submenu");
+            check(exifItems == 1, "EXIF 2.3 has its own single-item submenu");
+            check(httpItems == 1, "RFC 1123 has its own single-item submenu");
+            check(mailItems == 1, "RFC 2822 has its own single-item submenu");
+            check(preview->text().contains(QStringLiteral("2026-05-14 09:08:07")),
+                  "the time preview uses the capture time");
+            if (!previewPath.isEmpty()) {
+                dialog->grab().save(previewPath + QStringLiteral(".time-dialog.png"));
+                QMenu *isoMenu = nullptr;
+                for (QAction *action : menu->actions())
+                    if (action->menu() && action->menu()->title() == QStringLiteral("ISO 8601"))
+                        isoMenu = action->menu();
+                menu->popup(timeButton->mapToGlobal(QPoint(0, timeButton->height())));
+                QApplication::processEvents();
+                menu->grab().save(previewPath + QStringLiteral(".time-menu.png"));
+                menu->hide();
+                if (isoMenu) {
+                    isoMenu->popup(timeButton->mapToGlobal(QPoint(0, timeButton->height())));
+                    QApplication::processEvents();
+                    isoMenu->grab().save(previewPath + QStringLiteral(".time-menu-iso.png"));
+                    isoMenu->hide();
+                }
+            }
+            auto *rfc = dialog->findChild<QAction *>(QStringLiteral("watermarkFmt_rfc3339"));
+            check(rfc != nullptr, "the standards menu exposes RFC 3339");
+            rfc->trigger();
+            check(text->toPlainText() == QStringLiteral("HELLO $yyyy$$@rfc3339$"),
+                  "picking a time standard inserts its token at the caret");
+            check(timeButton->text().contains(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")),
+                  "the time button shows the chosen format");
+            check(rfc->text() == QStringLiteral("yyyy-MM-dd'T'HH:mm:ss±hh:mm"),
+                  "the menu item contains only the time format");
+            check(preview->text().contains(QStringLiteral("2026-05-14T09:08:07")),
+                  "the preview follows the chosen standard");
+            for (QPushButton *button : dialog->findChildren<QPushButton *>())
+                if (button->text() == QStringLiteral("应用")) { button->click(); break; }
             return;
         }
     });
-    overlay.showWatermarkTimeDialog();
-    check(edit->text().contains(QStringLiteral("$dd/MM/yyyy HH:mm:ss$")),
-          "time dialog inserts the chosen format at the cursor");
+    overlay.showWatermarkInputDialog();
+    check(overlay.watermark() && overlay.watermark()->text.contains(QStringLiteral("$@rfc3339$")),
+          "applying the input dialog commits the watermark text");
+    check(edit->text() == overlay.watermark()->text,
+          "applying the input dialog syncs the strip content field");
     edit->clear();
     check(overlay.watermark() && overlay.watermark()->text.isEmpty(),
           "clearing the field hides the watermark text");

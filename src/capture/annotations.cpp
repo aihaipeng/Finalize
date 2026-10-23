@@ -29,11 +29,15 @@
 #include <QScreen>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPaintEvent>
 #include <QRandomGenerator>
 #include <QMouseEvent>
+#include <QPlainTextEdit>
 #include <QWheelEvent>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLocale>
+#include <QMenu>
 #include <QGraphicsTextItem>
 #include <QGraphicsView>
 #include <QGraphicsScene>
@@ -886,6 +890,11 @@ bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
         auto *widget = static_cast<QWidget *>(obj);
         if (widget != m_moreButton && !m_morePanel->isAncestorOf(widget)
             && m_moreButton) m_moreButton->setChecked(false);
+    }
+    if (obj == m_watermarkEdit && ev->type() == QEvent::MouseButtonRelease
+        && static_cast<QMouseEvent *>(ev)->button() == Qt::LeftButton) {
+        showWatermarkInputDialog();           // The read-only field is a dialog launcher.
+        return true;
     }
     if ((ev->type() == QEvent::FocusIn || ev->type() == QEvent::FocusOut) && obj->isWidgetType()) {
         for (QWidget *w = static_cast<QWidget *>(obj); w; w = w->parentWidget()) {
@@ -2075,6 +2084,37 @@ void CaptureOverlay::ensureAutoWatermark()
     m_autoWatermarkAdded = true;
 }
 
+static QString watermarkOffset(const QDateTime &dt, bool colon)
+{
+    const int seconds = dt.offsetFromUtc();
+    const int absolute = qAbs(seconds);
+    return QStringLiteral("%1%2%3%4")
+        .arg(seconds < 0 ? QLatin1Char('-') : QLatin1Char('+'))
+        .arg(absolute / 3600, 2, 10, QLatin1Char('0'))
+        .arg(colon ? QStringLiteral(":") : QString())
+        .arg((absolute % 3600) / 60, 2, 10, QLatin1Char('0'));
+}
+
+// Standard time tokens are resolved here; plain tokens stay Qt date-format strings.
+static QString watermarkTimeValue(const QString &spec, const QDateTime &dt)
+{
+    if (spec == QLatin1String("@iso-offset"))
+        return dt.toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")) + watermarkOffset(dt, true);
+    if (spec == QLatin1String("@iso-utc"))
+        return dt.toUTC().toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")) + QLatin1Char('Z');
+    if (spec == QLatin1String("@rfc3339"))
+        return dt.toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")) + watermarkOffset(dt, true);
+    if (spec == QLatin1String("@rfc3339-ms"))
+        return dt.toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss.zzz")) + watermarkOffset(dt, true);
+    if (spec == QLatin1String("@rfc1123"))
+        return QLocale::c().toString(dt.toUTC(), QStringLiteral("ddd, dd MMM yyyy HH:mm:ss"))
+             + QStringLiteral(" GMT");
+    if (spec == QLatin1String("@rfc2822"))
+        return QLocale::c().toString(dt, QStringLiteral("ddd, dd MMM yyyy HH:mm:ss"))
+             + QLatin1Char(' ') + watermarkOffset(dt, false);
+    return dt.toString(spec);
+}
+
 QString CaptureOverlay::watermarkString(const QString &text, qint64 createdAt)
 {
     if (!text.contains(QLatin1Char('$'))) return text;
@@ -2092,10 +2132,10 @@ QString CaptureOverlay::watermarkString(const QString &text, qint64 createdAt)
         if (close == open + 1) {
             out += QLatin1Char('$');
         } else {
-            const QString format = text.mid(open + 1, close - open - 1);
-            out += QDateTime::fromMSecsSinceEpoch(createdAt > 0 ? createdAt
-                                                                : QDateTime::currentMSecsSinceEpoch())
-                       .toString(format);
+            const QString spec = text.mid(open + 1, close - open - 1);
+            const QDateTime stamp = QDateTime::fromMSecsSinceEpoch(
+                createdAt > 0 ? createdAt : QDateTime::currentMSecsSinceEpoch());
+            out += watermarkTimeValue(spec, stamp);
         }
         cursor = close + 1;
     }
@@ -2269,77 +2309,179 @@ void CaptureOverlay::setWatermarkGap(int gap, bool undoable)
     update();
 }
 
-void CaptureOverlay::insertWatermarkTime(const QString &format)
+namespace {
+// The style's submenu arrows use full text contrast. Keep the hint, but draw a
+// smaller and dimmer triangle so the format string stays dominant.
+class DimArrowMenu : public QMenu
 {
-    if (!m_watermarkEdit && m_toolOptions)
-        m_watermarkEdit = m_toolOptions->findChild<QLineEdit *>(QStringLiteral("watermarkText"));
-    if (!m_watermarkEdit || format.isEmpty()) return;
-    m_watermarkEdit->insert(QLatin1Char('$') + format + QLatin1Char('$'));
-    m_watermarkEdit->setFocus();
-    LensSnipSettings().setValue(QStringLiteral("Watermark/LastTimeFormat"), format);
+public:
+    using QMenu::QMenu;
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        QMenu::paintEvent(event);
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(244, 245, 248, 100));
+        for (QAction *action : actions()) {
+            if (!action->menu() || !action->isVisible()) continue;
+            const QRect item = actionGeometry(action);
+            if (item.isEmpty()) continue;
+            const QPointF center(item.right() - 10.0, item.center().y() + 0.5);
+            QPolygonF arrow;
+            arrow << QPointF(center.x() - 1.8, center.y() - 4.0)
+                  << QPointF(center.x() + 1.8, center.y())
+                  << QPointF(center.x() - 1.8, center.y() + 4.0);
+            painter.drawPolygon(arrow);
+        }
+    }
+};
 }
 
-void CaptureOverlay::showWatermarkTimeDialog()
+// Reference-style watermark editor: clicking the strip's content field opens a
+// dialog with a multiline text editor, an international time-format menu and
+// Apply/Cancel. Standards with several forms use submenus.
+void CaptureOverlay::showWatermarkInputDialog()
 {
-    static const char *const formats[] = {
-        "yyyy-MM-dd HH:mm:ss",       "yyyy/MM/dd HH:mm:ss",      "dd/MM/yyyy HH:mm:ss",
-        "MM/dd/yyyy HH:mm:ss",       "yyyy-MM-dd",              "HH:mm:ss",
-        "hh:mm:ss AP",               "yyyy-MM-dd ddd HH:mm:ss", "yyyy-MM-dd HH:mm:ss.zzz",
-        "yyyyMMdd_HHmmss",           "MM/dd/yyyy hh:mm:ss AP"};
-    static const char *const labels[] = {
-        QT_TRANSLATE_NOOP("CaptureOverlay", "中国、日本、韩国、ISO 标准（24 小时）"),
-        QT_TRANSLATE_NOOP("CaptureOverlay", "中国和日本常用斜杠格式"),
-        QT_TRANSLATE_NOOP("CaptureOverlay", "大多数欧洲国家"),
-        QT_TRANSLATE_NOOP("CaptureOverlay", "美国 月-日-年"),
-        QT_TRANSLATE_NOOP("CaptureOverlay", "国际日期（仅日期）"),
-        QT_TRANSLATE_NOOP("CaptureOverlay", "时间（24 小时）"),
-        QT_TRANSLATE_NOOP("CaptureOverlay", "时间（12 小时 AM/PM）"),
-        QT_TRANSLATE_NOOP("CaptureOverlay", "带缩写星期的日期和时间"),
-        QT_TRANSLATE_NOOP("CaptureOverlay", "编程和日志（毫秒）"),
-        QT_TRANSLATE_NOOP("CaptureOverlay", "数据库和文件名紧凑格式"),
-        QT_TRANSLATE_NOOP("CaptureOverlay", "美国和加拿大 12 小时 AM/PM")};
+    const Annotation *item = watermark();
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("添加时间"));
+    dialog.setWindowTitle(tr("输入水印"));
+    dialog.setFixedSize(440, 210);
     dialog.setStyleSheet(QStringLiteral(
         "QDialog{background:#18191d;} QLabel{color:#f4f5f8;font-size:12px;}"
-        "QComboBox{color:#f4f5f8;background:#0c0d10;border:none;border-radius:8px;padding:4px 8px;}"
-        "QComboBox QAbstractItemView{color:#f4f5f8;background:#18191d;border:1px solid #2b2d33;"
+        "QPlainTextEdit{color:#f4f5f8;background:#0c0d10;border:1px solid #2b2d33;"
+        "border-bottom:2px solid #5e6ad2;border-radius:6px;padding:4px 6px;"
         "selection-background-color:#5e6ad2;selection-color:#ffffff;}"
+        "QToolButton{color:#f4f5f8;background:#0c0d10;border:none;border-radius:8px;"
+        "padding:4px 8px;text-align:left;}"
+        "QToolButton:hover{background:#222326;}"
+        "QToolButton::menu-indicator{image:none;}"
         "QPushButton{color:#f4f5f8;background:#222326;border:none;border-radius:6px;padding:5px 14px;}"
-        "QPushButton:hover{background:#2b2d33;}"));
+        "QPushButton:hover{background:#2b2d33;}"
+        "QPushButton[accent=\"true\"]{background:#5e6ad2;color:#ffffff;}"
+        "QPushButton[accent=\"true\"]:hover{background:#6d78dd;}"));
     auto *layout = new QVBoxLayout(&dialog);
-    layout->setContentsMargins(16, 14, 16, 14);
-    layout->setSpacing(10);
-    layout->addWidget(new QLabel(tr("时间格式"), &dialog));
-    auto *combo = new QComboBox(&dialog);
-    combo->setObjectName(QStringLiteral("watermarkTimeFormat"));
-    for (int i = 0; i < int(sizeof(formats) / sizeof(formats[0])); ++i)
-        combo->addItem(tr(labels[i]), QString::fromLatin1(formats[i]));
-    combo->setFixedWidth(300);
-    const QString last = LensSnipSettings().value(QStringLiteral("Watermark/LastTimeFormat"),
-                                                  QStringLiteral("yyyy-MM-dd HH:mm:ss")).toString();
-    for (int i = 0; i < combo->count(); ++i)
-        if (combo->itemData(i).toString() == last) { combo->setCurrentIndex(i); break; }
-    layout->addWidget(combo);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(8);
+    auto *text = new QPlainTextEdit(&dialog);
+    text->setObjectName(QStringLiteral("watermarkInputText"));
+    text->setPlainText(item ? item->text : m_wmText);
+    text->moveCursor(QTextCursor::End);       // A picked format is appended at the caret.
+    layout->addWidget(text);
+    auto *row = new QHBoxLayout;
+    row->setSpacing(8);
+    row->addWidget(new QLabel(tr("时间："), &dialog));
+
+    auto *timeButton = new QToolButton(&dialog);
+    timeButton->setObjectName(QStringLiteral("watermarkTimeFormat"));
+    timeButton->setPopupMode(QToolButton::InstantPopup);
+    timeButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    timeButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    timeButton->setMinimumWidth(130);
+    timeButton->setToolTip(QStringLiteral("International time standards"));
+    auto *menu = new DimArrowMenu(timeButton);
+    const QString menuStyle = QStringLiteral(
+        "QMenu{color:#f4f5f8;background:#18191d;border:1px solid #2b2d33;padding:4px;}"
+        "QMenu::item{padding:5px 18px 5px 14px;border-radius:4px;}"
+        "QMenu::item:selected{background:#5e6ad2;color:#ffffff;}"
+        "QMenu::right-arrow{image:none;width:0;height:0;}");
+    menu->setStyleSheet(menuStyle);
+
+    const QDateTime previewStamp = QDateTime::fromMSecsSinceEpoch(
+        m_captureTime > 0 ? m_captureTime : QDateTime::currentMSecsSinceEpoch());
     auto *preview = new QLabel(&dialog);
     preview->setObjectName(QStringLiteral("watermarkTimePreview"));
     preview->setStyleSheet(QStringLiteral("color:#9c9da1;font-size:12px;"));
-    layout->addWidget(preview);
-    const auto refreshPreview = [combo, preview] {
-        preview->setText(QCoreApplication::translate("CaptureOverlay", "预览：%1")
-                             .arg(QDateTime::currentDateTime().toString(combo->currentData().toString())));
+    const auto refreshPreview = [preview, previewStamp](const QString &spec) {
+        preview->setText(watermarkTimeValue(spec, previewStamp));
     };
-    connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog,
-            [refreshPreview](int) { refreshPreview(); });
-    refreshPreview();
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    buttons->button(QDialogButtonBox::Ok)->setText(tr("应用"));
-    buttons->button(QDialogButtonBox::Cancel)->setText(tr("取消"));
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    layout->addWidget(buttons);
-    if (dialog.exec() == QDialog::Accepted)
-        insertWatermarkTime(combo->currentData().toString());
+
+    const QString last = LensSnipSettings().value(QStringLiteral("Watermark/LastTimeFormat"),
+                                                  QStringLiteral("yyyy-MM-dd HH:mm:ss")).toString();
+    QAction *selectedAction = nullptr;
+    auto addFormat = [&](QMenu *parent, const QString &id, const QString &pattern,
+                         const QString &spec) {
+        QAction *action = parent->addAction(pattern);
+        action->setObjectName(QStringLiteral("watermarkFmt_") + id);
+        action->setData(spec);
+        connect(action, &QAction::triggered, &dialog,
+                [text, timeButton, refreshPreview, pattern, spec] {
+            text->insertPlainText(QLatin1Char('$') + spec + QLatin1Char('$'));
+            timeButton->setProperty("spec", spec);
+            timeButton->setText(pattern + QStringLiteral("  ▾"));
+            timeButton->setToolTip(pattern);
+            refreshPreview(spec);
+        });
+        if (action->data().toString() == last) selectedAction = action;
+        return action;
+    };
+
+    auto addSubmenu = [&](const QString &title) {
+        auto *sub = new DimArrowMenu(title, menu);
+        sub->setStyleSheet(menuStyle);
+        menu->addMenu(sub);
+        return sub;
+    };
+
+    QMenu *iso = addSubmenu(QStringLiteral("ISO 8601"));
+    addFormat(iso, QStringLiteral("iso_date"),
+              QStringLiteral("yyyy-MM-dd"), QStringLiteral("yyyy-MM-dd"));
+    QAction *isoDateTime = addFormat(iso, QStringLiteral("iso_datetime"),
+              QStringLiteral("yyyy-MM-dd HH:mm:ss"), QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+    addFormat(iso, QStringLiteral("iso_strict"),
+              QStringLiteral("yyyy-MM-dd'T'HH:mm:ss"), QStringLiteral("yyyy-MM-dd'T'HH:mm:ss"));
+    addFormat(iso, QStringLiteral("iso_offset"),
+              QStringLiteral("yyyy-MM-dd'T'HH:mm:ss±hh:mm"), QStringLiteral("@iso-offset"));
+    addFormat(iso, QStringLiteral("iso_utc"),
+              QStringLiteral("yyyy-MM-dd'T'HH:mm:ssZ"), QStringLiteral("@iso-utc"));
+    addFormat(iso, QStringLiteral("iso_ms"),
+              QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"), QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
+
+    QMenu *rfc3339 = addSubmenu(QStringLiteral("RFC 3339"));
+    addFormat(rfc3339, QStringLiteral("rfc3339"),
+              QStringLiteral("yyyy-MM-dd'T'HH:mm:ss±hh:mm"), QStringLiteral("@rfc3339"));
+    addFormat(rfc3339, QStringLiteral("rfc3339_ms"),
+              QStringLiteral("yyyy-MM-dd'T'HH:mm:ss.zzz±hh:mm"), QStringLiteral("@rfc3339-ms"));
+
+    QMenu *exif = addSubmenu(QStringLiteral("EXIF 2.3"));
+    addFormat(exif, QStringLiteral("exif"),
+              QStringLiteral("yyyy:MM:dd HH:mm:ss"), QStringLiteral("yyyy:MM:dd HH:mm:ss"));
+
+    QMenu *rfc1123 = addSubmenu(QStringLiteral("RFC 1123"));
+    addFormat(rfc1123, QStringLiteral("rfc1123"),
+              QStringLiteral("ddd, dd MMM yyyy HH:mm:ss 'GMT'"), QStringLiteral("@rfc1123"));
+
+    QMenu *rfc2822 = addSubmenu(QStringLiteral("RFC 2822"));
+    addFormat(rfc2822, QStringLiteral("rfc2822"),
+              QStringLiteral("ddd, dd MMM yyyy HH:mm:ss ±hhmm"), QStringLiteral("@rfc2822"));
+
+    if (!selectedAction) selectedAction = isoDateTime;
+    timeButton->setProperty("spec", selectedAction->data().toString());
+    timeButton->setText(selectedAction->text() + QStringLiteral("  ▾"));
+    timeButton->setToolTip(selectedAction->text());
+    timeButton->setMenu(menu);
+    refreshPreview(selectedAction->data().toString());
+    row->addWidget(timeButton, 1);
+
+    auto *apply = new QPushButton(tr("应用"), &dialog);
+    apply->setProperty("accent", true);
+    auto *cancel = new QPushButton(tr("取消"), &dialog);
+    row->addWidget(apply);
+    row->addWidget(cancel);
+    layout->addLayout(row);
+    layout->addWidget(preview);
+    connect(apply, &QPushButton::clicked, &dialog, [&dialog, text, timeButton, this] {
+        LensSnipSettings().setValue(QStringLiteral("Watermark/LastTimeFormat"),
+                                    timeButton->property("spec").toString());
+        setWatermarkText(text->toPlainText());
+        m_wmTextUndo = false;                 // One dialog session is one undo step.
+        if (m_watermarkEdit) m_watermarkEdit->setText(text->toPlainText());
+        dialog.accept();
+    });
+    connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
+    dialog.exec();
 }
 
 void CaptureOverlay::showWatermarkColorDialog()
@@ -2658,6 +2800,8 @@ void CaptureOverlay::updateToolOptions()
         edit->setObjectName(QStringLiteral("watermarkText"));
         edit->setPlaceholderText(tr("输入水印"));
         edit->setClearButtonEnabled(false);
+        edit->setReadOnly(true);              // Clicking the field opens the input dialog.
+        edit->installEventFilter(this);
         auto *clearWatermark = edit->addAction(barIcon(Icon::Cancel, 14), QLineEdit::TrailingPosition);
         clearWatermark->setToolTip(tr("清除水印"));
         clearWatermark->setVisible(false);
@@ -2673,11 +2817,7 @@ void CaptureOverlay::updateToolOptions()
         connect(clearWatermark, &QAction::triggered, edit, &QLineEdit::clear);
         connect(edit, &QLineEdit::textChanged, this, [this, clearWatermark](const QString &text) {
             clearWatermark->setVisible(!text.isEmpty());
-            setWatermarkText(text);
-        });
-        connect(edit, &QLineEdit::editingFinished, this, [this] {
-            saveWatermarkSettings();
-            m_wmTextUndo = false;               // A later edit starts a new undo group.
+            if (text != m_wmText) setWatermarkText(text);   // Edits come from the input dialog.
         });
         lay->addWidget(edit);
 
@@ -2726,12 +2866,6 @@ void CaptureOverlay::updateToolOptions()
         style->setFocusPolicy(Qt::NoFocus);
         connect(style, &QToolButton::clicked, this, [this, style] { showWatermarkStylePopup(style); });
         lay->addWidget(style);
-
-        auto *time = barButton(Icon::Text, tr("添加时间"));
-        time->setObjectName(QStringLiteral("watermarkAddTime"));
-        time->setFocusPolicy(Qt::NoFocus);
-        connect(time, &QToolButton::clicked, this, &CaptureOverlay::showWatermarkTimeDialog);
-        lay->addWidget(time);
 
         auto *font = new FlatComboBox;
         font->setObjectName(QStringLiteral("watermarkFont"));

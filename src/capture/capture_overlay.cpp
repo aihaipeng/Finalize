@@ -858,7 +858,7 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
     if (m_mode == Adjusting && m_atool != ATool::None
         && !m_spaceHeld && hitHandle(e->pos()) == H_Move) { // A tool acts inside the selection.
         if (m_atool == ATool::Watermark) {
-            if (m_watermarkEdit) m_watermarkEdit->setFocus();
+            showWatermarkInputDialog();          // Clicking the watermark opens its editor.
             return;
         }
         if (m_atool == ATool::Text) { beginTextEdit(e->pos()); return; }
