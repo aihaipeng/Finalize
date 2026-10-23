@@ -124,10 +124,10 @@ int CaptureOverlay::testWatermark(const QString &previewPath)
     check(overlay.m_undoStack.size() == undoBefore && !overlay.watermark(),
           "style changes without a watermark item push no undo and create no item");
     // Restore the persisted defaults; later sections construct overlays that
-    // load them and expect the red default.
-    overlay.setWatermarkOpacity(30, false);
-    overlay.setWatermarkGap(30, false);
-    overlay.setWatermarkColor(QColor(QStringLiteral("#ed1c24")), false);
+    // load them and expect the red default (undoable=true also re-persists).
+    overlay.setWatermarkOpacity(30, true);
+    overlay.setWatermarkGap(30, true);
+    overlay.setWatermarkColor(QColor(QStringLiteral("#ed1c24")), true);
     overlay.selectTool(ATool::None);
     settings.setValue(QStringLiteral("Watermark/Text"), QStringLiteral("价格 $5 到 $10"));
     overlay.loadWatermarkSettings();
@@ -277,6 +277,21 @@ int CaptureOverlay::testWatermark(const QString &previewPath)
     check(gapRow && gapRow->isVisible(), "gap control appears when switching to tile mode");
     sliders.first()->setValue(55);
     check(overlay.watermark()->watermarkOpacity == 55, "opacity slider updates the watermark");
+    // Drag ticks skip the disk write; releasing persists the settled value.
+    {
+        QSlider *opacitySlider = sliders.first();
+        const int onDisk = LensSnipSettings().value(QStringLiteral("Watermark/Opacity")).toInt();
+        const int settled = qBound(0, onDisk + 7, 100);
+        QMetaObject::invokeMethod(opacitySlider, "sliderPressed");
+        opacitySlider->setValue(settled);
+        QApplication::processEvents();
+        check(LensSnipSettings().value(QStringLiteral("Watermark/Opacity")).toInt() == onDisk,
+              "slider drag ticks do not rewrite the settings file");
+        QMetaObject::invokeMethod(opacitySlider, "sliderReleased");
+        QApplication::processEvents();
+        check(LensSnipSettings().value(QStringLiteral("Watermark/Opacity")).toInt() == settled,
+              "releasing the slider persists the settled value");
+    }
     if (!previewPath.isEmpty())
         check(overlay.m_watermarkStylePopup->grab().save(previewPath + QStringLiteral(".style.png")),
               "save watermark style popup preview");

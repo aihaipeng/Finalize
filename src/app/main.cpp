@@ -301,11 +301,16 @@ int main(int argc, char **argv)
 
     // One resident instance owns the F1 hotkey and the history store; a second
     // launch would report its own registration as a conflict and race the DB.
+    // CreateMutexW does not reset last error on a fresh create, so clear it first:
+    // a stale ERROR_ALREADY_EXISTS would make the FIRST instance exit silently.
+    ::SetLastError(0);
     HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, L"LensSnip.SingleInstance");
     if (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
         CloseHandle(instanceMutex);
         return 0;
     }
+    if (!instanceMutex)
+        qWarning("single-instance mutex unavailable; running without the guard");
 
     Controller ctrl;
     HotkeyFilter hf;

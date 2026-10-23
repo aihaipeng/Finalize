@@ -1608,9 +1608,9 @@ void OcrDialog::start() {
         try {
             result = recognizeChunked(image,cancel);
         } catch (const std::exception &error) {
-            result.error = QString::fromUtf8(error.what());
+            result.error = OcrDialog::tr("识别失败：%1").arg(QString::fromUtf8(error.what()));
         } catch (...) {
-            result.error = QStringLiteral("识别线程异常");
+            result.error = OcrDialog::tr("识别线程异常");
         }
         engine.busy.store(false);
         return result;

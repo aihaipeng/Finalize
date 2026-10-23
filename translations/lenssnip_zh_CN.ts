@@ -1058,6 +1058,14 @@
 <context>
     <name>OcrDialog</name>
     <message>
+        <source>识别失败：%1</source>
+        <translation>识别失败：%1</translation>
+    </message>
+    <message>
+        <source>识别线程异常</source>
+        <translation>识别线程异常</translation>
+    </message>
+    <message>
         <location filename="../src/text/cards/ocr_dialog.cpp" line="+512"/>
         <source>LensSnip 二维码/条形码</source>
         <translation>LensSnip 二维码/条形码</translation>
@@ -1667,6 +1675,14 @@
 </context>
 <context>
     <name>PinWindow</name>
+    <message>
+        <source>识别失败：%1</source>
+        <translation>识别失败：%1</translation>
+    </message>
+    <message>
+        <source>识别线程异常</source>
+        <translation>识别线程异常</translation>
+    </message>
     <message>
         <location filename="../src/pin/pin_window.cpp" line="+61"/>
         <source>贴图</source>

@@ -624,7 +624,17 @@ void PinWindow::runOcrForTextSelection()
     });
 
     watcher->setFuture(QtConcurrent::run([img, cancel]() -> OcrResult {
-        return recognizeChunked(img, cancel);
+        // Same guard as the OCR dialog: an escaped exception must not rethrow
+        // from watcher->result() on the GUI thread.
+        OcrResult res;
+        try {
+            res = recognizeChunked(img, cancel);
+        } catch (const std::exception &error) {
+            res.error = PinWindow::tr("识别失败：%1").arg(QString::fromUtf8(error.what()));
+        } catch (...) {
+            res.error = PinWindow::tr("识别线程异常");
+        }
+        return res;
     }));
 }
 

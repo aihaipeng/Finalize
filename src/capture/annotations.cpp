@@ -2330,7 +2330,7 @@ void CaptureOverlay::setWatermarkSize(int size, bool undoable)
     if (undoable && watermark()) pushUndo();
     m_wmSize = size;
     if (Annotation *item = watermark()) item->font = size;
-    saveWatermarkSettings();
+    if (undoable) saveWatermarkSettings();   // Drag ticks save on release instead of per tick.
     update();
 }
 
@@ -2341,7 +2341,7 @@ void CaptureOverlay::setWatermarkOpacity(int opacity, bool undoable)
     if (undoable && watermark()) pushUndo();
     m_wmOpacity = opacity;
     if (Annotation *item = watermark()) item->watermarkOpacity = opacity;
-    saveWatermarkSettings();
+    if (undoable) saveWatermarkSettings();
     update();
 }
 
@@ -2352,7 +2352,7 @@ void CaptureOverlay::setWatermarkGap(int gap, bool undoable)
     if (undoable && watermark()) pushUndo();
     m_wmGap = gap;
     if (Annotation *item = watermark()) item->watermarkGap = gap;
-    saveWatermarkSettings();
+    if (undoable) saveWatermarkSettings();
     update();
 }
 
@@ -2851,8 +2851,9 @@ void CaptureOverlay::showWatermarkStylePopup(QToolButton *anchor)
             if (watermark()) pushUndo();   // No item yet: the slider only tunes defaults.
             slider->setProperty("wmUndoPushed", true);
         });
-        connect(slider, &QSlider::sliderReleased, popup, [slider] {
+        connect(slider, &QSlider::sliderReleased, popup, [this, slider] {
             slider->setProperty("wmUndoPushed", false);
+            saveWatermarkSettings();   // The drag's ticks skipped the disk write; persist the settled values.
         });
         return row;
     };

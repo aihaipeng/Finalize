@@ -1441,10 +1441,8 @@ void CaptureOverlay::recoverDetector()
     if (!detector || !m_queryPending || !isVisible()) return;
     if (m_initialTargets.isEmpty())
         setWindowTargets(detectWindowRects(reinterpret_cast<HWND>(winId()), m_detectionOptions.excludedPrograms));
-    bool identified = false;
     for (const DetectedWindow &win : m_windowRects)
         if (win.native.contains(m_detectionPoint) && !win.program.isEmpty()) {
-            identified = true;
             // One slow query is load, not a crash: degrade this session only,
             // and never downgrade element walks for the whole capture.
             if (windowHung(win.hwnd)
@@ -1453,7 +1451,6 @@ void CaptureOverlay::recoverDetector()
             }
             break;
         }
-    Q_UNUSED(identified);
     // A slow provider is not a hung one. Keep the element already under the
     // cursor so one over-budget walk cannot widen the highlight to the page or
     // persist a UI downgrade for the rest of the session.

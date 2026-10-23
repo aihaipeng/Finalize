@@ -124,9 +124,10 @@ int TranslateGatewayTestAccess::run()
               "parseYoudaoReply merges SSE fragments and maps detection");
         const TranslateResult rejected = TranslateGateway::parseYoudaoReply(
                     QByteArrayLiteral("{\"code\":411,\"msg\":\"too long\"}"), 1);
-        check(!rejected.error.isEmpty() && rejected.error.contains(QLatin1Char('4'))
-                  && rejected.error.contains(QLatin1String("411")),
+        check(!rejected.error.isEmpty() && rejected.error.contains(QLatin1String("411")),
               "parseYoudaoReply surfaces plain-json rejections");
+        check(!TranslateGateway::parseYoudaoReply(QByteArrayLiteral("{oops"), 1).error.isEmpty(),
+              "parseYoudaoReply rejects malformed bytes");
     }
 
     // Sogou: secretCode scrape + reply parsing with CRLF and trailing newline.
