@@ -48,7 +48,7 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
         "card-restore", "card-close", "card-search", "card-up", "card-down", "card-right", "card-format",
         "back", "crop", "crop_start", "crop_end", "barcode", "card-link", "round_rect",
         "corner_square", "corner_rounded", "aspect_lock", "warning", "sliders", "clock", "picker",
-        "magic_eraser", "watermark", "more"};
+        "magic_eraser", "watermark", "more", "folder"};
     // A shared stroke grid keeps primary tools and card actions visually aligned.
     const char *path = nullptr;
     const char *markup = nullptr;
@@ -106,6 +106,7 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
     case Icon::Check: path = "M4 12l5 5L20 6"; break;
     case Icon::Clock: path = "M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0 M12 7v5l3 2"; break;
     case Icon::Picker: path = "M14 3l7 7 M17 3l4 4 M13 6l5 5-9 9H4v-5z"; break;
+    case Icon::Folder: path = "M3 7h6l2 2h10v10H3z M3 7v12"; break;
     default: break;
     }
     QSvgRenderer svg;
@@ -153,6 +154,17 @@ QIcon cardIcon(Icon icon, int size)
         {off, QIcon::Off, {QIcon::Disabled}},
         {off, QIcon::On, {QIcon::Disabled}},
         {accent, QIcon::On, {QIcon::Normal, QIcon::Active, QIcon::Selected}},
+    });
+}
+
+QIcon subtleIcon(Icon icon, int size)
+{
+    const QColor muted = Bar::muted, ink = Bar::ink, off = Bar::dim;
+    return renderIcon(icon, size, 5, {
+        {muted, QIcon::Off, {QIcon::Normal, QIcon::Selected}},
+        {ink, QIcon::Off, {QIcon::Active}},
+        {off, QIcon::Off, {QIcon::Disabled}},
+        {off, QIcon::On, {QIcon::Disabled}},
     });
 }
 

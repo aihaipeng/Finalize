@@ -1,4 +1,5 @@
 #include "shared/dialog_chrome.h"
+#include "shared/export_dialog.h"
 #include "history/history_dialog.h"
 #include "platform/output.h"
 #include "shared/settings.h"
@@ -10,7 +11,6 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QDateTime>
-#include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
 #include <QGuiApplication>
@@ -300,17 +300,16 @@ void HistoryDialog::saveSelected()
         return;
     }
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-    const QString suggested = dir + QStringLiteral("/lenssnip-history-")
-            + entry.created.toLocalTime().toString(QStringLiteral("yyyyMMdd-HHmmss")) + QStringLiteral(".png");
-    const QString path = QFileDialog::getSaveFileName(
-            this, tr("保存图片"), suggested,
-            QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
-    if (path.isEmpty()) return;
-    if (!saveImageAtomic(image, path)) {
+    ExportDialog dialog(image, writableImageFormats(), dir,
+                        QStringLiteral("History_{{yyyy-MM-dd HH:mm:ss}}"), this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const ExportRequest request = dialog.request();
+    if (!saveImageAtomic(image, request.path,
+                         {request.format, request.quality, request.scalePercent})) {
         QMessageBox::warning(this, windowTitle(), tr("保存失败，请检查路径或磁盘空间后重试"));
         return;
     }
-    m_status->setText(tr("已保存到 %1").arg(QFileInfo(path).fileName()));
+    m_status->setText(tr("已保存到 %1").arg(QFileInfo(request.path).fileName()));
 }
 
 void HistoryDialog::removeSelected()

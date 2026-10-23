@@ -1,5 +1,6 @@
 HEADERS += $$PWD/test_support.h
 SOURCES += $$PWD/test_support.cpp \
+           $$PWD/export_tests.cpp \
            $$PWD/annotation_tests.cpp \
            $$PWD/barcode_tests.cpp \
            $$PWD/capture_overlay_tests.cpp \

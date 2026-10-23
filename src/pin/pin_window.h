@@ -73,6 +73,7 @@ private:
     void flipHorizontal();
     void flipVertical();
     void invertColors();
+    void saveImage();
     void setOpacityPercent(int percent);
     void setBrightnessPercent(int percent);
     void setShadowEnabled(bool enabled);

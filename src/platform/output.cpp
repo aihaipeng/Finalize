@@ -1,7 +1,10 @@
 #include "platform/output.h"
 #include <QGuiApplication>
 #include <QImage>
+#include <QImageWriter>
+#include <QPainter>
 #include <QString>
+#include <QStringList>
 #include <QByteArray>
 #include <QtMath>
 #include <QClipboard>
@@ -39,11 +42,64 @@ bool copyTextToClipboard(const QString &text)
     return !text.isEmpty() && setClipboardWithRetry([&](QClipboard *c) { c->setText(text); });
 }
 
-bool saveImageAtomic(const QImage &image, const QString &path)
+bool saveImageAtomic(const QImage &image, const QString &path, const ImageSaveOptions &options)
 {
     if (image.isNull()) return false;
+    QByteArray format = options.format.trimmed().toLower().toLatin1();
+    if (format.isEmpty()) format = QFileInfo(path).suffix().toLower().toLatin1();
+    if (format == "jpeg") format = "jpg";
+    if (format.isEmpty()) return false;
+
+    QImage output = image;
+    const int scale = qBound(10, options.scalePercent, 100);
+    if (scale < 100) {
+        const int width = qMax(1, qRound(output.width() * scale / 100.0));
+        const int height = qMax(1, qRound(output.height() * double(width) / output.width()));
+        output = output.scaled(width, height, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+
+    if (format == "jpg") {
+        // JPEG has no alpha; rounded captures must not turn transparent corners black.
+        if (output.hasAlphaChannel()) {
+            QImage flattened(output.size(), QImage::Format_RGB32);
+            flattened.fill(Qt::white);
+            QPainter painter(&flattened);
+            painter.drawImage(0, 0, output);
+            painter.end();
+            output = flattened;
+        }
+    } else if (format == "png" && output.hasAlphaChannel()) {
+        // Fully opaque captures drop the alpha channel, matching the smaller PNG
+        // most screenshot tools produce; rounded captures keep it.
+        QImage rgba = output.convertToFormat(QImage::Format_ARGB32);
+        bool translucent = false;
+        for (int y = 0; y < rgba.height() && !translucent; ++y) {
+            const QRgb *line = reinterpret_cast<const QRgb *>(rgba.constScanLine(y));
+            for (int x = 0; x < rgba.width(); ++x) {
+                if (qAlpha(line[x]) != 255) {
+                    translucent = true;
+                    break;
+                }
+            }
+        }
+        if (!translucent) output = rgba.convertToFormat(QImage::Format_RGB32);
+    }
+
     QSaveFile file(path);
-    const QByteArray format = QFileInfo(path).suffix().toLatin1();
-    if (format.isEmpty() || !file.open(QIODevice::WriteOnly)) return false;
-    return image.save(&file, format.constData()) && file.commit();
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    return output.save(&file, format.constData(), options.quality) && file.commit();
+}
+
+QStringList writableImageFormats()
+{
+    QStringList supported;
+    for (const QByteArray &format : QImageWriter::supportedImageFormats())
+        supported.append(QString::fromLatin1(format).toLower());
+    QStringList result;
+    for (const char *name : {"png", "jpg", "webp", "bmp"}) {
+        const QString format = QString::fromLatin1(name);
+        if (supported.contains(format) || (format == QLatin1String("jpg") && supported.contains(QStringLiteral("jpeg"))))
+            result.append(format);
+    }
+    return result;
 }

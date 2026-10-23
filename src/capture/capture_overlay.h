@@ -1,6 +1,7 @@
 #pragma once
 
 #include "platform/window_detection.h"
+#include "platform/output.h"
 #include "capture/pixel_inspector.h"
 #include "capture/tool_layout_dialog.h"
 #include "shared/widgets.h"
@@ -369,7 +370,7 @@ private slots:
     void translateCapture();
     void barcodeCapture();
     void saveCapture();
-    bool saveCaptureTo(const QString &path);
+    bool saveCaptureTo(const QString &path, const ImageSaveOptions &options = {});
     void reportCaptured(const QPixmap &pix, const QRect &globalRegion);
     void copyCapture();
     void showOutputError(const QString &message);

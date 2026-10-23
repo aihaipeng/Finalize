@@ -1,4 +1,5 @@
 #include "shared/dialog_chrome.h"
+#include "shared/export_dialog.h"
 #include "capture/capture_overlay.h"
 #include "capture/tool_layout_dialog.h"
 #include <QWindow>
@@ -44,7 +45,6 @@
 #include <QBoxLayout>
 #include <QGridLayout>
 #include <QPushButton>
-#include <QFileDialog>
 #include <QStandardPaths>
 #include <QCursor>
 #include <QMessageBox>
@@ -3658,24 +3658,25 @@ void CaptureOverlay::saveCapture()
 {
     commitTextEdit();
     if (m_sel.isEmpty()) return;
+    ensureAutoWatermark();
+    const QImage image = cropped().toImage();
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-    const QString path = QFileDialog::getSaveFileName(
-        this, tr("保存图片"),
-        dir + QStringLiteral("/lenssnip.png"),
-        QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
-    if (path.isEmpty()) {
-        activateWindow();                       // Cancelled dialog: reclaim focus and keep the selection.
+    ExportDialog dialog(image, writableImageFormats(), dir,
+                        QStringLiteral("LensSnip_{{yyyy-MM-dd HH:mm:ss}}"), this);
+    if (dialog.exec() != QDialog::Accepted) {
+        activateWindow();                       // Cancelled card: reclaim focus and keep the selection.
         setFocus();
         return;
     }
-    saveCaptureTo(path);
+    const ExportRequest request = dialog.request();
+    saveCaptureTo(request.path, {request.format, request.quality, request.scalePercent});
 }
 
-bool CaptureOverlay::saveCaptureTo(const QString &path)
+bool CaptureOverlay::saveCaptureTo(const QString &path, const ImageSaveOptions &options)
 {
     ensureAutoWatermark();
     const QPixmap pix = cropped();
-    if (!saveImageAtomic(pix.toImage(), path)) {
+    if (!saveImageAtomic(pix.toImage(), path, options)) {
         showOutputError(tr("保存失败，请检查路径或磁盘空间后重试"));
         return false;
     }

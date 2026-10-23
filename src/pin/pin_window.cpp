@@ -26,7 +26,7 @@
 #include <QWidgetAction>
 #include <QTransform>
 #include <QtMath>
-#include <QFileDialog>
+#include "shared/export_dialog.h"
 #include <QStandardPaths>
 #include <QCursor>
 #include <QMessageBox>
@@ -1033,15 +1033,7 @@ void PinWindow::toggleToolbar(bool enabled)
             lay->addWidget(copyBtn);
 
             auto *saveBtn = pinButton(Icon::Save, tr("保存图片"));
-            connect(saveBtn, &QToolButton::clicked, this, [this] {
-                const QPixmap pix = outputPix();
-                const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-                const QString path = QFileDialog::getSaveFileName(
-                    this, tr("保存图片"), dir + QStringLiteral("/pin.png"),
-                    QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
-                if (!path.isEmpty() && !saveImageAtomic(pix.toImage(), path))
-                    QMessageBox::warning(this, QStringLiteral("LensSnip"), tr("保存失败，请检查路径或磁盘空间后重试"));
-            });
+            connect(saveBtn, &QToolButton::clicked, this, &PinWindow::saveImage);
             lay->addWidget(saveBtn);
 
             auto *ocrBtn = pinButton(Icon::Ocr, tr("文字识别 (OCR)"));
@@ -1290,15 +1282,7 @@ QMenu *PinWindow::createContextMenu()
     });
 
     QAction *save = m->addAction(tr("保存图片"));
-    connect(save, &QAction::triggered, this, [this] {
-        const QPixmap pix = outputPix();
-        const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-        const QString path = QFileDialog::getSaveFileName(
-            this, tr("保存图片"), dir + QStringLiteral("/pin.png"),
-            QStringLiteral("PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"));
-        if (!path.isEmpty() && !saveImageAtomic(pix.toImage(), path))
-            QMessageBox::warning(this, QStringLiteral("LensSnip"), tr("保存失败，请检查路径或磁盘空间后重试"));
-    });
+    connect(save, &QAction::triggered, this, &PinWindow::saveImage);
 
     m->addSeparator();
 
@@ -1446,6 +1430,20 @@ void PinWindow::mouseDoubleClickEvent(QMouseEvent *e)
     // only a double-click off any character closes the pin.
     if (m_textSelectable && charIndexAt(e->pos(), false) >= 0) return;
     close();
+}
+
+void PinWindow::saveImage()
+{
+    const QImage image = outputPix().toImage();
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    ExportDialog dialog(image, writableImageFormats(), dir,
+                        QStringLiteral("Pin_{{yyyy-MM-dd HH:mm:ss}}"), this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const ExportRequest request = dialog.request();
+    if (!saveImageAtomic(image, request.path,
+                         {request.format, request.quality, request.scalePercent}))
+        QMessageBox::warning(this, QStringLiteral("LensSnip"),
+                             tr("保存失败，请检查路径或磁盘空间后重试"));
 }
 
 PinWindow::~PinWindow()

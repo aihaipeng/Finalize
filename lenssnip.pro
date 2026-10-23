@@ -39,5 +39,5 @@ CONFIG += lrelease
 LRELEASE_DIR = .
 # qmake's lrelease feature writes beside the build target; copy only the
 # compiled QM packs into the runtime language folder.
-QMAKE_POST_LINK = cmd /c "if not exist \"$$PWD\\release\\language\" mkdir \"$$PWD\\release\\language\" & copy /Y \"$$PWD\\release\\lenssnip_*.qm\" \"$$PWD\\release\\language\\\" & if not exist \"$$PWD\\release\\sqldrivers\" mkdir \"$$PWD\\release\\sqldrivers\" & copy /Y \"$$[QT_INSTALL_BINS]\\Qt6Sql.dll\" \"$$PWD\\release\\\" & copy /Y \"$$[QT_INSTALL_PLUGINS]\\sqldrivers\\qsqlite.dll\" \"$$PWD\\release\\sqldrivers\\\""
+QMAKE_POST_LINK = cmd /c "mkdir \"$$PWD\\release\\language\" 2>nul & copy /Y \"$$PWD\\release\\lenssnip_*.qm\" \"$$PWD\\release\\language\" & mkdir \"$$PWD\\release\\sqldrivers\" 2>nul & copy /Y \"$$[QT_INSTALL_BINS]\\Qt6Sql.dll\" \"$$PWD\\release\" & copy /Y \"$$[QT_INSTALL_PLUGINS]\\sqldrivers\\qsqlite.dll\" \"$$PWD\\release\\sqldrivers\" & mkdir \"$$PWD\\release\\imageformats\" 2>nul & copy /Y \"$$[QT_INSTALL_PLUGINS]\\imageformats\\qjpeg.dll\" \"$$PWD\\release\\imageformats\" & if exist \"$$[QT_INSTALL_PLUGINS]\\imageformats\\qwebp.dll\" copy /Y \"$$[QT_INSTALL_PLUGINS]\\imageformats\\qwebp.dll\" \"$$PWD\\release\\imageformats\""
 DISTFILES += onnxruntime-LICENSE.txt third_party/zxing-cpp/LICENSE third_party/zxing-cpp/README.md third_party/lucide-icons/LICENSE

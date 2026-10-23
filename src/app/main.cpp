@@ -37,6 +37,7 @@
 #include <cstdio>
 
 int runTranslateGatewayTests();   // tests/translate_gateway_tests.cpp
+int runExportTests(const QString &preview);   // tests/export_tests.cpp
 
 int main(int argc, char **argv)
 {
@@ -121,6 +122,8 @@ int main(int argc, char **argv)
         const QString save = QCoreApplication::translate("ToolLayoutDialog", "保存");
         const QString dropdown = QCoreApplication::translate("CaptureOverlay", "下拉");
         const QString adjust = QCoreApplication::translate("CaptureOverlay", "调整");
+        const QString exportTitle = QCoreApplication::translate("ExportDialog", "保存");
+        const QString exportFolder = QCoreApplication::translate("ExportDialog", "选择文件夹");
         const bool hasEnglish = I18n::availableLocales().contains(QStringLiteral("en_US"));
         const bool ok = hasEnglish
                 && (english ? capture == QStringLiteral("Screenshot (F1)")
@@ -134,6 +137,8 @@ int main(int argc, char **argv)
                                   && save == QStringLiteral("Save")
                                   && dropdown == QStringLiteral("Dropdown")
                                   && adjust == QStringLiteral("Adjust")
+                                  && exportTitle == QStringLiteral("Save")
+                                  && exportFolder == QStringLiteral("Choose folder")
                             : capture == QStringLiteral("截图 (F1)")
                                   && loading == QStringLiteral("正在识别…")
                                   && arrow == QStringLiteral("箭头 (A)")
@@ -144,7 +149,9 @@ int main(int argc, char **argv)
                                    && hiddenHint == QStringLiteral("拖到这里收起工具；下拉入口始终保留。")
                                   && save == QStringLiteral("保存")
                                   && dropdown == QStringLiteral("下拉")
-                                  && adjust == QStringLiteral("调整"));
+                                  && adjust == QStringLiteral("调整")
+                                  && exportTitle == QStringLiteral("保存")
+                                  && exportFolder == QStringLiteral("选择文件夹"));
         std::printf("%s locale=%s locales=%s capture=[%s] loading=[%s] arrow=[%s] pinFail=[%s] pinPending=[%s] historyEmpty=[%s] preview=[%s] hidden=[%s] save=[%s] dropdown=[%s] adjust=[%s]\n",
                     ok ? "PASS" : "FAIL", qPrintable(locale),
                     qPrintable(I18n::availableLocales().join(QLatin1Char(','))),
@@ -210,6 +217,9 @@ int main(int argc, char **argv)
         QGuiApplication::clipboard()->setMimeData(saved);
         return longResult || captureResult ? 1 : 0;
     }
+    if (app.arguments().contains(QStringLiteral("--test-export")))
+        return runExportTests(app.arguments().value(
+            app.arguments().indexOf(QStringLiteral("--test-export")) + 1));
     if (app.arguments().contains(QStringLiteral("--test-stitching")))
         return LongCapture::testStitching();
     if (app.arguments().contains(QStringLiteral("--test-live-capture")))

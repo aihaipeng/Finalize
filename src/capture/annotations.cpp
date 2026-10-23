@@ -1,5 +1,6 @@
 #include "shared/dialog_chrome.h"
 #include "shared/settings.h"
+#include "shared/time_tokens.h"
 #include "capture/capture_overlay.h"
 #include <QClipboard>
 #include <QAbstractItemView>
@@ -2128,58 +2129,11 @@ void CaptureOverlay::ensureAutoWatermark()
     m_autoWatermarkAdded = true;
 }
 
-static QString watermarkOffset(const QDateTime &dt, bool colon)
-{
-    const int seconds = dt.offsetFromUtc();
-    const int absolute = qAbs(seconds);
-    return QStringLiteral("%1%2%3%4")
-        .arg(seconds < 0 ? QLatin1Char('-') : QLatin1Char('+'))
-        .arg(absolute / 3600, 2, 10, QLatin1Char('0'))
-        .arg(colon ? QStringLiteral(":") : QString())
-        .arg((absolute % 3600) / 60, 2, 10, QLatin1Char('0'));
-}
-
-// Standard time tokens are resolved here; plain tokens stay Qt date-format strings.
-static QString watermarkTimeValue(const QString &spec, const QDateTime &dt)
-{
-    if (spec == QLatin1String("@iso-offset"))
-        return dt.toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")) + watermarkOffset(dt, true);
-    if (spec == QLatin1String("@iso-utc"))
-        return dt.toUTC().toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")) + QLatin1Char('Z');
-    if (spec == QLatin1String("@rfc3339"))
-        return dt.toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")) + watermarkOffset(dt, true);
-    if (spec == QLatin1String("@rfc3339-ms"))
-        return dt.toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss.zzz")) + watermarkOffset(dt, true);
-    if (spec == QLatin1String("@rfc1123"))
-        return QLocale::c().toString(dt.toUTC(), QStringLiteral("ddd, dd MMM yyyy HH:mm:ss"))
-             + QStringLiteral(" GMT");
-    if (spec == QLatin1String("@rfc2822"))
-        return QLocale::c().toString(dt, QStringLiteral("ddd, dd MMM yyyy HH:mm:ss"))
-             + QLatin1Char(' ') + watermarkOffset(dt, false);
-    return dt.toString(spec);
-}
-
 QString CaptureOverlay::watermarkString(const QString &text, qint64 createdAt)
 {
     if (!text.contains(QStringLiteral("{{"))) return text;
-    QString out;
-    int cursor = 0;
-    while (cursor < text.size()) {
-        const int open = text.indexOf(QStringLiteral("{{"), cursor);
-        if (open < 0) {
-            out += text.mid(cursor);
-            break;
-        }
-        out += text.mid(cursor, open - cursor);
-        const int close = text.indexOf(QStringLiteral("}}"), open + 2);
-        if (close < 0) return text;               // An unclosed token leaves the whole watermark literal.
-        const QString spec = text.mid(open + 2, close - open - 2);
-        const QDateTime stamp = QDateTime::fromMSecsSinceEpoch(
-            createdAt > 0 ? createdAt : QDateTime::currentMSecsSinceEpoch());
-        out += watermarkTimeValue(spec, stamp);
-        cursor = close + 2;
-    }
-    return out;
+    return resolveTimeTokens(text, QDateTime::fromMSecsSinceEpoch(
+        createdAt > 0 ? createdAt : QDateTime::currentMSecsSinceEpoch()));
 }
 
 void CaptureOverlay::paintWatermark(QPainter &p, const Annotation &ann, const QRect &area)

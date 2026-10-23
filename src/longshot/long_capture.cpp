@@ -2,6 +2,7 @@
 #include "text/engines/ocr_engine.h"
 #include "text/cards/ocr_dialog.h"
 #include "shared/geometry.h"
+#include "shared/export_dialog.h"
 #include "shared/settings.h"
 #include <QGuiApplication>
 #include <QCoreApplication>
@@ -17,7 +18,6 @@
 #include <QtMath>
 #include <QToolButton>
 #include <QHBoxLayout>
-#include <QFileDialog>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QEventLoop>
@@ -1161,21 +1161,28 @@ void LongCapture::saveCapture()
         fail(tr("导出失败，请释放内存后重试"));
         return;
     }
-    // The dialog is not topmost; the session steps aside and stops capturing while it is open.
+    // The export card is topmost; the session steps aside and stops capturing while it is open.
     m_paused = true;
     setAutoScroll(0);
     for (QWidget *w : {m_mask, m_bar, static_cast<QWidget *>(m_preview), m_cropPanel, static_cast<QWidget *>(m_feedback)}) if (w) w->hide();
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-    const QString path = QFileDialog::getSaveFileName(
-        nullptr, tr("保存图片"), dir + QStringLiteral("/longshot.png"),
-        tr("PNG 图片 (*.png);;JPEG 图片 (*.jpg)"));
+    ExportDialog dialog(img, writableImageFormats(), dir,
+                        QStringLiteral("LongShot_{{yyyy-MM-dd HH:mm:ss}}"), nullptr);
     if (m_done) return;
-    const bool saved = !path.isEmpty() && saveImageAtomic(img, path);
+    if (dialog.exec() != QDialog::Accepted) {
+        for (QWidget *w : {m_mask, m_bar}) if (w) w->show();
+        if (m_preview && !m_preview->image.isNull()) m_preview->show();
+        m_paused = false;
+        return;
+    }
+    const ExportRequest request = dialog.request();
+    const bool saved = saveImageAtomic(img, request.path,
+                                       {request.format, request.quality, request.scalePercent});
     if (saved) { reportCaptured(img); cancel(); return; }
     for (QWidget *w : {m_mask, m_bar}) if (w) w->show();
     if (m_preview && !m_preview->image.isNull()) m_preview->show();
     m_paused = false;
-    if (!path.isEmpty()) fail(tr("保存失败，请检查路径或释放内存后重试"));
+    fail(tr("保存失败，请检查路径或释放内存后重试"));
 }
 
 void LongCapture::copyCapture()

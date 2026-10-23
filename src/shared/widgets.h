@@ -30,13 +30,15 @@ enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, 
                   CardZoomOut, CardActual, CardPin, CardMinimize, CardMaximize, CardRestore, CardClose, CardSearch,
                   CardUp, CardDown, CardRight, CardFormat, Back, Crop, CropStart, CropEnd, Barcode, CardLink,
                   RoundRect, CornerSquare, CornerRounded, AspectLock, Warning, Sliders, Clock, Picker, MagicEraser,
-                  Watermark, More };
+                  Watermark, More, Folder };
 
 // dark: glyphs for a dark surface (light ink) instead of the light bars.
 QIcon makeIcon(Icon icon, int size = 16, bool dark = false);
 
 // Text-card glyphs: muted ink, accent when hovered (QIcon::Active) or checked, dim when disabled.
 QIcon cardIcon(Icon icon, int size = 16);
+// Muted glyphs that brighten to ink on hover; used by the save card's close/folder actions.
+QIcon subtleIcon(Icon icon, int size = 16);
 
 QToolButton *iconButton(Icon icon, const QString &tip);
 

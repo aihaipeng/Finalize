@@ -2314,4 +2314,67 @@ Enable recording to keep new screenshots here.</translation>
         <translation>Close</translation>
     </message>
 </context>
+<context>
+    <name>ExportDialog</name>
+    <message>
+        <source>保存</source>
+        <translation>Save</translation>
+    </message>
+    <message>
+        <source>关闭 (Esc)</source>
+        <translation>Close (Esc)</translation>
+    </message>
+    <message>
+        <source>格式</source>
+        <translation>Format</translation>
+    </message>
+    <message>
+        <source>质量</source>
+        <translation>Quality</translation>
+    </message>
+    <message>
+        <source>缩放</source>
+        <translation>Scale</translation>
+    </message>
+    <message>
+        <source>文件名</source>
+        <translation>File name</translation>
+    </message>
+    <message>
+        <source>保存到</source>
+        <translation>Save to</translation>
+    </message>
+    <message>
+        <source>选择文件夹</source>
+        <translation>Choose folder</translation>
+    </message>
+    <message>
+        <source>取消</source>
+        <translation>Cancel</translation>
+    </message>
+    <message>
+        <source>保存</source>
+        <translation>Save</translation>
+    </message>
+    <message>
+        <source>≈ %1 · %2 × %3</source>
+        <translation>≈ %1 · %2 × %3</translation>
+    </message>
+    <message>
+        <source>将保存为 %1</source>
+        <translation>Will save as %1</translation>
+    </message>
+    <message>
+        <source>请选择保存文件夹。</source>
+        <translation>Choose a folder to save.</translation>
+    </message>
+    <message>
+        <source>文件夹不存在，请重新选择。</source>
+        <translation>The folder does not exist. Choose another one.</translation>
+    </message>
+    <message>
+        <source>“%1”已存在，是否覆盖？</source>
+        <translation>"%1" already exists. Overwrite it?</translation>
+    </message>
+</context>
 </TS>
