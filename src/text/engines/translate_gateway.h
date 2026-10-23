@@ -67,7 +67,6 @@ public:
                                               const QHash<int, qint64> &cooldownUntil,
                                               qint64 nowMs);
 
-    bool busy() const { return m_run != nullptr; }
     void abort();
 
     // The one entry point: lines in, aligned lines out. An empty source means
@@ -115,7 +114,6 @@ private:
     static QByteArray transmartRequestBody(const QStringList &lines, const QString &source,
                                            const QString &target);
     static TranslateResult parseTransmartReply(const QByteArray &body, int expectedLines);
-    static QString volcengineLanguageCode(const QString &code);
     static QByteArray volcengineRequestBody(const QStringList &lines, const QString &source,
                                             const QString &target);
     static TranslateResult parseVolcengineReply(const QByteArray &body, int expectedLines);

@@ -34,7 +34,7 @@
 
 int PinWindow::testPlacement()
 {
-    const bool markup = qApp->arguments().contains(QStringLiteral("--markup"));
+    const bool markup = qApp->arguments().contains(QStringLiteral("--test-pin-markup"));
     QMenu *menu = nullptr;
     QList<QAction *> actions;
     auto check = [](bool ok, const char *message) {
@@ -377,8 +377,8 @@ int PinWindow::testPlacement()
               && markPin.m_decoHighlight.value(0) == QColor("#ff909c")
               && markPin.m_decoHighlight.value(1) == QColor("#ff909c"),
           "checking a markup tool draws immediately in its remembered color");
-    check(!selHighlight->isCheckable(),
-          "tool buttons light up only while pressed, never stay checked");
+    check(selHighlight->isCheckable() && selHighlight->isChecked(),
+          "markup tools stay checked so the color row keeps its target");
     swatch2->click();
     check(markPin.m_decoHighlight.value(1) == QColor("#b89fff"),
           "picking a color recolors the selected characters");
@@ -602,7 +602,15 @@ int PinWindow::testPlacement()
           "undo/redo start disabled");
     const QRect pinBefore = editPin.imageGeometry();
     const QRect barBefore = editPin.m_toolbar->geometry();
-    const int topLevelsBefore = QApplication::topLevelWidgets().size();
+    // Count windows only: setting a custom item delegate makes Qt build each
+    // combo's hidden popup container eagerly, which is scaffolding, not a window.
+    const auto windowCount = []() {
+        int n = 0;
+        for (QWidget *w : QApplication::topLevelWidgets())
+            if (w->metaObject()->className() != QByteArrayLiteral("QComboBoxPrivateContainer")) ++n;
+        return n;
+    };
+    const int topLevelsBefore = windowCount();
     const QImage lookBefore = editPin.grab().toImage();
     check(editPin.m_toolbar->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus),
           "the pin toolbar never takes keyboard focus from the pin");
@@ -626,8 +634,8 @@ int PinWindow::testPlacement()
               && strip->x() == editPin.m_toolbar->x()
               && strip->y() >= editPin.m_toolbar->geometry().bottom(),
           "the option strip opens left-aligned directly below the pin toolbar");
-    check(QApplication::topLevelWidgets().size() == topLevelsBefore + 1,
-          "the strip is the only new top-level widget");
+    check(windowCount() == topLevelsBefore + 1,
+          "the strip is the only new top-level window");
     check(shapeBtn->isChecked(), "the armed tool button shows as checked");
 
     QWidget *canvas = editPin.m_canvas.data();

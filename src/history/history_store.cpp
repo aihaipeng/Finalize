@@ -218,7 +218,9 @@ void prune(QSqlDatabase &db)
     for (const Row &row : rows) {
         const bool overAge = maxAgeDays > 0 && row.created < cutoff;
         const bool overCount = maxItems > 0 && kept >= maxItems;
-        const bool overBytes = maxBytes > 0 && totalBytes + row.bytes > maxBytes;
+        // The newest entry is exempt from the byte cap: a cap below one image's
+        // size would otherwise delete each capture right after recording it.
+        const bool overBytes = kept > 0 && maxBytes > 0 && totalBytes + row.bytes > maxBytes;
         if (overAge || overCount || overBytes) {
             removeIds.append(row.id);
             removeFiles << row.imageRel << row.thumbRel;
@@ -427,7 +429,9 @@ bool HistoryStore::remove(qint64 id)
     }
     if (removed) {
         for (const QString &relative : files) removeHistoryFile(relative);
-        sweepOrphans(db.db());
+        // Grace matters here too: another instance may have written a PNG whose
+        // row is not committed yet; the next prune sweeps leftovers.
+        sweepOrphans(db.db(), true);
     }
     return removed;
 }
@@ -455,7 +459,7 @@ bool HistoryStore::clear()
     }
     if (cleared) {
         for (const QString &relative : files) removeHistoryFile(relative);
-        sweepOrphans(db.db());
+        sweepOrphans(db.db());   // clear() is an explicit wipe; fresh orphans go too.
     }
     return cleared;
 }
@@ -570,6 +574,17 @@ int HistoryStore::testHistory()
     for (const QString &path : prunedPaths)
         prunedFilesGone = prunedFilesGone && !path.isEmpty() && !QFileInfo::exists(path);
     check(entries().size() == 1 && prunedFilesGone, "prune removes every old row and file");
+
+    // A byte cap smaller than a single capture must still keep the newest entry.
+    settings.setValue(QStringLiteral("History/maxItems"), 100);
+    settings.setValue(QStringLiteral("History/maxBytes"), Q_INT64_C(1));
+    settings.sync();
+    record(image);
+    waitForPending();
+    check(entries().size() == 1, "byte cap keeps the newest entry");
+    settings.setValue(QStringLiteral("History/maxBytes"), Q_INT64_C(1073741824));
+    settings.sync();
+
     check(clear(), "clear history");
     check(entries().isEmpty(), "history empty after clear");
     check(pendingWrites() == 0, "pending writes drain after the queue");

@@ -1238,7 +1238,8 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
         break;
     case Qt::Key_C:
         if (e->modifiers() & Qt::ControlModifier) {
-            if (m_mode == Adjusting && !m_live) copyCapture();
+            // Embedded canvas has no capture outputs, same as Ctrl+T above.
+            if (m_mode == Adjusting && !m_live && !m_embedded) copyCapture();
         } else if (!(e->modifiers() & (Qt::AltModifier | Qt::MetaModifier))
                    && m_inspector->isVisible() && !m_inspector->colorText().isEmpty()) {
             if (!copyTextToClipboard(m_inspector->colorText()))
@@ -1259,7 +1260,7 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *e)
         if (!e->isAutoRepeat()) m_inspector->toggleFormat();
         break;
     case Qt::Key_S:
-        if (e->modifiers() & Qt::ControlModifier && !m_live) saveCapture();
+        if (e->modifiers() & Qt::ControlModifier && !m_live && !m_embedded) saveCapture();
         else if (e->modifiers() == Qt::NoModifier && !e->isAutoRepeat())
             nudgeSelected(Qt::Key_S);            // WASD nudges the selection.
         break;
@@ -1444,17 +1445,15 @@ void CaptureOverlay::recoverDetector()
     for (const DetectedWindow &win : m_windowRects)
         if (win.native.contains(m_detectionPoint) && !win.program.isEmpty()) {
             identified = true;
+            // One slow query is load, not a crash: degrade this session only,
+            // and never downgrade element walks for the whole capture.
             if (windowHung(win.hwnd)
                 && !m_detectionOptions.disabledUiPrograms.contains(win.program, Qt::CaseInsensitive)) {
                 m_detectionOptions.disabledUiPrograms.append(win.program);
-                LensSnipSettings settings;
-                QStringList disabled = settings.value(QStringLiteral("Snip/crashes")).toStringList();
-                if (!disabled.contains(win.program, Qt::CaseInsensitive)) disabled.append(win.program);
-                settings.setValue(QStringLiteral("Snip/crashes"), disabled);
             }
             break;
         }
-    if (!identified) m_detectionOptions.elements = false;
+    Q_UNUSED(identified);
     // A slow provider is not a hung one. Keep the element already under the
     // cursor so one over-budget walk cannot widen the highlight to the page or
     // persist a UI downgrade for the rest of the session.
@@ -1650,7 +1649,7 @@ void CaptureOverlay::handleDetectedRect(const QRect &native, quint64 id)
 void CaptureOverlay::updateInspector()
 {
     const QPoint local = mapFromGlobal(QCursor::pos());
-    if (!isVisible() || editorActive() || m_live || m_itemDrag != H_None
+    if (!isVisible() || m_embedded || editorActive() || m_live || m_itemDrag != H_None
         || m_drag == H_Move
         || (m_mode == Adjusting && m_drag == H_None
             && (m_atool != ATool::None || m_selAnn >= 0 || !m_sel.contains(local)))
@@ -3397,6 +3396,9 @@ void CaptureOverlay::refreshScreenshot()
                 showToolBars();
                 updateTip();
                 updateInspector();
+                // Keep snapping alive: resetting the selection later must not
+                // leave a stopped detector behind.
+                if (m_liveDetection) startDetector();
             } else if (m_liveDetection) {
                 startDetector();
                 requestDetection(mapFromGlobal(QCursor::pos()));
@@ -3416,6 +3418,7 @@ void CaptureOverlay::refreshScreenshot()
             showToolBars();
             updateTip();
             updateInspector();
+            if (m_liveDetection) startDetector();   // Same as the failure branch above.
         } else if (m_liveDetection) {
             startDetector();
             requestDetection(mapFromGlobal(QCursor::pos()));

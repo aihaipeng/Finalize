@@ -11,6 +11,7 @@ SOURCES += $$PWD/test_support.cpp \
            $$PWD/pin_window_tests.cpp \
            $$PWD/round_refresh_tests.cpp \
            $$PWD/smart_erase_tests.cpp \
+           $$PWD/translate_gateway_tests.cpp \
            $$PWD/widgets_tests.cpp \
            $$PWD/ui_theme_tests.cpp \
            $$PWD/watermark_tests.cpp \

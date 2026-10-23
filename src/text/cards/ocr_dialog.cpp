@@ -341,8 +341,7 @@ void OcrImageView::highlightTextRange(int from, int to) {
 void OcrImageView::copySelection() {
     const QString text = selectedText();
     if (text.isEmpty()) return;
-    const bool ok = copyTextToClipboard(text);
-    if (copied) copied(ok);
+    copyTextToClipboard(text);
 }
 
 void OcrImageView::mousePressEvent(QMouseEvent *event) {
@@ -1604,7 +1603,15 @@ void OcrDialog::start() {
     else m_busy->show();
     setStatus(m_translate ? QString() : tr("正在识别…"));
     m_watcher.setFuture(QtConcurrent::run([&engine,image,cancel] {
-        const OcrResult result = recognizeChunked(image,cancel);
+        // A failed worker must not wedge the busy gate or rethrow on the GUI thread.
+        OcrResult result;
+        try {
+            result = recognizeChunked(image,cancel);
+        } catch (const std::exception &error) {
+            result.error = QString::fromUtf8(error.what());
+        } catch (...) {
+            result.error = QStringLiteral("识别线程异常");
+        }
         engine.busy.store(false);
         return result;
     }));

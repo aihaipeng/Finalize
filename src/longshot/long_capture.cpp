@@ -133,7 +133,11 @@ void LongCapture::start()
 
 int LongCapture::autoScrollStep(int extent)
 {
-    return extent < 300 ? 25 : extent < 500 ? 35 : extent < 700 ? 45 : extent < 900 ? 55 : 65;
+    const int base = extent < 300 ? 25 : extent < 500 ? 35 : extent < 700 ? 45 : extent < 900 ? 55 : 65;
+    // A step beyond the largest matchable offset (extent minus the minimum
+    // overlap) would make every frame fail to align on small selections.
+    const int minOverlap = qMin(extent, qMax(24, extent / 8));
+    return qMin(base, qMax(1, extent - minOverlap));
 }
 
 void LongCapture::scrollOnce()

@@ -812,18 +812,13 @@ TranslateResult TranslateGateway::parseTransmartReply(const QByteArray &body, in
     return result;
 }
 
-QString TranslateGateway::volcengineLanguageCode(const QString &code)
-{
-    return code;
-}
-
 QByteArray TranslateGateway::volcengineRequestBody(const QStringList &lines, const QString &source,
                                                    const QString &target)
 {
     QJsonObject object;
     object.insert(QStringLiteral("source_language"),
-                  source.isEmpty() ? QStringLiteral("auto") : volcengineLanguageCode(source));
-    object.insert(QStringLiteral("target_language"), volcengineLanguageCode(target));
+                  source.isEmpty() ? QStringLiteral("auto") : source);
+    object.insert(QStringLiteral("target_language"), target);
     object.insert(QStringLiteral("text"), lines.join(QLatin1Char('\n')));
     return QJsonDocument(object).toJson(QJsonDocument::Compact);
 }

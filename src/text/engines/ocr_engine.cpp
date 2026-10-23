@@ -150,7 +150,7 @@ OcrResult OcrEngine::recognize(QImage image, const OcrCancel &cancel) {
         for (const QPolygonF &box : boxes) {
             if (cancel->load()) { result.cancelled = true; result.lines.clear(); return result; }
             const QImage crop = lineImage(image, box);
-            if (crop.isNull()) throw std::runtime_error("Cannot crop a detected text line");
+            if (crop.isNull()) continue;   // One degenerate box loses its line, not the whole page.
             const int contentWidth = qMax(1, int(std::ceil(double(m_recHeight) * crop.width() / crop.height())));
             const int width = qMax(320, (contentWidth + 31) / 32 * 32);
             if (width > 8192) throw std::runtime_error("Text line is too wide; select a smaller region");

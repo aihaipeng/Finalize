@@ -1430,7 +1430,13 @@ void PinWindow::wheelEvent(QWheelEvent *e)       // Zoom with mouse-wheel input.
     updateToolbarPosition();
 }
 
-void PinWindow::mouseDoubleClickEvent(QMouseEvent *)  { close(); }
+void PinWindow::mouseDoubleClickEvent(QMouseEvent *e)
+{
+    // Double-click is the word-select gesture while text selection is armed;
+    // only a double-click off any character closes the pin.
+    if (m_textSelectable && charIndexAt(e->pos(), false) >= 0) return;
+    close();
+}
 
 PinWindow::~PinWindow()
 {

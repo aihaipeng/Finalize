@@ -454,6 +454,10 @@ private:
     bool m_eraserRect = false;                       // Eraser starts in brush mode.
     bool m_eraserSmart = false;                      // Magic eraser: content-aware fill instead of pixel erasure.
     int m_eraserWidth = 15;
+    // Hover cursors rebuild only when the brush size or screen DPR changes.
+    QCursor m_mosaicBrushCursorCache, m_eraserCursorCache;
+    qreal m_mosaicCursorSize = 0, m_mosaicCursorDpr = 0;
+    qreal m_eraserCursorSize = 0, m_eraserCursorDpr = 0;
     QVector<QVector<Annotation>> m_undoStack, m_redoStack;
     QTimer m_detectionWatchdog;
     QToolButton *m_undoButton = nullptr;             // Enabled state follows the stacks.

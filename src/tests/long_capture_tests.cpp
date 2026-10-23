@@ -44,6 +44,13 @@ int LongCapture::testStitching()
             std::exit(1);
         }
     };
+    // Auto-scroll steps must stay within the largest offset the matcher can
+    // accept (extent minus the minimum overlap); small selections otherwise
+    // fail to align on the very first tick.
+    check(LongCapture::autoScrollStep(40) == 16, "auto-scroll step stays matchable at extent 40");
+    check(LongCapture::autoScrollStep(48) == 24, "auto-scroll step stays matchable at extent 48");
+    check(LongCapture::autoScrollStep(50) == 25, "auto-scroll step keeps its normal size at extent 50");
+    check(LongCapture::autoScrollStep(1080) == 65, "large selections keep the full step");
     const int W = 960, H = 360;
     for (const QColor background : {QColor("#0b1016"), QColor(Qt::white)}) {
         QImage page(W, 2400, QImage::Format_RGB32);

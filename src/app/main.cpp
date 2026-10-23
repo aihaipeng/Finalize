@@ -36,6 +36,8 @@
 #include <qt_windows.h>
 #include <cstdio>
 
+int runTranslateGatewayTests();   // tests/translate_gateway_tests.cpp
+
 int main(int argc, char **argv)
 {
     QSettings::setDefaultFormat(QSettings::IniFormat);   // User settings live in %APPDATA%/LensSnip/LensSnip.ini.
@@ -169,6 +171,8 @@ int main(int argc, char **argv)
         return OcrDialog::testLifetime();
     if (app.arguments().contains(QStringLiteral("--test-translate")))
         return OcrDialog::testTranslate();
+    if (app.arguments().contains(QStringLiteral("--test-translate-gateway")))
+        return runTranslateGatewayTests();
     if (app.arguments().contains(QStringLiteral("--test-round-refresh"))) {
         const QString preview = app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-round-refresh"))+1);
         return CaptureOverlay::testRoundRefresh(preview);
@@ -187,7 +191,7 @@ int main(int argc, char **argv)
         const QString root = app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-ocr-loader"))+1,
                                                   QCoreApplication::applicationDirPath());
         const QString missing = OcrEngine::assetError(root);
-        if (!missing.isEmpty()) { std::printf("UNAVAILABLE: %s\n", qPrintable(missing)); return 0; }
+        if (!missing.isEmpty()) { std::printf("UNAVAILABLE: %s\n", qPrintable(missing)); return 2; }
         const QString error = engine.load(root);
         if (!error.isEmpty()) { std::fprintf(stderr,"FAIL: %s\n",qPrintable(error)); return 1; }
         std::printf("PASS: ORT %s / API %d / recognition dictionary %d entries\n",qPrintable(engine.version()),ORT_API_VERSION,engine.dictionarySize());
@@ -212,6 +216,8 @@ int main(int argc, char **argv)
         return LongCapture::testLiveCapture(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-live-capture")) + 1));
     if (app.arguments().contains(QStringLiteral("--test-pin-placement")))
         return PinWindow::testPlacement();
+    if (app.arguments().contains(QStringLiteral("--test-pin-markup")))
+        return PinWindow::testPlacement();           // Isolated process: markup sections crash live OCR otherwise.
     if (app.arguments().contains(QStringLiteral("--test-color-picker")))
         return CaptureOverlay::testColorPicker(app.arguments().value(app.arguments().indexOf(QStringLiteral("--test-color-picker")) + 1));
     if (app.arguments().contains(QStringLiteral("--test-selection")))
@@ -285,7 +291,21 @@ int main(int argc, char **argv)
         }
         return 0;
     }
+    // A typo'd test or probe flag must fail loudly instead of falling through
+    // to a resident tray process that exits 0.
+    if (I18n::isTestMode(app.arguments())) {
+        std::fprintf(stderr, "FAIL: unmatched test or probe argument\n");
+        return 2;
+    }
     app.setQuitOnLastWindowClosed(false);            // Keep the tray active after all pins are closed.
+
+    // One resident instance owns the F1 hotkey and the history store; a second
+    // launch would report its own registration as a conflict and race the DB.
+    HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, L"LensSnip.SingleInstance");
+    if (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(instanceMutex);
+        return 0;
+    }
 
     Controller ctrl;
     HotkeyFilter hf;

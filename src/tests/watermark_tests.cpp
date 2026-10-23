@@ -114,7 +114,29 @@ int CaptureOverlay::testWatermark(const QString &previewPath)
     auto *emptyEdit = overlay.m_toolOptions->findChild<QLineEdit *>(QStringLiteral("watermarkText"));
     check(emptyEdit && emptyEdit->text().isEmpty(),
           "a new watermark input starts empty");
+    // Style edits before the first Apply only tune defaults: no undo noise,
+    // and clearing empty text must not create an invisible item.
+    const int undoBefore = overlay.m_undoStack.size();
+    overlay.setWatermarkOpacity(40, true);
+    overlay.setWatermarkGap(50, true);
+    overlay.setWatermarkColor(QColor(QStringLiteral("#112233")), true);
+    overlay.setWatermarkText(QString());
+    check(overlay.m_undoStack.size() == undoBefore && !overlay.watermark(),
+          "style changes without a watermark item push no undo and create no item");
+    // Restore the persisted defaults; later sections construct overlays that
+    // load them and expect the red default.
+    overlay.setWatermarkOpacity(30, false);
+    overlay.setWatermarkGap(30, false);
+    overlay.setWatermarkColor(QColor(QStringLiteral("#ed1c24")), false);
     overlay.selectTool(ATool::None);
+    settings.setValue(QStringLiteral("Watermark/Text"), QStringLiteral("价格 $5 到 $10"));
+    overlay.loadWatermarkSettings();
+    check(overlay.m_wmText == QStringLiteral("价格 $5 到 $10"),
+          "plain dollar amounts stay literal during migration");
+    settings.setValue(QStringLiteral("Watermark/Text"), QStringLiteral("$hh:mm$ and $$"));
+    overlay.loadWatermarkSettings();
+    check(overlay.m_wmText == QStringLiteral("{{hh:mm}} and $"),
+          "real tokens and the escape still migrate");
     const QPoint origin = overlay.localScreenRect(screen).topLeft();
     overlay.m_mode = Adjusting;
     overlay.m_sel = QRect(origin + QPoint(40, 40), QSize(560, 360));

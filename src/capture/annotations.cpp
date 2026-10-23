@@ -597,10 +597,22 @@ void CaptureOverlay::updateAnnotationCursor(const QPoint &pos)
     const Handle handle = hitHandle(pos);
     if (m_atool == ATool::Mosaic && mosaicBrush() && handle == H_Move && !m_spaceHeld) {
         const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(pos));
-        setCursor(mosaicBrushCursor(toolSize(), screen ? screen->devicePixelRatio() : devicePixelRatioF()));
+        const qreal dpr = screen ? screen->devicePixelRatio() : devicePixelRatioF();
+        if (m_mosaicCursorSize != toolSize() || m_mosaicCursorDpr != dpr) {
+            m_mosaicCursorSize = toolSize();
+            m_mosaicCursorDpr = dpr;
+            m_mosaicBrushCursorCache = mosaicBrushCursor(toolSize(), dpr);
+        }
+        setCursor(m_mosaicBrushCursorCache);
     } else if (m_atool == ATool::Eraser && !eraserRect() && handle == H_Move && !m_spaceHeld) {
         const QScreen *screen = QGuiApplication::screenAt(mapToGlobal(pos));
-        setCursor(eraserCursor(toolSize(), screen ? screen->devicePixelRatio() : devicePixelRatioF()));
+        const qreal dpr = screen ? screen->devicePixelRatio() : devicePixelRatioF();
+        if (m_eraserCursorSize != toolSize() || m_eraserCursorDpr != dpr) {
+            m_eraserCursorSize = toolSize();
+            m_eraserCursorDpr = dpr;
+            m_eraserCursorCache = eraserCursor(toolSize(), dpr);
+        }
+        setCursor(m_eraserCursorCache);
     } else setCursor(m_atool != ATool::None && handle == H_Move ? Qt::CrossCursor : cursorForHandle(handle));
 }
 
@@ -1882,6 +1894,24 @@ void CaptureOverlay::showColorPalette()
     dialog->open();                              // Window-modal over the overlay, without a nested event loop.
 }
 
+namespace {
+QIcon dashStyleIcon(int style, qreal dpr)   // 40x20 pen sample shared by the shape and arrow style combos.
+{
+    QPixmap pm(qCeil(40 * dpr), qCeil(20 * dpr));
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    QPainter painter(&pm);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QPen sample(Bar::ink, 1.5);
+    sample.setStyle(static_cast<Qt::PenStyle>(Qt::SolidLine + style));
+    sample.setCapStyle(Qt::FlatCap);
+    sample.setJoinStyle(Qt::BevelJoin);
+    painter.setPen(sample);
+    painter.drawLine(QPointF(2, 10), QPointF(38, 10));
+    return QIcon(pm);
+}
+}
+
 void CaptureOverlay::pickShapeStyle(int style)
 {
     m_shapeStyle = qBound(0, style, 4);
@@ -2241,11 +2271,18 @@ void CaptureOverlay::paintWatermark(QPainter &p, const Annotation &ann, const QR
 void CaptureOverlay::setWatermarkText(const QString &text)
 {
     if (!m_wmTextUndo) {
-        pushUndo();
-        m_wmTextUndo = true;
+        // Nothing to undo yet when no item exists and the text stays empty.
+        if (watermark() || !text.trimmed().isEmpty()) {
+            pushUndo();
+            m_wmTextUndo = true;
+        }
     }
     m_wmText = text;
-    if (Annotation *item = ensureWatermarkItem()) item->text = text;
+    // Empty text paints nothing; keep it from creating an invisible watermark
+    // item that only pollutes the undo stack.
+    if (text.trimmed().isEmpty()) {
+        if (Annotation *item = watermark()) item->text = text;
+    } else if (Annotation *item = ensureWatermarkItem()) item->text = text;
     saveWatermarkSettings();
     update();
 }
@@ -2254,7 +2291,7 @@ void CaptureOverlay::setWatermarkPosition(int position)
 {
     position = qBound(0, position, 7);
     if (position == m_wmPosition) return;
-    pushUndo();
+    if (watermark()) pushUndo();   // Style-only changes with no item yet just update defaults.
     m_wmPosition = position;
     if (Annotation *item = watermark()) item->watermarkPosition = position;
     if (m_watermarkStylePopup) {
@@ -2268,7 +2305,7 @@ void CaptureOverlay::setWatermarkPosition(int position)
 void CaptureOverlay::setWatermarkColor(const QColor &color, bool undoable)
 {
     if (!color.isValid()) return;
-    if (undoable) pushUndo();
+    if (undoable && watermark()) pushUndo();
     m_wmColor = color;
     if (Annotation *item = watermark()) item->color = color;
     if (m_watermarkColorBoard) m_watermarkColorBoard->setCurrentColor(color);
@@ -2279,7 +2316,7 @@ void CaptureOverlay::setWatermarkColor(const QColor &color, bool undoable)
 void CaptureOverlay::setWatermarkFamily(const QString &family)
 {
     if (family.isEmpty() || family == m_wmFamily) return;
-    pushUndo();
+    if (watermark()) pushUndo();
     m_wmFamily = family;
     if (Annotation *item = watermark()) item->family = family;
     saveWatermarkSettings();
@@ -2290,7 +2327,7 @@ void CaptureOverlay::setWatermarkSize(int size, bool undoable)
 {
     size = qBound(1, size, 400);
     if (size == m_wmSize) return;
-    if (undoable) pushUndo();
+    if (undoable && watermark()) pushUndo();
     m_wmSize = size;
     if (Annotation *item = watermark()) item->font = size;
     saveWatermarkSettings();
@@ -2301,7 +2338,7 @@ void CaptureOverlay::setWatermarkOpacity(int opacity, bool undoable)
 {
     opacity = qBound(0, opacity, 100);
     if (opacity == m_wmOpacity) return;
-    if (undoable) pushUndo();
+    if (undoable && watermark()) pushUndo();
     m_wmOpacity = opacity;
     if (Annotation *item = watermark()) item->watermarkOpacity = opacity;
     saveWatermarkSettings();
@@ -2312,7 +2349,7 @@ void CaptureOverlay::setWatermarkGap(int gap, bool undoable)
 {
     gap = qBound(0, gap, 200);
     if (gap == m_wmGap) return;
-    if (undoable) pushUndo();
+    if (undoable && watermark()) pushUndo();
     m_wmGap = gap;
     if (Annotation *item = watermark()) item->watermarkGap = gap;
     saveWatermarkSettings();
@@ -2811,7 +2848,7 @@ void CaptureOverlay::showWatermarkStylePopup(QToolButton *anchor)
             setter(v, !slider->property("wmUndoPushed").toBool());
         });
         connect(slider, &QSlider::sliderPressed, popup, [this, slider] {
-            pushUndo();
+            if (watermark()) pushUndo();   // No item yet: the slider only tunes defaults.
             slider->setProperty("wmUndoPushed", true);
         });
         connect(slider, &QSlider::sliderReleased, popup, [slider] {
@@ -2859,6 +2896,21 @@ void CaptureOverlay::showWatermarkStylePopup(QToolButton *anchor)
 
 // The old build wrapped time tokens in dollars. Convert saved text once so an
 // existing watermark keeps rendering after the move to double braces.
+static bool legacyTokenBody(const QString &body)
+{
+    // Old tokens were date/time patterns only; currency text like "$5 and $10"
+    // must stay literal, so allow pattern characters and require a format letter.
+    bool formatLetter = false;
+    for (const QChar &c : body) {
+        const char16_t u = c.unicode();
+        const bool allowed = (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z')
+            || u == ':' || u == '-' || u == '.' || u == '/' || u == ' ' || u == '\'';
+        if (!allowed) return false;
+        if (u == 'y' || u == 'M' || u == 'd' || u == 'h' || u == 'm' || u == 's') formatLetter = true;
+    }
+    return formatLetter;
+}
+
 static QString migrateWatermarkDollars(const QString &text)
 {
     if (!text.contains(QLatin1Char('$'))) return text;
@@ -2876,11 +2928,13 @@ static QString migrateWatermarkDollars(const QString &text)
             out += text.mid(open);
             break;
         }
+        const QString body = text.mid(open + 1, close - open - 1);
         if (close == open + 1) {
             out += QLatin1Char('$');
+        } else if (legacyTokenBody(body)) {
+            out += QStringLiteral("{{") + body + QStringLiteral("}}");
         } else {
-            out += QStringLiteral("{{") + text.mid(open + 1, close - open - 1)
-                 + QStringLiteral("}}");
+            out += text.mid(open, close - open + 1);   // Literal dollars stay untouched.
         }
         cursor = close + 1;
     }
@@ -3065,21 +3119,7 @@ void CaptureOverlay::updateToolOptions()
                                        || m_anns[m_selAnn].tool == ATool::Ellipse);
         const int currentStyle = qBound(0, selectedShape ? m_anns[m_selAnn].strokeStyle : m_shapeStyle, 4);
         if (selectedShape) m_shapeStyle = currentStyle;
-        auto styleIcon = [this](int style) {
-            const qreal dpr = devicePixelRatioF();
-            QPixmap pm(qCeil(40 * dpr), qCeil(20 * dpr));
-            pm.setDevicePixelRatio(dpr);
-            pm.fill(Qt::transparent);
-            QPainter painter(&pm);
-            painter.setRenderHint(QPainter::Antialiasing);
-            QPen sample(Bar::ink, 1.5);            // 40x20 sample spanning 5%..95% with flat ends.
-            sample.setStyle(static_cast<Qt::PenStyle>(Qt::SolidLine + style));
-            sample.setCapStyle(Qt::FlatCap);
-            sample.setJoinStyle(Qt::BevelJoin);
-            painter.setPen(sample);
-            painter.drawLine(QPointF(2, 10), QPointF(38, 10));
-            return QIcon(pm);
-        };
+        auto styleIcon = [this](int style) { return dashStyleIcon(style, devicePixelRatioF()); };
         auto *styleCombo = new FlatComboBox(true);
         styleCombo->setObjectName(QStringLiteral("shapeStyleCombo"));
         const char *const styleNames[] = {
@@ -3266,21 +3306,7 @@ void CaptureOverlay::updateToolOptions()
         shapeCombo->setObjectName(QStringLiteral("arrowStyleCombo"));
         shapeCombo->setFixedSize(72, 24);
         shapeCombo->setIconSize(QSize(40, 20));
-        auto lineIcon = [this](int style) {
-            const qreal dpr = devicePixelRatioF();
-            QPixmap pm(qCeil(40 * dpr), qCeil(20 * dpr));
-            pm.setDevicePixelRatio(dpr);
-            pm.fill(Qt::transparent);
-            QPainter painter(&pm);
-            painter.setRenderHint(QPainter::Antialiasing);
-            QPen sample(Bar::ink, 1.5);
-            sample.setStyle(static_cast<Qt::PenStyle>(Qt::SolidLine + style));
-            sample.setCapStyle(Qt::FlatCap);
-            sample.setJoinStyle(Qt::BevelJoin);
-            painter.setPen(sample);
-            painter.drawLine(QPointF(2, 10), QPointF(38, 10));
-            return QIcon(pm);
-        };
+        auto lineIcon = [this](int style) { return dashStyleIcon(style, devicePixelRatioF()); };
         addCombo(lay, currentLine, 5,
                  [&](int k) { return lineIcon(k); },
                  [](int k) {

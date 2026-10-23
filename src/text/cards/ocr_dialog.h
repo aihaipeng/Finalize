@@ -59,7 +59,6 @@ public:
     int barcodeSelected() const { return m_barcodeSelected; }
     int glyphCount() const { return int(m_glyphs.size()); }
     QPolygonF glyphPolygon(int index) const { return m_glyphs.value(index).polygon; }
-    std::function<void(bool)> copied;     // Copy result of the selected text.
     std::function<void()> selectionChanged;   // Glyph selection added, moved or cleared.
 protected:
     void resizeEvent(QResizeEvent *event) override;
