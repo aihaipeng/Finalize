@@ -194,11 +194,20 @@ void prepareComboPopup(QComboBox *combo)
     combo->view()->setVerticalScrollBarPolicy(compact ? Qt::ScrollBarAlwaysOff
                                                       : Qt::ScrollBarAsNeeded);
     combo->view()->setFrameShape(QFrame::NoFrame);
-    // Short lists fit without the popup frame or padding; long lists keep the slim scrollbar.
+    // Short lists fit without the popup frame; long lists keep the slim scrollbar.
     combo->view()->setStyleSheet(compact
-        ? QStringLiteral("QAbstractItemView{background:%1;color:%2;border:none;outline:0;padding:0px;}")
+        ? QStringLiteral("QAbstractItemView{background:%1;color:%2;border:none;outline:0;padding:0px;}"
+                         "QAbstractItemView::item{min-height:26px;}")
               .arg(Bar::surface.name(), Bar::ink.name())
-        : QString());
+        : QStringLiteral("QAbstractItemView::item{min-height:26px;}"));
+    // Rows start where the closed combo's text starts, so the two columns line up.
+    if (auto *delegate = dynamic_cast<PopupItemDelegate *>(combo->itemDelegate())) {
+        QStyleOptionComboBox opt;
+        opt.initFrom(combo);
+        opt.editable = combo->isEditable();
+        delegate->setContentInset(qMax(2, combo->style()->subControlRect(
+            QStyle::CC_ComboBox, &opt, QStyle::SC_ComboBoxEditField, combo).left()));
+    }
 }
 
 void PopupItemDelegate::paintRow(QPainter *painter, const QStyleOptionViewItem &option)
@@ -216,9 +225,22 @@ void PopupItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
                               const QModelIndex &index) const
 {
     paintRow(painter, option);
-    QStyleOptionViewItem plain = option;
-    plain.state &= ~(QStyle::State_MouseOver | QStyle::State_Selected | QStyle::State_HasFocus);
-    QStyledItemDelegate::paint(painter, plain, index);
+    // Draw the row content directly so popup rows share the closed combo's
+    // content inset instead of the style's smaller default item margin.
+    const QRect row = option.rect.adjusted(m_contentInset, 0, -10, 0);
+    int textLeft = row.left();
+    const QIcon icon = qvariant_cast<QIcon>(index.data(Qt::DecorationRole));
+    if (!icon.isNull()) {
+        const int side = option.decorationSize.width();
+        icon.paint(painter, QRect(QPoint(textLeft, row.center().y() - side / 2), QSize(side, side)));
+        textLeft += side + 4;
+    }
+    const QRect textRect(textLeft, row.top(), row.right() + 1 - textLeft, row.height());
+    painter->setFont(option.font);
+    painter->setPen(option.palette.color(QPalette::Text));
+    painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
+                      option.fontMetrics.elidedText(index.data(Qt::DisplayRole).toString(),
+                                                    Qt::ElideRight, textRect.width()));
 }
 
 const QString darkSliderQss = QStringLiteral(
@@ -279,29 +301,29 @@ static const QColor kPresets[ColorBoard::PresetCount] = {
 
 const QColor &ColorBoard::preset(int index) { return kPresets[qBound(0, index, PresetCount - 1)]; }
 
-ColorBoard::ColorBoard(const QColor &current, QWidget *parent)
-    : QWidget(parent), m_current(current)
+ColorBoard::ColorBoard(const QColor &current, QWidget *parent, int commonCount)
+    : QWidget(parent), m_current(current), m_commonCount(qBound(1, commonCount, 8))
 {
     setObjectName(QStringLiteral("colorBoard"));
-    setFixedSize(187, 28);
+    setFixedSize(31 + 26 * m_commonCount, 28);
     setMouseTracking(true);
     setCursor(Qt::PointingHandCursor);
-    setFocusPolicy(Qt::NoFocus);
+    setFocusPolicy(Qt::StrongFocus);
     setAccessibleName(tr("颜色"));
-    setAccessibleDescription(tr("当前颜色，点击打开调色板"));
+    setAccessibleDescription(tr("当前颜色，点击或按 Enter 打开调色板；方向键选择预设，Enter 应用"));
     setToolTip(tr("当前颜色，点击打开调色板"));
 }
 
-QRect ColorBoard::swatchRect(int index)
+QRect ColorBoard::swatchRect(int index, int commonCount)
 {
-    if (index < 0 || index >= CommonCount) return {};
+    if (index < 0 || index >= commonCount) return {};
     return QRect(35 + 26 * index, 4, 20, 20);   // After the current chip and 1px divider; 6px gaps.
 }
 
 const QColor &ColorBoard::swatchColor(int index) const
 {
-    static constexpr int common[] = {0, 10, 3, 5, 6, 7};   // Black, white, red, yellow, green, blue.
-    return preset(common[qBound(0, index, CommonCount - 1)]);
+    static constexpr int common[] = {0, 10, 3, 5, 6, 7, 4, 9};   // Black, white, red, yellow, green, blue, orange, purple.
+    return preset(common[qBound(0, index, m_commonCount - 1)]);
 }
 
 void ColorBoard::setCurrentColor(const QColor &color)
@@ -313,8 +335,8 @@ void ColorBoard::setCurrentColor(const QColor &color)
 
 int ColorBoard::swatchAt(const QPoint &pos) const
 {
-    for (int i = 0; i < CommonCount; ++i)
-        if (swatchRect(i).contains(pos)) return i;   // Gaps between cells pick nothing.
+    for (int i = 0; i < m_commonCount; ++i)
+        if (swatchRect(i, m_commonCount).contains(pos)) return i;   // Gaps between cells pick nothing.
     return -1;
 }
 
@@ -331,13 +353,20 @@ void ColorBoard::paintEvent(QPaintEvent *)
     p.drawRect(big.adjusted(1, 1, -1, -1));
     p.setPen(QPen(QColor("#3a3c42"), 1));
     p.drawLine(QPointF(28.5, 6), QPointF(28.5, 21));
-    for (int i = 0; i < CommonCount; ++i) {
+    for (int i = 0; i < m_commonCount; ++i) {
         const QColor &c = swatchColor(i);
         const bool hovered = i == m_hover;
-        const QRectF r = swatchRect(i);
+        const QRectF r = swatchRect(i, m_commonCount);
         p.setPen(QPen(hovered ? Bar::muted : QColor("#777980"), hovered ? 2 : 1));
         p.setBrush(c);
         p.drawRect(hovered ? r.adjusted(1, 1, -1, -1) : r.adjusted(0.5, 0.5, -0.5, -0.5));
+    }
+    if (hasFocus()) {
+        const QRectF focusRect = m_keyIndex == 0
+            ? currentRect() : swatchRect(m_keyIndex - 1, m_commonCount);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(QColor("#828fff"), 2));
+        p.drawRect(focusRect.adjusted(-1, -1, 1, 1));
     }
 }
 
@@ -353,8 +382,14 @@ void ColorBoard::mouseReleaseEvent(QMouseEvent *e)
 {
     if (e->button() != Qt::LeftButton) return;
     const int index = swatchAt(e->pos());
-    if (index >= 0) emit presetPicked(swatchColor(index));
-    else if (currentRect().contains(e->pos())) emit customRequested();
+    if (index >= 0) {
+        m_keyIndex = index + 1;
+        emit presetPicked(swatchColor(index));
+    } else if (currentRect().contains(e->pos())) {
+        m_keyIndex = 0;
+        emit customRequested();
+    }
+    update();
 }
 
 void ColorBoard::leaveEvent(QEvent *)
@@ -362,4 +397,56 @@ void ColorBoard::leaveEvent(QEvent *)
     if (m_hover < 0) return;
     m_hover = -1;
     update();
+}
+
+void ColorBoard::keyPressEvent(QKeyEvent *e)
+{
+    const int count = m_commonCount + 1;
+    switch (e->key()) {
+    case Qt::Key_Left:
+    case Qt::Key_Up:
+        m_keyIndex = (m_keyIndex + count - 1) % count;
+        update();
+        e->accept();
+        return;
+    case Qt::Key_Right:
+    case Qt::Key_Down:
+        m_keyIndex = (m_keyIndex + 1) % count;
+        update();
+        e->accept();
+        return;
+    case Qt::Key_Home:
+        m_keyIndex = 0;
+        update();
+        e->accept();
+        return;
+    case Qt::Key_End:
+        m_keyIndex = m_commonCount;
+        update();
+        e->accept();
+        return;
+    case Qt::Key_Return:
+    case Qt::Key_Enter:
+    case Qt::Key_Space:
+        if (m_keyIndex == 0) emit customRequested();
+        else emit presetPicked(swatchColor(m_keyIndex - 1));
+        e->accept();
+        return;
+    default:
+        break;
+    }
+    QWidget::keyPressEvent(e);
+}
+
+void ColorBoard::focusInEvent(QFocusEvent *e)
+{
+    m_keyIndex = 0;
+    update();
+    QWidget::focusInEvent(e);
+}
+
+void ColorBoard::focusOutEvent(QFocusEvent *e)
+{
+    update();
+    QWidget::focusOutEvent(e);
 }

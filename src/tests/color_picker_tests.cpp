@@ -1119,8 +1119,8 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
             const QList<QWidget *> row = overlay.m_toolOptions->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly);
             const int at = row.indexOf(overlay.m_colorBoard);
             check(at > 0 && row.at(at - 1)->objectName() == QStringLiteral("barSeparator")
-                      && overlay.m_colorBoard->focusPolicy() == Qt::NoFocus,
-                  "the color board follows a separator and never takes focus");
+                      && overlay.m_colorBoard->focusPolicy() == Qt::StrongFocus,
+                  "the color board follows a separator and accepts keyboard focus");
         }
     }
     if (!toolbarPreviews.isEmpty()) {

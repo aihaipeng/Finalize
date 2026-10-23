@@ -261,7 +261,7 @@ private:
     void setWatermarkSize(int size, bool undoable = true);
     void setWatermarkOpacity(int opacity, bool undoable = true);
     void setWatermarkGap(int gap, bool undoable = true);
-    void showWatermarkInputDialog();
+    void showWatermarkInputDialog(const QRect &workArea = QRect());
     void showWatermarkStylePopup(QToolButton *anchor);
     void showWatermarkColorDialog();
     void loadWatermarkSettings();
@@ -509,7 +509,7 @@ private:
     // Watermark defaults, persisted as the next watermark's starting style.
     QString m_wmText, m_wmFamily = QStringLiteral("Microsoft YaHei");
     QColor m_wmColor = QColor(QStringLiteral("#ed1c24"));
-    int m_wmSize = 20, m_wmOpacity = 30, m_wmGap = 0, m_wmPosition = 0;
+    int m_wmSize = 20, m_wmOpacity = 30, m_wmGap = 30, m_wmPosition = 0;
     qreal m_wmAngle = 315;
     bool m_autoWatermark = false, m_autoWatermarkAdded = false, m_wmTextUndo = false;
     qint64 m_captureTime = 0;

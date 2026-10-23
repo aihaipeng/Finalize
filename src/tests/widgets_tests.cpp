@@ -38,9 +38,9 @@ int ColorBoard::testRendering()
     ColorBoard board(QColor("#ed1c24"));
     board.show();
     QApplication::processEvents();
-    check(board.currentRect() == QRect(2, 4, 20, 20) && board.focusPolicy() == Qt::NoFocus
+    check(board.currentRect() == QRect(2, 4, 20, 20) && board.focusPolicy() == Qt::StrongFocus
               && board.cursor().shape() == Qt::PointingHandCursor && board.accessibleName() == QStringLiteral("颜色"),
-          "the current color is the same size as the presets and the board never takes focus");
+          "the current color is the same size as the presets and the board accepts keyboard focus");
     for (int i = 0; i < CommonCount; ++i) {
         const QRect r = swatchRect(i);
         check(r.size() == QSize(20, 20) && board.rect().contains(r.adjusted(-1, -1, 1, 1))
@@ -73,6 +73,13 @@ int ColorBoard::testRendering()
     check(custom == 1 && !picked.isValid(), "the current color square requests the full color dialog");
     click(swatchRect(1).topRight() + QPoint(2, 0));
     check(custom == 1 && !picked.isValid(), "clicking a gap does nothing");
+    board.setFocus();
+    picked = QColor();
+    QKeyEvent right(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
+    QApplication::sendEvent(&board, &right);
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(&board, &enter);
+    check(picked == QColor("#000000"), "arrow keys and Enter select a preset without the mouse");
     const qreal dpr = board.devicePixelRatioF();
     auto pixel = [&board, dpr](const QPoint &at) {
         const QImage image = board.grab().toImage();

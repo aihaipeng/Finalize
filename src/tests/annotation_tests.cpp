@@ -627,8 +627,8 @@ int CaptureOverlay::testTextAnnotation()
             || button->toolTip() == QStringLiteral("下划线"))
             button->click();
     }
-    check(overlay.m_colorBoard && overlay.m_colorBoard->focusPolicy() == Qt::NoFocus,
-          "the text color board does not steal keyboard focus");
+    check(overlay.m_colorBoard && overlay.m_colorBoard->focusPolicy() == Qt::StrongFocus,
+          "the text color board accepts keyboard focus");
     {
         const QPoint at = ColorBoard::swatchRect(5).center();
         for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {

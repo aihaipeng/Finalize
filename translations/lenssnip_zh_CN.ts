@@ -608,8 +608,24 @@
         <translation>输入水印</translation>
     </message>
     <message>
-        <source>输入水印；$格式$ 会替换为截图时间，例如 $yyyy-MM-dd HH:mm:ss$</source>
-        <translation>输入水印；$格式$ 会替换为截图时间，例如 $yyyy-MM-dd HH:mm:ss$</translation>
+        <source>水印内容</source>
+        <translation>水印内容</translation>
+    </message>
+    <message>
+        <source>输入水印内容…</source>
+        <translation>输入水印内容…</translation>
+    </message>
+    <message>
+        <source>插入时间</source>
+        <translation>插入时间</translation>
+    </message>
+    <message>
+        <source>插入时间，当前格式：%1</source>
+        <translation>插入时间，当前格式：%1</translation>
+    </message>
+    <message>
+        <source>输入水印；{{格式}} 会替换为截图时间，例如 {{yyyy-MM-dd HH:mm:ss}}</source>
+        <translation>输入水印；{{格式}} 会替换为截图时间，例如 {{yyyy-MM-dd HH:mm:ss}}</translation>
     </message>
     <message>
         <source>平铺</source>

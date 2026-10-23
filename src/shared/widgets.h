@@ -11,6 +11,7 @@
 #include <QPainterPath>
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QFocusEvent>
 #include <QtMath>
 #include <QToolButton>
 #include <QComboBox>
@@ -47,6 +48,14 @@ inline const QColor background{"#101114"}, surface{"#18191d"}, content{"#0c0d10"
     focusRing{"#828fff"}, primaryFill{"#e5e5e6"}, primaryInk{"#09090a"};
 constexpr int button = 28, icon = 18, radius = 8, gap = 8;
 }
+// Neutral modal surfaces share the action and focus colors with the floating bars.
+namespace DialogTheme {
+inline const QColor surface{"#1b1b1c"}, field{"#121213"}, ink{"#f7f8f8"}, secondary{"#d0d6e0"},
+    muted{"#8a8f98"}, controlBorder{"#777980"}, hover{"#242425"},
+    pressed{"#2b2b2c"}, selected{"#29292a"}, primaryHover{"#ffffff"},
+    primaryPressed{"#d0d6e0"}, border{255, 255, 255, 23},
+    strongBorder{255, 255, 255, 36}, shadow{0, 0, 0, 102};
+}
 // Capture bar glyphs: light ink, accent when checked, dim when disabled.
 QIcon barIcon(Icon icon, int size = Bar::icon);
 QToolButton *barButton(Icon icon, const QString &tip);
@@ -61,10 +70,13 @@ class PopupItemDelegate : public QStyledItemDelegate
 {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
+    void setContentInset(int inset) { m_contentInset = inset; }
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
                const QModelIndex &index) const override;
 protected:
     static void paintRow(QPainter *painter, const QStyleOptionViewItem &option);
+private:
+    int m_contentInset = 12;
 };
 
 // Rounded track slider for the dark capture bars.
@@ -87,11 +99,12 @@ class ColorBoard : public QWidget
 {
     Q_OBJECT
 public:
-    explicit ColorBoard(const QColor &current, QWidget *parent = nullptr);
+    explicit ColorBoard(const QColor &current, QWidget *parent = nullptr, int commonCount = 6);
     void setCurrentColor(const QColor &color);
     QColor currentColor() const { return m_current; }
+    int commonCount() const { return m_commonCount; }
     QRect currentRect() const { return QRect(2, 4, 20, 20); }
-    static QRect swatchRect(int index);
+    static QRect swatchRect(int index, int commonCount = 6);
     static const QColor &preset(int index);
     static constexpr int PresetCount = 20, CommonCount = 6;
     static int testRendering();
@@ -100,13 +113,18 @@ signals:
     void customRequested();
 protected:
     void paintEvent(QPaintEvent *) override;
-    void mousePressEvent(QMouseEvent *e) override { e->accept(); }   // Keep presses off the canvas below.
+    void mousePressEvent(QMouseEvent *e) override { setFocus(Qt::MouseFocusReason); e->accept(); }
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
     void leaveEvent(QEvent *) override;
+    void keyPressEvent(QKeyEvent *e) override;
+    void focusInEvent(QFocusEvent *e) override;
+    void focusOutEvent(QFocusEvent *e) override;
 private:
     int swatchAt(const QPoint &pos) const;
     const QColor &swatchColor(int index) const;
     QColor m_current;
     int m_hover = -1;
+    int m_commonCount = 6;
+    int m_keyIndex = 0;              // 0 = current color chip; 1..N = preset cells.
 };

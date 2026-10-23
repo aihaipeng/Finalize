@@ -652,8 +652,24 @@
         <translation>Input watermark</translation>
     </message>
     <message>
-        <source>输入水印；$格式$ 会替换为截图时间，例如 $yyyy-MM-dd HH:mm:ss$</source>
-        <translation>Enter watermark; $format$ is replaced with the capture time, e.g. $yyyy-MM-dd HH:mm:ss$</translation>
+        <source>水印内容</source>
+        <translation>Watermark content</translation>
+    </message>
+    <message>
+        <source>输入水印内容…</source>
+        <translation>Enter watermark text…</translation>
+    </message>
+    <message>
+        <source>插入时间</source>
+        <translation>Insert time</translation>
+    </message>
+    <message>
+        <source>插入时间，当前格式：%1</source>
+        <translation>Insert time, current format: %1</translation>
+    </message>
+    <message>
+        <source>输入水印；{{格式}} 会替换为截图时间，例如 {{yyyy-MM-dd HH:mm:ss}}</source>
+        <translation>Enter watermark; {{format}} is replaced with the capture time, e.g. {{yyyy-MM-dd HH:mm:ss}}</translation>
     </message>
     <message>
         <source>平铺</source>

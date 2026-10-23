@@ -507,12 +507,14 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         "QComboBox{color:#f4f5f8;background:#0c0d10;border:none;border-radius:12px;"
         "padding:1px 4px 1px 12px;font-size:13px;}"
         "QComboBox:hover{background:#222326;}"
+        "QComboBox:focus{background:#222326;}"
         "QComboBox::drop-down{border:none;width:22px;background:transparent;}"
         "QComboBox::down-arrow{image:none;width:0px;height:0px;}"
         "QComboBox QAbstractItemView{outline:0px;color:#f4f5f8;background:#18191d;border:none;"
         "padding:0px;selection-background-color:#5e6ad2;selection-color:#ffffff;}"
         "QLineEdit{color:#f4f5f8;background:transparent;border:none;"
-        "selection-background-color:#5e6ad2;selection-color:#ffffff;}");
+        "selection-background-color:#5e6ad2;selection-color:#ffffff;}"
+        "QToolButton:focus{border:1px solid #828fff;border-radius:6px;}");
     if (m_embedded) {
         // The option strip detaches as a small top-level rounded bar;
         // the pin positions it below its own toolbar.
@@ -857,10 +859,6 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
     }
     if (m_mode == Adjusting && m_atool != ATool::None
         && !m_spaceHeld && hitHandle(e->pos()) == H_Move) { // A tool acts inside the selection.
-        if (m_atool == ATool::Watermark) {
-            showWatermarkInputDialog();          // Clicking the watermark opens its editor.
-            return;
-        }
         if (m_atool == ATool::Text) { beginTextEdit(e->pos()); return; }
         if (m_atool == ATool::Number) {          // Click drops the next sequence number.
             pushUndo();

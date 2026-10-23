@@ -107,7 +107,7 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
     overlay.setAttribute(Qt::WA_DeleteOnClose, false);
     overlay.presetSelection(overlay.localScreenRect(QRect(source.topLeft() + QPoint(280, 180), QSize(900, 480))), ATool::Pen);
     overlay.m_wmSize = 22; overlay.m_wmOpacity = 30; overlay.m_wmGap = 0;
-    overlay.m_wmText = QStringLiteral("内部资料 $yyyy-MM-dd HH:mm$");
+    overlay.m_wmText = QStringLiteral("内部资料 {{yyyy-MM-dd HH:mm}}");
     if (auto *wm = overlay.ensureWatermarkItem()) {
         wm->text = overlay.m_wmText; wm->font = 22; wm->watermarkOpacity = 30;
         wm->watermarkGap = 0; wm->watermarkPosition = 0;
@@ -158,7 +158,7 @@ int CaptureOverlay::testThemeUi(const QString &previewPath)
     review.check(overlay.m_colorBoard && overlay.m_colorBoard->width() == 187
                      && overlay.m_colorBoard->height() == 28
                      && ColorBoard::CommonCount == 6 && !ColorBoard::swatchRect(6).isValid(),
-                 "the strip exposes only six square colors without an extra entry");
+                 "the strip exposes six square colors without an extra entry");
     overlay.showSizePopup(overlay.m_sizeButton, 1, 50);
     QApplication::processEvents();
     auto *label = overlay.m_sizePopup->findChild<QLabel *>(QStringLiteral("sizePopupLabel"));

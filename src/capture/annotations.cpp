@@ -42,6 +42,8 @@
 #include <QGraphicsView>
 #include <QGraphicsScene>
 #include <QTextDocument>
+#include <QTextBlock>
+#include <QTextLayout>
 #include <QTextCursor>
 #include <QInputMethodEvent>
 #include <QAbstractTextDocumentLayout>
@@ -61,9 +63,11 @@
 #include <QRegularExpression>
 #include <QDateTime>
 #include <QDialogButtonBox>
+#include <QGraphicsDropShadowEffect>
 #include <QPushButton>
 #include <QPalette>
 #include <QAction>
+#include <QActionGroup>
 #include <QDoubleValidator>
 #include <QLineEdit>
 #include <QHBoxLayout>
@@ -561,13 +565,13 @@ void CaptureOverlay::updateAnnotationCursor(const QPoint &pos)
         setCursor(Qt::ArrowCursor);
         return;
     }
-    if (m_atool == ATool::Watermark) {
-        setCursor(Qt::ArrowCursor);
-        return;
-    }
     const Handle frame = hitHandle(pos);
     if (!m_embedded && !m_pinEdit && frame != H_None && frame != H_Move) {
         setCursor(cursorForHandle(frame));      // The frame and outside area resize the region.
+        return;
+    }
+    if (m_atool == ATool::Watermark) {
+        setCursor(Qt::ArrowCursor);             // The watermark is edited from the strip.
         return;
     }
     if (!m_live && (m_atool == ATool::Text || m_atool == ATool::None)) {
@@ -891,10 +895,20 @@ bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
         if (widget != m_moreButton && !m_morePanel->isAncestorOf(widget)
             && m_moreButton) m_moreButton->setChecked(false);
     }
-    if (obj == m_watermarkEdit && ev->type() == QEvent::MouseButtonRelease
-        && static_cast<QMouseEvent *>(ev)->button() == Qt::LeftButton) {
-        showWatermarkInputDialog();           // The read-only field is a dialog launcher.
-        return true;
+    if (obj == m_watermarkEdit) {
+        if (ev->type() == QEvent::MouseButtonRelease
+            && static_cast<QMouseEvent *>(ev)->button() == Qt::LeftButton) {
+            showWatermarkInputDialog();       // The read-only field is a dialog launcher.
+            return true;
+        }
+        if (ev->type() == QEvent::KeyPress) {
+            const auto *key = static_cast<QKeyEvent *>(ev);
+            if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter
+                || key->key() == Qt::Key_Space) {
+                showWatermarkInputDialog();
+                return true;
+            }
+        }
     }
     if ((ev->type() == QEvent::FocusIn || ev->type() == QEvent::FocusOut) && obj->isWidgetType()) {
         for (QWidget *w = static_cast<QWidget *>(obj); w; w = w->parentWidget()) {
@@ -2117,27 +2131,23 @@ static QString watermarkTimeValue(const QString &spec, const QDateTime &dt)
 
 QString CaptureOverlay::watermarkString(const QString &text, qint64 createdAt)
 {
-    if (!text.contains(QLatin1Char('$'))) return text;
+    if (!text.contains(QStringLiteral("{{"))) return text;
     QString out;
     int cursor = 0;
     while (cursor < text.size()) {
-        const int open = text.indexOf(QLatin1Char('$'), cursor);
+        const int open = text.indexOf(QStringLiteral("{{"), cursor);
         if (open < 0) {
             out += text.mid(cursor);
             break;
         }
         out += text.mid(cursor, open - cursor);
-        const int close = text.indexOf(QLatin1Char('$'), open + 1);
-        if (close < 0) return text;               // The source leaves an unclosed token untouched.
-        if (close == open + 1) {
-            out += QLatin1Char('$');
-        } else {
-            const QString spec = text.mid(open + 1, close - open - 1);
-            const QDateTime stamp = QDateTime::fromMSecsSinceEpoch(
-                createdAt > 0 ? createdAt : QDateTime::currentMSecsSinceEpoch());
-            out += watermarkTimeValue(spec, stamp);
-        }
-        cursor = close + 1;
+        const int close = text.indexOf(QStringLiteral("}}"), open + 2);
+        if (close < 0) return text;               // An unclosed token leaves the whole watermark literal.
+        const QString spec = text.mid(open + 2, close - open - 2);
+        const QDateTime stamp = QDateTime::fromMSecsSinceEpoch(
+            createdAt > 0 ? createdAt : QDateTime::currentMSecsSinceEpoch());
+        out += watermarkTimeValue(spec, stamp);
+        cursor = close + 2;
     }
     return out;
 }
@@ -2324,7 +2334,7 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(244, 245, 248, 100));
+        painter.setBrush(DialogTheme::muted);
         for (QAction *action : actions()) {
             if (!action->menu() || !action->isVisible()) continue;
             const QRect item = actionGeometry(action);
@@ -2338,88 +2348,269 @@ protected:
         }
     }
 };
+
+class DialogDragFilter : public QObject
+{
+public:
+    explicit DialogDragFilter(QDialog *dialog, QObject *parent = nullptr)
+        : QObject(parent), m_dialog(dialog) {}
+
+protected:
+    bool eventFilter(QObject *, QEvent *event) override
+    {
+        if (event->type() == QEvent::MouseButtonPress) {
+            const auto *mouse = static_cast<QMouseEvent *>(event);
+            if (mouse->button() == Qt::LeftButton) {
+                m_offset = mouse->globalPosition().toPoint() - m_dialog->pos();
+                return true;
+            }
+        } else if (event->type() == QEvent::MouseMove) {
+            const auto *mouse = static_cast<QMouseEvent *>(event);
+            if (mouse->buttons() & Qt::LeftButton) {
+                m_dialog->move(mouse->globalPosition().toPoint() - m_offset);
+                return true;
+            }
+        } else if (event->type() == QEvent::MouseButtonRelease) {
+            return true;
+        }
+        return false;
+    }
+
+private:
+    QDialog *m_dialog;
+    QPoint m_offset;
+};
 }
 
-// Reference-style watermark editor: clicking the strip's content field opens a
-// dialog with a multiline text editor, an international time-format menu and
-// Apply/Cancel. Standards with several forms use submenus.
-void CaptureOverlay::showWatermarkInputDialog()
+// The content field opens a multiline editor with time insertion and Apply/Cancel.
+void CaptureOverlay::showWatermarkInputDialog(const QRect &workArea)
 {
     const Annotation *item = watermark();
+
+    QScreen *targetScreen = QGuiApplication::screenAt(globalScreenRect(m_sel).center());
+    if (!targetScreen) targetScreen = QGuiApplication::primaryScreen();
+    const QRect available = workArea.isValid() ? workArea : targetScreen->availableGeometry();
+    const bool shortScreen = available.height() < 400;
+    const int shadowMargin = shortScreen ? 8 : 24;
+    const int windowWidth = qMin(440 + 2 * shadowMargin, available.width() - 32);
+    const int cardWidth = windowWidth - 2 * shadowMargin;
+    const int padding = shortScreen || cardWidth < 400 ? 16 : 20;
+
     QDialog dialog(this);
     dialog.setWindowTitle(tr("输入水印"));
-    dialog.setFixedSize(440, 210);
+    dialog.setWindowFlag(Qt::FramelessWindowHint, true);
+    dialog.setWindowFlag(Qt::WindowStaysOnTopHint, true);
+    dialog.setAttribute(Qt::WA_TranslucentBackground);
+    dialog.setFixedWidth(windowWidth);
     dialog.setStyleSheet(QStringLiteral(
-        "QDialog{background:#18191d;} QLabel{color:#f4f5f8;font-size:12px;}"
-        "QPlainTextEdit{color:#f4f5f8;background:#0c0d10;border:1px solid #2b2d33;"
-        "border-bottom:2px solid #5e6ad2;border-radius:6px;padding:4px 6px;"
-        "selection-background-color:#5e6ad2;selection-color:#ffffff;}"
-        "QToolButton{color:#f4f5f8;background:#0c0d10;border:none;border-radius:8px;"
-        "padding:4px 8px;text-align:left;}"
-        "QToolButton:hover{background:#222326;}"
-        "QToolButton::menu-indicator{image:none;}"
-        "QPushButton{color:#f4f5f8;background:#222326;border:none;border-radius:6px;padding:5px 14px;}"
-        "QPushButton:hover{background:#2b2d33;}"
-        "QPushButton[accent=\"true\"]{background:#5e6ad2;color:#ffffff;}"
-        "QPushButton[accent=\"true\"]:hover{background:#6d78dd;}"));
-    auto *layout = new QVBoxLayout(&dialog);
-    layout->setContentsMargins(12, 12, 12, 12);
-    layout->setSpacing(8);
-    auto *text = new QPlainTextEdit(&dialog);
+        "QDialog{background:transparent;}"
+        "QWidget#watermarkDialogSurface{background:%1;"
+        "border:1px solid %2;border-radius:12px;}"
+        "QLabel{color:%3;}"
+        "QLabel#watermarkDialogTitle{font-size:16px;font-weight:600;}"
+        "QLabel#watermarkTimeLabel{color:%8;font-size:12px;font-weight:400;}"
+        "QPlainTextEdit{color:%3;background:%15;border:1px solid %4;"
+        "border-radius:8px;padding:12px;font-size:14px;"
+        "selection-background-color:%5;selection-color:%6;}"
+        "QPlainTextEdit:focus{border:2px solid %7;padding:11px;}"
+        "QPushButton{color:%8;background:transparent;"
+        "border:1px solid transparent;border-radius:8px;min-height:20px;min-width:40px;"
+        "padding:5px 12px;font-size:14px;}"
+        "QPushButton:hover{background:%9;}"
+        "QPushButton:pressed{background:%10;}"
+        "QPushButton:focus{border:2px solid %7;padding:4px 11px;}"
+        "QPushButton#watermarkTimeFormat{color:%8;background:%9;"
+        "border:1px solid transparent;border-radius:6px;padding:5px 8px;"
+        "text-align:center;font-size:14px;}"
+        "QPushButton#watermarkTimeFormat:hover{background:%10;color:%3;}"
+        "QPushButton#watermarkTimeFormat:pressed{background:%10;}"
+        "QPushButton#watermarkTimeFormat:focus{border:2px solid %7;padding:4px 7px;}"
+        "QPushButton#watermarkTimeFormat::menu-indicator{image:none;width:0;height:0;}"
+        "QPushButton[accent=\"true\"]{background:%11;color:%12;"
+        "border:1px solid %11;font-weight:500;}"
+        "QPushButton[accent=\"true\"]:hover{background:%6;border-color:%6;}"
+        "QPushButton[accent=\"true\"]:pressed{background:%13;border-color:%13;}"
+        "QPushButton[accent=\"true\"]:focus{border:2px solid %7;padding:4px 11px;}"
+        "QToolButton#watermarkDialogClose{color:%14;background:transparent;"
+        "border:none;border-radius:6px;font-size:20px;}"
+        "QToolButton#watermarkDialogClose:hover{background:%9;color:%3;}"
+        "QToolButton#watermarkDialogClose:pressed{background:%10;color:%3;}"
+        "QToolButton#watermarkDialogClose:focus{border:2px solid %7;}")
+        .arg(DialogTheme::surface.name(), DialogTheme::strongBorder.name(QColor::HexArgb),
+             DialogTheme::ink.name(), DialogTheme::controlBorder.name(), Bar::accent.name(),
+             DialogTheme::primaryHover.name(), Bar::focusRing.name(), DialogTheme::secondary.name(),
+              DialogTheme::hover.name(),
+             DialogTheme::pressed.name(), Bar::primaryFill.name(), Bar::primaryInk.name(),
+              DialogTheme::primaryPressed.name(), DialogTheme::muted.name(), DialogTheme::field.name()));
+
+    auto *outer = new QVBoxLayout(&dialog);
+    outer->setContentsMargins(shadowMargin, shadowMargin, shadowMargin, shadowMargin);
+    outer->setSpacing(0);
+
+    auto *surface = new QWidget(&dialog);
+    surface->setObjectName(QStringLiteral("watermarkDialogSurface"));
+    outer->addWidget(surface);
+    auto *shadow = new QGraphicsDropShadowEffect(surface);
+    shadow->setBlurRadius(48);
+    shadow->setOffset(0, 16);
+    shadow->setColor(DialogTheme::shadow);
+    surface->setGraphicsEffect(shadow);
+
+    auto *layout = new QVBoxLayout(surface);
+    layout->setContentsMargins(padding, padding, padding, padding);
+    layout->setSpacing(12);
+
+    auto *titleRow = new QWidget(surface);
+    titleRow->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    auto *titleLine = new QHBoxLayout(titleRow);
+    titleLine->setContentsMargins(0, 0, 0, 0);
+    titleLine->setSpacing(8);
+    auto *title = new QLabel(tr("输入水印"), titleRow);
+    title->setObjectName(QStringLiteral("watermarkDialogTitle"));
+    title->setAttribute(Qt::WA_TransparentForMouseEvents);
+    titleLine->addWidget(title);
+    titleLine->addStretch();
+    auto *close = new QToolButton(titleRow);
+    close->setObjectName(QStringLiteral("watermarkDialogClose"));
+    close->setIcon(cardIcon(Icon::CardClose, 14));
+    close->setIconSize(QSize(14, 14));
+    close->setFixedSize(28, 28);
+    close->setAccessibleName(QCoreApplication::translate("OcrDialog", "关闭 (Esc)"));
+    close->setFocusPolicy(Qt::StrongFocus);
+    connect(close, &QToolButton::clicked, &dialog, &QDialog::reject);
+    titleLine->addWidget(close);
+    layout->addWidget(titleRow);
+    titleRow->installEventFilter(new DialogDragFilter(&dialog, titleRow));
+
+    auto *text = new QPlainTextEdit(surface);
     text->setObjectName(QStringLiteral("watermarkInputText"));
-    text->setPlainText(item ? item->text : m_wmText);
-    text->moveCursor(QTextCursor::End);       // A picked format is appended at the caret.
+    text->setAccessibleName(tr("水印内容"));
+    text->setPlaceholderText(tr("输入水印内容…"));
+    text->setTabChangesFocus(true);
+    text->setPlainText(item ? item->text : QString());
+    text->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    text->moveCursor(QTextCursor::End);
     layout->addWidget(text);
-    auto *row = new QHBoxLayout;
-    row->setSpacing(8);
-    row->addWidget(new QLabel(tr("时间："), &dialog));
 
-    auto *timeButton = new QToolButton(&dialog);
+    auto *cancel = new QPushButton(tr("取消"), surface);
+    cancel->setObjectName(QStringLiteral("watermarkCancel"));
+    auto *apply = new QPushButton(tr("应用"), surface);
+    apply->setObjectName(QStringLiteral("watermarkApply"));
+    apply->setProperty("accent", true);
+
+    // One bottom line: time insertion on the left, confirm actions on the right.
+    auto *bottom = new QBoxLayout(QBoxLayout::TopToBottom);
+    bottom->setContentsMargins(0, 0, 0, 0);
+    bottom->setSpacing(0);
+    auto *metaLine = new QBoxLayout(QBoxLayout::LeftToRight);
+    metaLine->setSpacing(8);
+    bottom->addLayout(metaLine);
+    auto *timeLabel = new QLabel(tr("插入时间"), surface);
+    timeLabel->setObjectName(QStringLiteral("watermarkTimeLabel"));
+    timeLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+
+    auto *timeButton = new QPushButton(surface);
     timeButton->setObjectName(QStringLiteral("watermarkTimeFormat"));
-    timeButton->setPopupMode(QToolButton::InstantPopup);
-    timeButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    timeButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    timeButton->setMinimumWidth(130);
-    timeButton->setToolTip(QStringLiteral("International time standards"));
-    auto *menu = new DimArrowMenu(timeButton);
-    const QString menuStyle = QStringLiteral(
-        "QMenu{color:#f4f5f8;background:#18191d;border:1px solid #2b2d33;padding:4px;}"
-        "QMenu::item{padding:5px 18px 5px 14px;border-radius:4px;}"
-        "QMenu::item:selected{background:#5e6ad2;color:#ffffff;}"
-        "QMenu::right-arrow{image:none;width:0;height:0;}");
-    menu->setStyleSheet(menuStyle);
+    timeButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    timeLabel->setBuddy(timeButton);
 
-    const QDateTime previewStamp = QDateTime::fromMSecsSinceEpoch(
-        m_captureTime > 0 ? m_captureTime : QDateTime::currentMSecsSinceEpoch());
-    auto *preview = new QLabel(&dialog);
-    preview->setObjectName(QStringLiteral("watermarkTimePreview"));
-    preview->setStyleSheet(QStringLiteral("color:#9c9da1;font-size:12px;"));
-    const auto refreshPreview = [preview, previewStamp](const QString &spec) {
-        preview->setText(watermarkTimeValue(spec, previewStamp));
+    auto *actionsRow = new QWidget(surface);
+    auto *actionsLine = new QHBoxLayout(actionsRow);
+    actionsLine->setContentsMargins(0, 0, 0, 0);
+    actionsLine->setSpacing(8);
+    actionsLine->addWidget(cancel);
+    actionsLine->addWidget(apply);
+
+    layout->addLayout(bottom);
+    // Too narrow for one line: caption and actions share a line, the
+    // full-width format button moves below them.
+    const auto setBottomStacked = [bottom, metaLine, timeLabel, timeButton, actionsRow](bool stacked) {
+        for (QBoxLayout *line : {metaLine, bottom}) {
+            for (int i = line->count() - 1; i >= 0; --i) {
+                QLayoutItem *item = line->itemAt(i);
+                if (!item->widget() && !item->layout()) delete line->takeAt(i); // spacers only
+            }
+        }
+        metaLine->removeWidget(timeLabel);
+        metaLine->removeWidget(timeButton);
+        metaLine->removeWidget(actionsRow);
+        bottom->removeWidget(timeButton);
+        if (stacked) {
+            metaLine->addWidget(timeLabel, 0, Qt::AlignVCenter);
+            metaLine->addStretch();
+            metaLine->addWidget(actionsRow, 0, Qt::AlignRight | Qt::AlignVCenter);
+            bottom->setSpacing(8);
+            bottom->addWidget(timeButton);
+        } else {
+            metaLine->addWidget(timeLabel, 0, Qt::AlignVCenter);
+            metaLine->addWidget(timeButton, 0, Qt::AlignVCenter);
+            metaLine->addStretch();
+            metaLine->addWidget(actionsRow, 0, Qt::AlignRight | Qt::AlignVCenter);
+            bottom->setSpacing(0);
+        }
     };
+    const auto fitTimeFormat = [timeButton, timeLabel, setBottomStacked, cancel, apply,
+                                cardWidth, padding] {
+        timeButton->ensurePolished();
+        const QString pattern = timeButton->property("pattern").toString();
+        const int contentWidth = cardWidth - padding * 2;
+        const int labelWidth = timeLabel->sizeHint().width();
+        const int actionWidth = cancel->sizeHint().width() + apply->sizeHint().width() + 16;
+        // The format button fills the middle of the row; stack only when that
+        // middle would become too narrow to read.
+        const int middleWidth = contentWidth - labelWidth - 24 - actionWidth;
+        const bool stacked = middleWidth < 120;
+        setBottomStacked(stacked);
+        const int buttonWidth = stacked ? contentWidth : middleWidth;
+        const int textWidth = qMax(1, buttonWidth - 18);
+        timeButton->setFixedWidth(buttonWidth);
+        timeButton->setText(timeButton->fontMetrics().elidedText(pattern, Qt::ElideRight, textWidth));
+        timeButton->setFixedHeight(32);
+        timeButton->setToolTip(pattern);
+        timeButton->setAccessibleName(tr("插入时间，当前格式：%1").arg(pattern));
+    };
+    auto *menu = new DimArrowMenu(timeButton);
+    const QString menuItemBase = QStringLiteral(
+        "QMenu{color:%1;background:%2;border:1px solid %3;"
+        "padding:4px;border-radius:12px;font-size:13px;}"
+        "QMenu::item{min-height:20px;border-radius:6px;}"
+        "QMenu::item:selected{background:%4;color:%1;}"
+        "QMenu::indicator{width:16px;height:16px;left:10px;}"
+        "QMenu::right-arrow{image:none;width:0;height:0;}")
+        .arg(DialogTheme::ink.name(), DialogTheme::surface.name(),
+             DialogTheme::strongBorder.name(QColor::HexArgb), DialogTheme::selected.name());
+    const QString menuStyle = menuItemBase
+        + QStringLiteral("QMenu::item{padding:6px 24px 6px 32px;}");
+    menu->setStyleSheet(menuItemBase
+        + QStringLiteral("QMenu::item{padding:6px 24px 6px 14px;}"));
 
     const QString last = LensSnipSettings().value(QStringLiteral("Watermark/LastTimeFormat"),
                                                   QStringLiteral("yyyy-MM-dd HH:mm:ss")).toString();
+    auto *formatGroup = new QActionGroup(&dialog);
+    formatGroup->setExclusive(true);
     QAction *selectedAction = nullptr;
     auto addFormat = [&](QMenu *parent, const QString &id, const QString &pattern,
                          const QString &spec) {
         QAction *action = parent->addAction(pattern);
         action->setObjectName(QStringLiteral("watermarkFmt_") + id);
         action->setData(spec);
+        action->setCheckable(true);
+        formatGroup->addAction(action);
+        action->setChecked(spec == last);
         connect(action, &QAction::triggered, &dialog,
-                [text, timeButton, refreshPreview, pattern, spec] {
-            text->insertPlainText(QLatin1Char('$') + spec + QLatin1Char('$'));
+                [text, timeButton, pattern, spec, fitTimeFormat] {
+            text->insertPlainText(QStringLiteral("{{") + spec + QStringLiteral("}}"));
             timeButton->setProperty("spec", spec);
-            timeButton->setText(pattern + QStringLiteral("  ▾"));
-            timeButton->setToolTip(pattern);
-            refreshPreview(spec);
+            timeButton->setProperty("pattern", pattern);
+            fitTimeFormat();
+            text->setFocus();
         });
         if (action->data().toString() == last) selectedAction = action;
         return action;
     };
 
-    auto addSubmenu = [&](const QString &title) {
-        auto *sub = new DimArrowMenu(title, menu);
+    auto addSubmenu = [&](const QString &titleText) {
+        auto *sub = new DimArrowMenu(titleText, menu);
         sub->setStyleSheet(menuStyle);
         menu->addMenu(sub);
         return sub;
@@ -2457,21 +2648,15 @@ void CaptureOverlay::showWatermarkInputDialog()
     addFormat(rfc2822, QStringLiteral("rfc2822"),
               QStringLiteral("ddd, dd MMM yyyy HH:mm:ss ±hhmm"), QStringLiteral("@rfc2822"));
 
-    if (!selectedAction) selectedAction = isoDateTime;
+    if (!selectedAction) {
+        selectedAction = isoDateTime;
+        isoDateTime->setChecked(true);
+    }
     timeButton->setProperty("spec", selectedAction->data().toString());
-    timeButton->setText(selectedAction->text() + QStringLiteral("  ▾"));
-    timeButton->setToolTip(selectedAction->text());
+    timeButton->setProperty("pattern", selectedAction->text());
+    fitTimeFormat();
     timeButton->setMenu(menu);
-    refreshPreview(selectedAction->data().toString());
-    row->addWidget(timeButton, 1);
 
-    auto *apply = new QPushButton(tr("应用"), &dialog);
-    apply->setProperty("accent", true);
-    auto *cancel = new QPushButton(tr("取消"), &dialog);
-    row->addWidget(apply);
-    row->addWidget(cancel);
-    layout->addLayout(row);
-    layout->addWidget(preview);
     connect(apply, &QPushButton::clicked, &dialog, [&dialog, text, timeButton, this] {
         LensSnipSettings().setValue(QStringLiteral("Watermark/LastTimeFormat"),
                                     timeButton->property("spec").toString());
@@ -2481,7 +2666,84 @@ void CaptureOverlay::showWatermarkInputDialog()
         dialog.accept();
     });
     connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
+
+    dialog.setTabOrder(text, timeButton);
+    dialog.setTabOrder(timeButton, cancel);
+    dialog.setTabOrder(cancel, apply);
+    QTimer::singleShot(0, text, [text] { text->setFocus(); });
+
+    dialog.ensurePolished();
+    text->setFixedHeight(text->fontMetrics().lineSpacing() * 5 + 34);
+    dialog.adjustSize();
+    const auto fitEditor = [&dialog, surface, text, available] {
+        surface->layout()->activate();
+        dialog.layout()->activate();
+        qreal lineHeight = text->fontMetrics().lineSpacing();
+        const int editorChrome = text->height() - text->viewport()->height();
+        const qreal documentMargin = text->document()->documentMargin() * 2;
+        qreal contentHeight = 0;
+        int visibleLines = 0;
+        auto *documentLayout = text->document()->documentLayout();
+        // Plain-text document height is in lines; block rectangles are in pixels.
+        for (QTextBlock block = text->document()->begin(); block.isValid(); block = block.next()) {
+            documentLayout->blockBoundingRect(block);
+            const QTextLayout *blockLayout = block.layout();
+            const int lines = qMin(8 - visibleLines, blockLayout->lineCount());
+            if (lines == 0) continue;
+            if (visibleLines == 0) lineHeight = qCeil(blockLayout->lineAt(0).height());
+            for (int i = 0; i < lines; ++i)
+                contentHeight += qCeil(blockLayout->lineAt(i).height());
+            visibleLines += lines;
+            if (visibleLines == 8) break;
+        }
+        // The scrolling threshold reserves one extra pixel below the document margin.
+        const int normalHeight = qCeil(qMax(lineHeight * 5, contentHeight) + documentMargin)
+                                 + editorChrome + 1;
+        const int fixedContent = dialog.sizeHint().height() - text->height();
+        const int budget = available.height() - 32 - fixedContent;
+        text->setFixedHeight(qMin(normalHeight, qMax(editorChrome + qCeil(lineHeight), budget)));
+        surface->layout()->activate();
+        dialog.layout()->activate();
+        dialog.adjustSize();
+        if (dialog.isVisible()) {
+            QPoint pos = dialog.pos();
+            pos.setY(qBound(available.top(), pos.y(),
+                            qMax(available.top(), available.bottom() + 1 - dialog.height())));
+            dialog.move(pos);
+        }
+    };
+    fitEditor();
+    auto *fitTimer = new QTimer(&dialog);
+    fitTimer->setSingleShot(true);
+    connect(fitTimer, &QTimer::timeout, &dialog, fitEditor);
+    connect(text->document(), &QTextDocument::contentsChanged, fitTimer, [fitTimer] { fitTimer->start(0); });
+    connect(text->document()->documentLayout(), &QAbstractTextDocumentLayout::documentSizeChanged,
+            fitTimer, [fitTimer] { fitTimer->start(0); });
+    fitTimer->start(0);
+
+    // Open over the toolbars instead of the parent's center so the card does
+    // not cover the screenshot and does not require dragging from the left.
+    QRect toolbar;
+    for (QWidget *bar : {m_tools, m_toolsTop, m_toolsLeft, m_toolsRight, m_toolOptions}) {
+        if (!bar || !bar->isVisible()) continue;
+        const QRect rect = globalScreenRect(QRect(bar->mapTo(this, QPoint()), bar->size()));
+        toolbar = toolbar.isNull() ? rect : toolbar.united(rect);
+    }
+    if (!toolbar.isNull()) {
+        QScreen *screen = QGuiApplication::screenAt(toolbar.center());
+        if (!screen) screen = QGuiApplication::primaryScreen();
+        const QRect avail = workArea.isValid() ? workArea : screen->availableGeometry();
+        QPoint pos(toolbar.center().x() - dialog.width() / 2,
+                   toolbar.center().y() - dialog.height() / 2);
+        pos.setX(qBound(avail.left(), pos.x(),
+                        qMax(avail.left(), avail.right() + 1 - dialog.width())));
+        pos.setY(qBound(avail.top(), pos.y(),
+                        qMax(avail.top(), avail.bottom() + 1 - dialog.height())));
+        dialog.move(pos);
+    }
+    QPointer<QWidget> trigger = QApplication::focusWidget();
     dialog.exec();
+    if (trigger && trigger->isVisible()) trigger->setFocus(Qt::OtherFocusReason);
 }
 
 void CaptureOverlay::showWatermarkColorDialog()
@@ -2491,6 +2753,7 @@ void CaptureOverlay::showWatermarkColorDialog()
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setOption(QColorDialog::DontUseNativeDialog);
     dialog->setWindowTitle(tr("选择水印颜色"));
+    dialog->setWindowFlag(Qt::WindowStaysOnTopHint, true);
     connect(dialog, &QDialog::finished, this, [this, dialog](int result) {
         if (result == QDialog::Accepted && dialog->currentColor().isValid())
             setWatermarkColor(dialog->currentColor());
@@ -2513,7 +2776,7 @@ void CaptureOverlay::showWatermarkStylePopup(QToolButton *anchor)
     popup->setAttribute(Qt::WA_DeleteOnClose);
     popup->setStyleSheet(QStringLiteral(
         "QDialog{background:#18191d;border:1px solid #2b2d33;border-radius:8px;}"
-        "QLabel{color:#f4f5f8;font-size:12px;}"));
+        "QLabel{color:#f4f5f8;font-size:13px;}"));
     auto *layout = new QVBoxLayout(popup);
     layout->setContentsMargins(12, 10, 12, 10);
     layout->setSpacing(8);
@@ -2531,8 +2794,8 @@ void CaptureOverlay::showWatermarkStylePopup(QToolButton *anchor)
         auto *slider = new QSlider(Qt::Horizontal, row);
         slider->setRange(minimum, maximum);
         slider->setPageStep(1);
-        slider->setFixedSize(128, 22);
-        slider->setFocusPolicy(Qt::NoFocus);
+        slider->setFixedSize(128, 24);
+        slider->setFocusPolicy(Qt::StrongFocus);
         slider->setStyleSheet(darkSliderQss);
         auto *valueLabel = new QLabel(QString::number(value), row);
         valueLabel->setFixedWidth(30);
@@ -2567,7 +2830,7 @@ void CaptureOverlay::showWatermarkStylePopup(QToolButton *anchor)
                              QStringLiteral("watermarkGapRow"));
     gapRow->setVisible(position == 0);
 
-    m_watermarkColorBoard = new ColorBoard(item ? item->color : m_wmColor, popup);
+    m_watermarkColorBoard = new ColorBoard(item ? item->color : m_wmColor, popup, 8);
     m_watermarkColorBoard->setObjectName(QStringLiteral("watermarkColors"));
     connect(m_watermarkColorBoard, &ColorBoard::presetPicked, this,
             [this](const QColor &color) { setWatermarkColor(color); });
@@ -2583,17 +2846,69 @@ void CaptureOverlay::showWatermarkStylePopup(QToolButton *anchor)
     const QPoint target(below.x(), below.y() + popup->height() <= screen.bottom() + 1 ? below.y() : above.y());
     popup->move(qBound(screen.left(), target.x(), qMax(screen.left(), screen.right() + 1 - popup->width())),
                 qBound(screen.top(), target.y(), qMax(screen.top(), screen.bottom() + 1 - popup->height())));
-    connect(popup, &QDialog::finished, this, [this] {
-        if (isVisible()) setFocus();
+    QPointer<QToolButton> anchorGuard(anchor);
+    connect(popup, &QDialog::finished, this, [this, anchorGuard] {
+        if (!isVisible()) return;
+        if (anchorGuard) anchorGuard->setFocus();
+        else setFocus();
     });
     popup->show();
     popup->raise();
+    if (QSlider *first = popup->findChild<QSlider *>()) first->setFocus();
+}
+
+// The old build wrapped time tokens in dollars. Convert saved text once so an
+// existing watermark keeps rendering after the move to double braces.
+static QString migrateWatermarkDollars(const QString &text)
+{
+    if (!text.contains(QLatin1Char('$'))) return text;
+    QString out;
+    int cursor = 0;
+    while (cursor < text.size()) {
+        const int open = text.indexOf(QLatin1Char('$'), cursor);
+        if (open < 0) {
+            out += text.mid(cursor);
+            break;
+        }
+        out += text.mid(cursor, open - cursor);
+        const int close = text.indexOf(QLatin1Char('$'), open + 1);
+        if (close < 0) {
+            out += text.mid(open);
+            break;
+        }
+        if (close == open + 1) {
+            out += QLatin1Char('$');
+        } else {
+            out += QStringLiteral("{{") + text.mid(open + 1, close - open - 1)
+                 + QStringLiteral("}}");
+        }
+        cursor = close + 1;
+    }
+    return out;
 }
 
 void CaptureOverlay::loadWatermarkSettings()
 {
     LensSnipSettings settings;
-    m_wmText = settings.value(QStringLiteral("Watermark/Text")).toString();
+    const QString storedText = settings.value(QStringLiteral("Watermark/Text")).toString();
+    m_wmText = migrateWatermarkDollars(storedText);
+    if (m_wmText != storedText) settings.setValue(QStringLiteral("Watermark/Text"), m_wmText);
+
+    // Common defaults: date plus time, Microsoft YaHei, 20pt, 30% opacity,
+    // 30% tile gap and red. Existing watermark text is preserved; only the
+    // style defaults are reset once.
+    if (settings.value(QStringLiteral("Watermark/DefaultsVersion"), 0).toInt() < 3) {
+        settings.setValue(QStringLiteral("Watermark/FontFamily"), QStringLiteral("Microsoft YaHei"));
+        settings.setValue(QStringLiteral("Watermark/FontSize"), 20);
+        settings.setValue(QStringLiteral("Watermark/LastTimeFormat"),
+                          QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        settings.setValue(QStringLiteral("Watermark/Opacity"), 30);
+        settings.setValue(QStringLiteral("Watermark/Gap"), 30);
+        settings.setValue(QStringLiteral("Watermark/Color"),
+                          QColor(QStringLiteral("#ed1c24")).name(QColor::HexArgb));
+        settings.setValue(QStringLiteral("Watermark/DefaultsVersion"), 3);
+    }
+
     const QColor color(settings.value(QStringLiteral("Watermark/Color")).toString());
     if (color.isValid()) m_wmColor = color;
     m_wmFamily = settings.value(QStringLiteral("Watermark/FontFamily"), m_wmFamily).toString();
@@ -2805,18 +3120,26 @@ void CaptureOverlay::updateToolOptions()
         auto *clearWatermark = edit->addAction(barIcon(Icon::Cancel, 14), QLineEdit::TrailingPosition);
         clearWatermark->setToolTip(tr("清除水印"));
         clearWatermark->setVisible(false);
-        edit->setText(item ? item->text : m_wmText);
+        edit->setText(item ? item->text : QString());
         edit->setCursorPosition(0);               // Long templates read from the start, not their tail.
-        edit->setFixedSize(150, 24);
-        edit->setFocusPolicy(Qt::ClickFocus);
+        edit->setFixedSize(230, 28);
+        edit->setFocusPolicy(Qt::StrongFocus);
+        edit->setAccessibleName(tr("水印内容"));
         edit->setStyleSheet(QStringLiteral(
             "QLineEdit{color:#f4f5f8;background:#0c0d10;border:none;border-radius:12px;"
-            "padding:1px 22px 1px 10px;selection-background-color:#5e6ad2;selection-color:#ffffff;}"));
-        edit->setToolTip(tr("输入水印；$格式$ 会替换为截图时间，例如 $yyyy-MM-dd HH:mm:ss$"));
+            "padding:1px 22px 1px 10px;selection-background-color:#5e6ad2;selection-color:#ffffff;}"
+            "QLineEdit:focus{background:#222326;}"));
+        const auto updateWatermarkTip = [this, edit] {
+            edit->setToolTip(edit->text().isEmpty()
+                ? tr("输入水印；{{格式}} 会替换为截图时间，例如 {{yyyy-MM-dd HH:mm:ss}}")
+                : edit->text());
+        };
+        updateWatermarkTip();
         clearWatermark->setVisible(!edit->text().isEmpty());
         connect(clearWatermark, &QAction::triggered, edit, &QLineEdit::clear);
-        connect(edit, &QLineEdit::textChanged, this, [this, clearWatermark](const QString &text) {
+        connect(edit, &QLineEdit::textChanged, this, [this, clearWatermark, updateWatermarkTip](const QString &text) {
             clearWatermark->setVisible(!text.isEmpty());
+            updateWatermarkTip();
             if (text != m_wmText) setWatermarkText(text);   // Edits come from the input dialog.
         });
         lay->addWidget(edit);
@@ -2849,21 +3172,20 @@ void CaptureOverlay::updateToolOptions()
             QT_TRANSLATE_NOOP("CaptureOverlay", "下中"), QT_TRANSLATE_NOOP("CaptureOverlay", "居中")};
         for (int i = 0; i < 8; ++i) position->addItem(icons[i], tr(positionNames[i]));
         position->setCurrentIndex(item ? qBound(0, item->watermarkPosition, 7) : m_wmPosition);
-        position->setFocusPolicy(Qt::NoFocus);
-        position->setFixedSize(88, 24);
+        position->setFocusPolicy(Qt::StrongFocus);
+        position->setFixedSize(88, 28);
         position->setIconSize(QSize(16, 16));
         position->setAccessibleName(position->currentText());
         connect(position, QOverload<int>::of(&QComboBox::activated), this,
                 [this, position](int index) {
                     setWatermarkPosition(index);
                     position->setAccessibleName(position->itemText(index));
-                    setFocus();
                 });
         lay->addWidget(position);
 
         auto *style = barButton(Icon::Watermark, tr("水印样式：不透明度、大小、间距与颜色"));
         style->setObjectName(QStringLiteral("watermarkStyle"));
-        style->setFocusPolicy(Qt::NoFocus);
+        style->setFocusPolicy(Qt::StrongFocus);
         connect(style, &QToolButton::clicked, this, [this, style] { showWatermarkStylePopup(style); });
         lay->addWidget(style);
 
@@ -2871,8 +3193,8 @@ void CaptureOverlay::updateToolOptions()
         font->setObjectName(QStringLiteral("watermarkFont"));
         font->setEditable(false);
         font->addItems(QFontDatabase().families());
-        font->setFocusPolicy(Qt::NoFocus);
-        font->setFixedSize(140, 24);
+        font->setFocusPolicy(Qt::StrongFocus);
+        font->setFixedSize(140, 28);
         font->view()->setMinimumWidth(200);
         const QString family = item ? item->family : m_wmFamily;
         font->setCurrentText(family);
