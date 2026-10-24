@@ -106,6 +106,19 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
     m_liveDetection = liveDetection;
     m_initialTargets = nativeWindows;
     loadWatermarkSettings();
+    {
+        LensSnipSettings settings;
+        m_autoMosaicBlur = settings.value(QStringLiteral("Capture/AutoMosaicBlur"), false).toBool();
+        m_autoMosaicLevels[0] = qBound(3, settings.value(QStringLiteral("Capture/AutoMosaicStrength"), 6).toInt(), 24);
+        m_autoMosaicLevels[1] = qBound(3, settings.value(QStringLiteral("Capture/AutoMosaicBlurStrength"), 6).toInt(), 24);
+        m_autoMosaicStrength = m_autoMosaicLevels[m_autoMosaicBlur ? 1 : 0];
+        m_autoMosaicSync = settings.value(QStringLiteral("Capture/AutoMosaicSync"), true).toBool();
+    }
+    m_autoSpinTimer.setInterval(60);
+    connect(&m_autoSpinTimer, &QTimer::timeout, this, [this] {
+        m_autoSpinAngle = (m_autoSpinAngle + 30) % 360;
+        update();
+    });
     if (m_embedded) {
         // A child canvas inside the pin: no session chrome, no freeze, no
         // foreground claim. The single frame is the pin's current pixels.
@@ -422,32 +435,43 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         });
         m_toolBtn[int(tool)] = button;
     }
+    // Auto mosaic is its own tool button, not a mosaic sub-mode: it scans the
+    // capture instead of drawing a region.
+    m_autoMosaicButton = barButton(Icon::AutoMosaic, tr("自动马赛克：识别文字、二维码、图片等元素，点击遮挡"));
+    m_autoMosaicButton->setObjectName(QStringLiteral("autoMosaic"));
+    m_autoMosaicButton->setCheckable(true);
+    connect(m_autoMosaicButton, &QToolButton::clicked, this, [this] {
+        if (m_autoMosaic && m_atool == ATool::Mosaic) setToolNone();
+        else selectAutoMosaic();
+    });
     // Drawing tools | undo, redo | capture actions ending with pin, save, copy.
     if (pinEdit) {
         auto *done = barButton(Icon::Check, tr("完成编辑 (Enter)"));
         connect(done, &QToolButton::clicked, this, &CaptureOverlay::pinCapture);
         m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
-                         m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
-                         m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)],
-                         m_toolBtn[int(ATool::Watermark)], undo, redo, done};
+                         m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_autoMosaicButton,
+                         m_toolBtn[int(ATool::Text)], m_toolBtn[int(ATool::Number)],
+                         m_toolBtn[int(ATool::Eraser)], m_toolBtn[int(ATool::Watermark)], undo, redo, done};
     } else {
         m_toolButtons = {m_shapeButton, m_toolBtn[int(ATool::Arrow)], m_toolBtn[int(ATool::Pen)],
-                         m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_toolBtn[int(ATool::Text)],
-                         m_toolBtn[int(ATool::Number)], m_toolBtn[int(ATool::Eraser)],
-                         m_toolBtn[int(ATool::Watermark)], undo, redo};
+                         m_toolBtn[int(ATool::Marker)], m_toolBtn[int(ATool::Mosaic)], m_autoMosaicButton,
+                         m_toolBtn[int(ATool::Text)], m_toolBtn[int(ATool::Number)],
+                         m_toolBtn[int(ATool::Eraser)], m_toolBtn[int(ATool::Watermark)], undo, redo};
         m_toolButtons += outputButtons;
     }
     const QStringList toolIds = pinEdit
         ? QStringList{QStringLiteral("shape"), QStringLiteral("arrow"), QStringLiteral("pen"),
-                      QStringLiteral("marker"), QStringLiteral("mosaic"), QStringLiteral("text"),
-                      QStringLiteral("number"), QStringLiteral("eraser"), QStringLiteral("watermark"),
-                      QStringLiteral("undo"), QStringLiteral("redo"), QStringLiteral("done")}
+                      QStringLiteral("marker"), QStringLiteral("mosaic"), QStringLiteral("autoMosaic"),
+                      QStringLiteral("text"), QStringLiteral("number"), QStringLiteral("eraser"),
+                      QStringLiteral("watermark"), QStringLiteral("undo"), QStringLiteral("redo"),
+                      QStringLiteral("done")}
         : QStringList{QStringLiteral("shape"), QStringLiteral("arrow"), QStringLiteral("pen"),
-                      QStringLiteral("marker"), QStringLiteral("mosaic"), QStringLiteral("text"),
-                      QStringLiteral("number"), QStringLiteral("eraser"), QStringLiteral("watermark"),
-                      QStringLiteral("undo"), QStringLiteral("redo"), QStringLiteral("scroll"), QStringLiteral("ocr"),
-                      QStringLiteral("translate"), QStringLiteral("barcode"), QStringLiteral("pin"),
-                      QStringLiteral("refresh"), QStringLiteral("save"), QStringLiteral("copy")};
+                      QStringLiteral("marker"), QStringLiteral("mosaic"), QStringLiteral("autoMosaic"),
+                      QStringLiteral("text"), QStringLiteral("number"), QStringLiteral("eraser"),
+                      QStringLiteral("watermark"), QStringLiteral("undo"), QStringLiteral("redo"),
+                      QStringLiteral("scroll"), QStringLiteral("ocr"), QStringLiteral("translate"),
+                      QStringLiteral("barcode"), QStringLiteral("pin"), QStringLiteral("refresh"),
+                      QStringLiteral("save"), QStringLiteral("copy")};
     const bool canEditLayout = !pinEdit && !m_embedded;
     m_defaultToolOrder = toolIds;
     for (int i = 0; i < m_toolButtons.size(); ++i) {
@@ -514,6 +538,10 @@ CaptureOverlay::CaptureOverlay(const QVector<ScreenFrame> &frames,
         "padding:0px;selection-background-color:#5e6ad2;selection-color:#ffffff;}"
         "QLineEdit{color:#f4f5f8;background:transparent;border:none;"
         "selection-background-color:#5e6ad2;selection-color:#ffffff;}"
+        "QCheckBox{color:#f4f5f8;font-size:13px;spacing:6px;}"
+        "QCheckBox::indicator{width:14px;height:14px;border:1px solid #6b7280;"
+        "border-radius:3px;background:#0c0d10;}"
+        "QCheckBox::indicator:checked{background:#5e6ad2;border-color:#5e6ad2;}"
         "QToolButton:focus{border:1px solid #828fff;border-radius:6px;}");
     if (m_embedded) {
         // The option strip detaches as a small top-level rounded bar;
@@ -659,6 +687,14 @@ void CaptureOverlay::paintEvent(QPaintEvent *event)
         // Marks stay visible outside the frame while the frame is being adjusted;
         // cropped()/composited output still clips them to the final selection.
         paintAnnotations(p, QPointF(0, 0), 1.0, QRectF(event->rect()), false);
+        paintAutoMosaicOverlay(p);
+        paintAutoMosaicStatus(p);
+        if (m_autoDragging && !m_autoDragRect.isNull()) {
+            p.setPen(QPen(Bar::accent, 1, Qt::DashLine));
+            p.setBrush(QColor(91, 140, 255, 30));
+            p.drawRect(m_autoDragRect.normalized());
+            p.setBrush(Qt::NoBrush);
+        }
     }
     if (m_live && regionItem(m_ann))              // Thin frame shows the dragged region.
         paintMosaicBorder(p, m_ann, false);
@@ -763,6 +799,21 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *e)
         updateTip();
         updateSelectionRegion(oldSel, m_sel);
         updateInspector();
+        return;
+    }
+    if (m_mode == Adjusting && m_atool == ATool::Mosaic && m_autoMosaic && !m_spaceHeld
+        && m_sel.contains(e->pos())) {
+        int ann = -1, block = -1;
+        if (autoMosaicAt(e->pos(), &ann, &block)) {
+            m_autoPressAnn = ann;
+            m_autoPressBlock = block;
+            m_autoPressMoved = false;
+        } else {
+            m_autoDragging = true;
+            m_autoDragStart = e->pos();
+            m_autoDragRect = QRect(e->pos(), QSize(1, 1));
+        }
+        update();
         return;
     }
     if (m_mode == Adjusting && !m_spaceHeld
@@ -944,6 +995,29 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *e)
     updateInspector();
     const QPoint pos = e->pos();
     if (m_waitingClick) return;
+    if (m_autoMosaic && m_atool == ATool::Mosaic && m_mode == Adjusting) {
+        if (m_autoDragging) {
+            m_autoDragRect = QRect(m_autoDragStart, pos).normalized();
+            update();
+            return;
+        }
+        if (m_autoPressAnn >= 0) {
+            if ((pos - m_pressPos).manhattanLength() >= QApplication::startDragDistance())
+                m_autoPressMoved = true;
+            return;
+        }
+        if (m_sel.contains(pos) && hitHandle(pos) == H_None) {
+            int ann = -1, block = -1;
+            const bool hit = autoMosaicAt(pos, &ann, &block);
+            if ((hit ? ann : -1) != m_autoHoverAnn || (hit ? block : -1) != m_autoHoverBlock) {
+                m_autoHoverAnn = hit ? ann : -1;
+                m_autoHoverBlock = hit ? block : -1;
+                update();
+            }
+            setCursor(hit ? Qt::PointingHandCursor : Qt::CrossCursor);
+            return;
+        }
+    }
     if (m_live && m_ann.tool == ATool::Mosaic && m_ann.mosaicBrush) updateAnnotationCursor(pos);
     if (m_live) {                               // Live annotation follows the cursor.
         const QRect dirty = annotationRect(m_ann);
@@ -1008,6 +1082,21 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent *e)
         QMouseEvent fwd(e->type(), QPointF(local), e->windowPos(), e->screenPos(),
                         e->button(), e->buttons(), e->modifiers());
         QApplication::sendEvent(parent(), &fwd);
+        return;
+    }
+    if (m_autoMosaic && m_atool == ATool::Mosaic && (m_autoDragging || m_autoPressAnn >= 0)) {
+        if (m_autoDragging) {
+            m_autoDragging = false;
+            const QRect rect = m_autoDragRect.normalized();
+            m_autoDragRect = QRect();
+            if (rect.width() >= 4 && rect.height() >= 4) addAutoMosaicBlock(rect);
+        } else if (!m_autoPressMoved) {
+            toggleAutoMosaicBlock(m_autoPressAnn, m_autoPressBlock);
+        }
+        m_autoPressAnn = -1;
+        m_autoPressBlock = -1;
+        m_autoPressMoved = false;
+        update();
         return;
     }
     if (m_live) {                               // Commit the annotation; the tool stays active.
@@ -1095,6 +1184,7 @@ void CaptureOverlay::closeEvent(QCloseEvent *e)
     if (m_colorDialog) m_colorDialog->close();
     if (m_customSizePopup) m_customSizePopup->close();
     cancelDetection();
+    cancelAutoMosaicDetection();
     if (m_detector) m_detector->stop();
     QWidget::closeEvent(e);
 }
@@ -2066,6 +2156,11 @@ QStringList CaptureOverlay::toolsForSide(const QString &side) const
 
 QString CaptureOverlay::activeToolSide() const
 {
+    if (m_autoMosaic && m_atool == ATool::Mosaic) {
+        QString side = toolSide(QStringLiteral("autoMosaic"));
+        if (side == QStringLiteral("hidden")) side = toolSide(QStringLiteral("more"));
+        return side;
+    }
     QString id;
     switch (m_atool) {
     case ATool::Rect: case ATool::Ellipse: id = QStringLiteral("shape"); break;
@@ -2202,6 +2297,15 @@ void CaptureOverlay::loadToolLayout()
                 if (widgetForTool(id)) sides.insert(id, QStringLiteral("bottom"));
         }
     }
+    // A tool added after the user saved a layout must appear next to its group,
+    // not at the far end where the overflow panel would hide it.
+    if (!order.isEmpty() && !order.contains(QStringLiteral("autoMosaic"))
+        && order.contains(QStringLiteral("mosaic"))) {
+        order.insert(order.indexOf(QStringLiteral("mosaic")) + 1, QStringLiteral("autoMosaic"));
+        const QString side = sides.value(QStringLiteral("mosaic"), QStringLiteral("bottom"));
+        sides.insert(QStringLiteral("autoMosaic"),
+                     side == QStringLiteral("hidden") ? QStringLiteral("bottom") : side);
+    }
     QStringList all = m_defaultToolOrder;
     if (m_moreButton) all << QStringLiteral("more");
     if (order.isEmpty()) order = all;
@@ -2224,6 +2328,15 @@ void CaptureOverlay::loadToolLayout()
         m_toolOrder << id;
         m_toolSide.insert(id, side);
     }
+    // Keep the auto mosaic entry adjacent to the mosaic group even for layouts
+    // saved before the tool existed; otherwise the overflow panel hides it.
+    m_toolOrder.removeAll(QStringLiteral("autoMosaic"));
+    int autoAt = m_toolOrder.indexOf(QStringLiteral("mosaic"));
+    if (autoAt < 0) autoAt = m_toolOrder.indexOf(QStringLiteral("shape"));
+    m_toolOrder.insert(qMax(0, autoAt + 1), QStringLiteral("autoMosaic"));
+    const QString mosaicSide = m_toolSide.value(QStringLiteral("mosaic"), QStringLiteral("bottom"));
+    m_toolSide.insert(QStringLiteral("autoMosaic"),
+                      mosaicSide == QStringLiteral("hidden") ? QStringLiteral("bottom") : mosaicSide);
 }
 
 void CaptureOverlay::saveToolLayout()
@@ -2465,6 +2578,7 @@ QString CaptureOverlay::toolDisplayName(const QString &id) const
     if (id == QStringLiteral("pen")) return tr("画笔");
     if (id == QStringLiteral("marker")) return tr("荧光笔");
     if (id == QStringLiteral("mosaic")) return tr("马赛克");
+    if (id == QStringLiteral("autoMosaic")) return tr("自动马赛克");
     if (id == QStringLiteral("text")) return tr("文字");
     if (id == QStringLiteral("number")) return tr("序号");
     if (id == QStringLiteral("eraser")) return tr("橡皮");
@@ -2491,6 +2605,7 @@ Icon CaptureOverlay::toolIcon(const QString &id) const
     if (id == QStringLiteral("pen")) return Icon::Pen;
     if (id == QStringLiteral("marker")) return Icon::Marker;
     if (id == QStringLiteral("mosaic")) return Icon::Mosaic;
+    if (id == QStringLiteral("autoMosaic")) return Icon::AutoMosaic;
     if (id == QStringLiteral("text")) return Icon::Text;
     if (id == QStringLiteral("number")) return Icon::Number;
     if (id == QStringLiteral("eraser")) return Icon::Eraser;
@@ -3357,6 +3472,7 @@ void CaptureOverlay::refreshScreenshot()
         m_refreshButton->setChecked(false);
     }
     cancelDetection();
+    cancelAutoMosaicDetection();
     if (m_detector) m_detector->stop();
     if (m_sizePopup) m_sizePopup->close();
     if (m_colorDialog) m_colorDialog->close();
@@ -3565,6 +3681,7 @@ void CaptureOverlay::setImage(const QImage &image)
 
 void CaptureOverlay::clearAll()
 {
+    cancelAutoMosaicDetection();
     m_anns.clear();
     m_undoStack.clear();
     m_redoStack.clear();

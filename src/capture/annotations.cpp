@@ -392,6 +392,7 @@ qreal CaptureOverlay::distToSegment(const QPointF &p, const QPointF &a, const QP
 
 bool CaptureOverlay::annotationHit(const Annotation &ann, const QPoint &pos)
 {
+    if (ann.autoMosaic) return false;          // Toggled through its blocks, never moved as an item.
     const int tol = qMax(5, ann.pen / 2 + 4);
     if (ann.tool == ATool::Eraser && !ann.fill) return false;   // Brush erasures are not selectable.
     if (ann.tool == ATool::Watermark) return false;             // Controlled from the strip, never selected.
@@ -470,6 +471,7 @@ int CaptureOverlay::textAnnotationAt(const QPoint &pos) const
 
 QVector<QPoint> CaptureOverlay::annAnchors(const Annotation &ann) const
 {
+    if (ann.autoMosaic) return {};
     if (ann.tool == ATool::Mosaic && ann.mosaicBrush) return {};
     if (ann.tool == ATool::Arrow || (ann.tool == ATool::Marker && !ann.fill)) return {ann.a, ann.b};
     switch (ann.tool) {
@@ -591,6 +593,11 @@ void CaptureOverlay::updateAnnotationCursor(const QPoint &pos)
     const Handle frame = hitHandle(pos);
     if (!m_embedded && !m_pinEdit && frame != H_None && frame != H_Move) {
         setCursor(cursorForHandle(frame));      // The frame and outside area resize the region.
+        return;
+    }
+    if (m_autoMosaic && m_atool == ATool::Mosaic) {
+        int ann = -1, block = -1;
+        setCursor(autoMosaicAt(pos, &ann, &block) ? Qt::PointingHandCursor : Qt::CrossCursor);
         return;
     }
     if (m_atool == ATool::Watermark) {
@@ -1273,6 +1280,7 @@ bool CaptureOverlay::markerAreaMode() const
 
 int CaptureOverlay::mosaicStrength() const
 {
+    if (m_autoMosaic && m_atool == ATool::Mosaic) return m_autoMosaicStrength;
     if (m_live) return m_ann.mosaicStrength;
     if (m_selAnn >= 0 && m_selAnn < m_anns.size()) return m_anns[m_selAnn].mosaicStrength;
     return m_mosaicLevels[m_mosaicBlur];
@@ -1280,6 +1288,7 @@ int CaptureOverlay::mosaicStrength() const
 
 bool CaptureOverlay::mosaicBlur() const
 {
+    if (m_autoMosaic && m_atool == ATool::Mosaic) return m_autoMosaicBlur;
     if (m_live) return m_ann.mosaicBlur;
     if (m_selAnn >= 0 && m_selAnn < m_anns.size()) return m_anns[m_selAnn].mosaicBlur;
     return m_mosaicBlur;
@@ -1810,6 +1819,8 @@ void CaptureOverlay::setToolNone()
     if (m_live) { m_live = false; commitAnnotation(); }   // A live arrow can still be open.
     stopItemDrag();
     commitTextEdit();
+    if (m_autoMosaic) cancelAutoMosaicDetection();
+    m_autoMosaic = false;
     m_atool = ATool::None;
     syncToolButtons();
     updateToolOptions();
@@ -1824,6 +1835,8 @@ void CaptureOverlay::selectTool(ATool tool)                      // Shared by to
     if (m_live) { m_live = false; commitAnnotation(); }
     stopItemDrag();
     commitTextEdit();
+    if (m_autoMosaic) cancelAutoMosaicDetection();
+    m_autoMosaic = false;
     if (tool != ATool::Watermark) {
         m_wmTextUndo = false;
         if (m_watermarkStylePopup) m_watermarkStylePopup->close();
@@ -1843,11 +1856,16 @@ void CaptureOverlay::selectTool(ATool tool)                      // Shared by to
 
 void CaptureOverlay::syncToolButtons()
 {
-    const QToolButton *active = m_atool == ATool::None ? nullptr : m_toolBtn[int(m_atool)];
+    const QToolButton *active = m_atool == ATool::None || m_autoMosaic
+        ? nullptr : m_toolBtn[int(m_atool)];
     for (int t = 1; t < m_toolBtn.size(); ++t) {
         if (m_toolBtn[t] == m_shapeButton) continue;   // Rect and ellipse share one button.
         QSignalBlocker lock(m_toolBtn[t]);
         m_toolBtn[t]->setChecked(m_toolBtn[t] == active);
+    }
+    if (m_autoMosaicButton) {
+        const QSignalBlocker lock(m_autoMosaicButton);
+        m_autoMosaicButton->setChecked(m_autoMosaic && m_atool == ATool::Mosaic);
     }
     const bool shapeActive = m_atool == ATool::Rect || m_atool == ATool::Ellipse;
     const QSignalBlocker lock(m_shapeButton);
@@ -3020,6 +3038,9 @@ void CaptureOverlay::updateToolOptions()
     m_mosaicStrengthLabel = nullptr;
     m_mosaicPreview = nullptr;
     m_mosaicDragUndo = false;
+    m_autoModeCombo = nullptr;
+    m_autoStrengthSlider = nullptr;
+    m_autoSyncBox = nullptr;
     m_colorBoard = nullptr;
     delete m_toolOptions->layout();              // Drops the previous row.
     const QList<QWidget *> stale = m_toolOptions->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly);
@@ -3118,6 +3139,54 @@ void CaptureOverlay::updateToolOptions()
         });
         lay->addWidget(m_sizeInput);
     };
+    if (tool == ATool::Mosaic && m_autoMosaic) {
+        // Auto mosaic bar: effect, strength, synchronous toggling.
+        m_autoModeCombo = new FlatComboBox;
+        m_autoModeCombo->setObjectName(QStringLiteral("autoMosaicMode"));
+        m_autoModeCombo->addItem(tr("马赛克"));
+        m_autoModeCombo->addItem(tr("模糊"));
+        m_autoModeCombo->setCurrentIndex(m_autoMosaicBlur ? 1 : 0);
+        m_autoModeCombo->setFixedSize(84, 24);
+        m_autoModeCombo->setFocusPolicy(Qt::NoFocus);
+        connect(m_autoModeCombo, QOverload<int>::of(&QComboBox::activated), this,
+                [this](int index) { setAutoMosaicMode(index == 1); });
+        lay->addWidget(m_autoModeCombo);
+        m_autoStrengthSlider = new QSlider(Qt::Horizontal);
+        m_autoStrengthSlider->setObjectName(QStringLiteral("autoMosaicStrength"));
+        m_autoStrengthSlider->setAccessibleName(tr("马赛克强度"));
+        m_autoStrengthSlider->setRange(3, 24);
+        m_autoStrengthSlider->setPageStep(1);
+        m_autoStrengthSlider->setFixedSize(128, 22);
+        m_autoStrengthSlider->setFocusPolicy(Qt::NoFocus);
+        m_autoStrengthSlider->setStyleSheet(darkSliderQss);
+        m_autoStrengthSlider->setValue(m_autoMosaicStrength);
+        connect(m_autoStrengthSlider, &QSlider::valueChanged, this, &CaptureOverlay::setAutoMosaicStrength);
+        connect(m_autoStrengthSlider, &QSlider::sliderPressed, this, [this] { m_autoDragUndo = false; });
+        connect(m_autoStrengthSlider, &QSlider::sliderReleased, this, [this] { m_autoDragUndo = false; });
+        lay->addWidget(m_autoStrengthSlider);
+        m_autoSyncBox = new QCheckBox(tr("同步操作"));
+        m_autoSyncBox->setObjectName(QStringLiteral("autoMosaicSync"));
+        m_autoSyncBox->setChecked(m_autoMosaicSync);
+        m_autoSyncBox->setFocusPolicy(Qt::NoFocus);
+        connect(m_autoSyncBox, &QCheckBox::toggled, this, [this](bool on) {
+            m_autoMosaicSync = on;
+            LensSnipSettings settings;
+            settings.setValue(QStringLiteral("Capture/AutoMosaicSync"), on);
+        });
+        lay->addWidget(m_autoSyncBox);
+        for (int i = 0; i < lay->count(); ++i) lay->itemAt(i)->widget()->show();
+        m_toolOptions->show();
+        if (m_embedded) {
+            m_toolOptions->adjustSize();
+            m_toolOptions->raise();
+            emit stripRebuilt();
+            return;
+        }
+        placeToolBars();
+        m_toolOptions->raise();
+        update(old.united(m_toolOptions->geometry()).adjusted(-4, -4, 4, 4));
+        return;
+    }
     switch (tool) {
     case ATool::Rect:
     case ATool::Ellipse: {
@@ -3976,9 +4045,14 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         const qreal dpr = m_shot.devicePixelRatioF();
         const QRect area = annotationRect(ann).intersected(
             QRect(0, 0, qFloor(m_shot.width() / dpr), qFloor(m_shot.height() / dpr)));
-        if (area.isEmpty() || (ann.mosaicBrush && ann.stroke.isEmpty())) break;
+        if (area.isEmpty() || (!ann.autoMosaic && ann.mosaicBrush && ann.stroke.isEmpty())) break;
         QPainterPath mask;
-        if (ann.mosaicBrush) mask = strokeMask(ann.stroke, ann.pen);
+        if (ann.autoMosaic) {
+            mask.setFillRule(Qt::WindingFill);   // Overlapping blocks must not cancel out.
+            for (const Annotation::AutoBlock &block : ann.autoBlocks)
+                if (block.included) mask.addRect(QRectF(block.rect));
+            if (mask.isEmpty()) break;
+        } else if (ann.mosaicBrush) mask = strokeMask(ann.stroke, ann.pen);
         else mask.addRect(QRectF(ann.rect));
         p.setClipPath(mask, Qt::IntersectClip);
         if (ann.mosaicSmart) {

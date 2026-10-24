@@ -261,6 +261,22 @@
         <translation>矩形马赛克</translation>
     </message>
     <message>
+        <source>自动马赛克</source>
+        <translation>自动马赛克</translation>
+    </message>
+    <message>
+        <source>自动马赛克：识别文字、二维码、图片等元素，点击遮挡</source>
+        <translation>自动马赛克：识别文字、二维码、图片等元素，点击遮挡</translation>
+    </message>
+    <message>
+        <source>同步操作</source>
+        <translation>同步操作</translation>
+    </message>
+    <message>
+        <source>模糊</source>
+        <translation>模糊</translation>
+    </message>
+    <message>
         <location line="+3"/>
         <source>马赛克笔：滚轮调节笔宽</source>
         <translation>马赛克笔：滚轮调节笔宽</translation>

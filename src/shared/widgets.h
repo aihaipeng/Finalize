@@ -30,6 +30,7 @@ enum class Icon { Save, Copy, Pin, LongShot, Ocr, Cancel, Rect, Ellipse, Arrow, 
                   CardZoomOut, CardActual, CardPin, CardMinimize, CardMaximize, CardRestore, CardClose, CardSearch,
                   CardUp, CardDown, CardRight, CardFormat, Back, Crop, CropStart, CropEnd, Barcode, CardLink,
                   RoundRect, CornerSquare, CornerRounded, AspectLock, Warning, Sliders, Clock, Picker, MagicEraser,
+                  AutoMosaic,
                   Watermark, More, Folder };
 
 // dark: glyphs for a dark surface (light ink) instead of the light bars.

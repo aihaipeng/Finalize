@@ -48,7 +48,7 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
         "card-restore", "card-close", "card-search", "card-up", "card-down", "card-right", "card-format",
         "back", "crop", "crop_start", "crop_end", "barcode", "card-link", "round_rect",
         "corner_square", "corner_rounded", "aspect_lock", "warning", "sliders", "clock", "picker",
-        "magic_eraser", "watermark", "more", "folder"};
+        "magic_eraser", "auto_mosaic", "watermark", "more", "folder"};
     // A shared stroke grid keeps primary tools and card actions visually aligned.
     const char *path = nullptr;
     const char *markup = nullptr;
@@ -66,6 +66,10 @@ QIcon renderIcon(Icon icon, int size, int style, std::initializer_list<IconVaria
     case Icon::Mosaic:
         // A framed checkerboard is the clearest pixelation glyph; filled cells avoid a layout-grid read.
         markup = R"(<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='3' y='3' width='18' height='18' rx='1.5' fill='none' stroke='white' stroke-width='1.6'/><path fill='white' d='M5 5h4v4H5z M13 5h4v4h-4z M9 9h4v4H9z M17 9h4v4h-4z M5 13h4v4H5z M13 13h4v4h-4z M9 17h4v4H9z M17 17h4v4h-4z'/></svg>)";
+        break;
+    case Icon::AutoMosaic:
+        // Checkerboard plus a sparkle: the tool finds identifiers instead of drawing one box.
+        markup = R"(<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='2' y='3' width='15' height='15' rx='1.5' fill='none' stroke='white' stroke-width='1.6'/><path fill='white' d='M4 5h4v4H4z M11 5h4v4h-4z M7.5 9h4v4h-4z M4 13h4v4H4z M11 13h4v4h-4z'/><path fill='white' d='M20 2l1 2.5L23.5 5.5 21 6.5 20 9l-1-2.5L16.5 5.5 19 4.5z'/></svg>)";
         break;
     case Icon::LineWidth:
         // Four strokes from hairline to bold; the box crops the source icon's empty margin.

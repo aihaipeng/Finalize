@@ -3,6 +3,7 @@ SOURCES += $$PWD/test_support.cpp \
            $$PWD/export_tests.cpp \
            $$PWD/annotation_tests.cpp \
            $$PWD/barcode_tests.cpp \
+           $$PWD/auto_mosaic_tests.cpp \
            $$PWD/capture_overlay_tests.cpp \
            $$PWD/color_picker_tests.cpp \
            $$PWD/long_capture_tests.cpp \

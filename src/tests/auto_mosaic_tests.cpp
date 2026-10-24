@@ -1,0 +1,333 @@
+#include "capture/capture_overlay.h"
+#include "capture/auto_mosaic.h"
+#include "tests/test_support.h"
+#include "text/engines/ocr_engine.h"
+#include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QCoreApplication>
+#include <QEvent>
+#include <QEventLoop>
+#include <QFont>
+#include <QGuiApplication>
+#include <QImage>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QScreen>
+#include <QSlider>
+#include <QTimer>
+#include <QToolButton>
+#include <cstdio>
+#include <cstdlib>
+#include <functional>
+#include <memory>
+
+// Covers the auto mosaic tool: identifier classification, QR detection, the
+// standalone toolbar entry, the auto-only options strip, hover/click toggling,
+// synchronous blocks and the manual drag fallback.
+namespace {
+void check(bool ok, const char *message)
+{
+    if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); }
+}
+
+// A blank placeholder frame plus a neutered frame source: the injected canvas
+// is deterministic and no live re-freeze can replace it.
+std::unique_ptr<CaptureOverlay> testOverlay()
+{
+    const QRect screen = QGuiApplication::primaryScreen()->geometry();
+    QImage placeholder(4, 4, QImage::Format_RGB32);
+    placeholder.fill(QColor(20, 20, 20));
+    return std::make_unique<CaptureOverlay>(
+        QVector<ScreenFrame>{ScreenFrame{screen, QRect(screen.topLeft(), QSize(4, 4)), placeholder}});
+}
+
+QMouseEvent mouse(QEvent::Type type, const QPoint &pos, Qt::MouseButton button, Qt::MouseButtons buttons)
+{
+    return QMouseEvent(type, QPointF(pos), button, buttons, Qt::NoModifier);
+}
+
+bool waitUntil(const std::function<bool()> &done, int timeout = 20000)
+{
+    QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    timer.start(timeout);
+    while (!done() && timer.isActive()) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    return done();
+}
+}
+
+int CaptureOverlay::testAutoMosaic(const QString &previewPath)
+{
+    using AutoMosaic::Kind;
+    {   // Identifier classification: only actual privacy text is covered.
+        check(AutoMosaic::classify(QStringLiteral("+86-13800138000")) == Kind::Phone,
+              "CN mobile numbers classify as phone");
+        check(AutoMosaic::classify(QStringLiteral("alice.brown927@qq.com")) == Kind::Email,
+              "e-mail addresses classify as email");
+        check(AutoMosaic::classify(QStringLiteral("https://pixpin.cn/docs/")) == Kind::Url,
+              "links classify as URL");
+        check(AutoMosaic::classify(QStringLiteral("ABC123")) == Kind::None,
+              "ordinary repeated text is not a privacy identifier");
+        check(AutoMosaic::classify(QString()) == Kind::None, "empty text classifies as none");
+    }
+
+    {   // QR fixture from the barcode regression: the symbol becomes a block.
+        const QByteArray encoded =
+            "iVBORw0KGgoAAAANSUhEUgAAAJQAAACUAQAAAABdRz15AAABO0lEQVR4nO1WQWrEQAyTh73LP9j/Pys/kF+g4sleuqVQ6jmuIcQEIiayJCeM96r14xHweYbfOIiIBJAVr3bN+KONyBKR3c65j4SvZ4G7PTLL4sWE/vXut3rct2QZF87gGSkweLczvDACzdyuAqiRPx59pk1gIV/eWwM82CRp07BN2RrigRYE0aTMOV7DNSwNYo4nwhQI48j3mt7HlEBpeL4FREEtO1K3ctbsfLoptKw9FQ31jNY0cWEbmOO8L0fwAlN4Yuq31WEAFa9qtH2toT/Epq2VR075g3sKHcu3Cg/oj0TLeOcCfUDP3jkAt4Onflv3fhPD1TuuI3/N8GijgkWiXXxkvz0FZqO2pNcQD+hVVPVaHziAl73iklUa+gMdV/d4O2E6HDT1bwQy3clw5YF9+V71+XfEn/n7Alf1yGlCqVzEAAAAAElFTkSuQmCC";
+        const QImage qr = QImage::fromData(QByteArray::fromBase64(encoded), "PNG");
+        check(!qr.isNull(), "embedded QR fixture decodes");
+        AutoMosaic::Result result = AutoMosaic::detect(qr);
+        bool found = false;
+        for (const AutoMosaic::Detected &block : result.blocks)
+            if (block.kind == Kind::Qr && block.key.contains(QStringLiteral("example.com"))) found = true;
+        check(found, "QR payload becomes a syncable block");
+    }
+
+    {   // Non-text elements: colored avatar-like discs are candidates too.
+        QImage canvas(400, 400, QImage::Format_RGB32);
+        canvas.fill(Qt::white);
+        {
+            QPainter p(&canvas);
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setPen(QPen(QColor(120, 120, 120), 2));
+            const QColor left(200, 90, 70);
+            const QList<QColor> right = {QColor(60, 140, 200), QColor(80, 180, 100),
+                                         QColor(180, 120, 60)};
+            for (int i = 0; i < 3; ++i) {
+                p.setBrush(left);
+                p.drawEllipse(QRect(70, 60 + i * 100, 56, 56));
+                p.setBrush(right[i]);
+                p.drawEllipse(QRect(240, 60 + i * 100, 56, 56));
+            }
+        }
+        const AutoMosaic::Result result = AutoMosaic::detect(canvas);
+        QVector<AutoMosaic::Detected> images;
+        for (const AutoMosaic::Detected &block : result.blocks)
+            if (block.key.startsWith(QStringLiteral("image:"))) images.append(block);
+        check(images.size() >= 6, "colored image elements become candidates");
+        QStringList leftKeys;
+        for (const AutoMosaic::Detected &block : images)
+            if (block.rect.center().x() < 200) leftKeys << block.key;
+        check(leftKeys.size() >= 3 && leftKeys.first() == leftKeys[1]
+                  && leftKeys.first() == leftKeys[2],
+              "identical image elements share one sync key");
+    }
+
+    {   // Real OCR path; the engine is optional in stripped test environments.
+        const QString assets = QCoreApplication::applicationDirPath();
+        const QString assetError = OcrEngine::assetError(assets);
+        QImage image(1100, 260, QImage::Format_RGB32);
+        image.fill(Qt::white);
+        {
+            QPainter p(&image);
+            QFont font(QStringLiteral("Arial"));
+            font.setPixelSize(32);
+            p.setFont(font);
+            p.setPen(Qt::black);
+            p.drawText(60, 80, QStringLiteral("alice.brown927@qq.com"));
+            p.drawText(60, 160, QStringLiteral("https://pixpin.cn/docs/"));
+            p.drawText(60, 240, QStringLiteral("+86-13800138000"));
+        }
+        AutoMosaic::Result result = AutoMosaic::detect(image);
+        if (!assetError.isEmpty()) {
+            std::printf("SKIP: OCR assets unavailable (%s)\n", qPrintable(assetError));
+        } else {
+            int email = 0, url = 0, phone = 0;
+            for (const AutoMosaic::Detected &block : result.blocks) {
+                if (block.kind == Kind::Email) ++email;
+                if (block.kind == Kind::Url) ++url;
+                if (block.kind == Kind::Phone) ++phone;
+            }
+            if (!result.error.isEmpty()) std::printf("OCR note: %s\n", qPrintable(result.error));
+            check(email > 0, "OCR finds the e-mail identifier");
+            check(url > 0, "OCR finds the link");
+            check(phone > 0, "OCR finds the phone identifier");
+
+            // Wide captures are tiled; identifiers near both edges must survive.
+            QImage wide(2600, 480, QImage::Format_RGB32);
+            wide.fill(Qt::white);
+            {
+                QPainter p(&wide);
+                QFont font(QStringLiteral("Arial"));
+                font.setPixelSize(20);
+                p.setFont(font);
+                p.setPen(Qt::black);
+                p.drawText(100, 120, QStringLiteral("alice.brown927@qq.com"));
+                p.drawText(2330, 120, QStringLiteral("https://pixpin.cn/docs/"));
+            }
+            const AutoMosaic::Result tiled = AutoMosaic::detect(wide);
+            int tiledEmail = 0, tiledUrl = 0;
+            for (const AutoMosaic::Detected &block : tiled.blocks) {
+                if (block.kind == Kind::Email) ++tiledEmail;
+                if (block.kind == Kind::Url) ++tiledUrl;
+            }
+            check(tiledEmail > 0 && tiledUrl > 0,
+                  "wide captures keep identifiers in both tiles");
+        }
+    }
+
+    {   // End-to-end overlay scan: activation turns recognized identifiers into blocks.
+        auto overlay = testOverlay();
+        overlay->m_frameSource = [] { return QVector<ScreenFrame>{}; };
+        QImage canvas(1000, 400, QImage::Format_RGB32);
+        canvas.fill(Qt::white);
+        {
+            QPainter p(&canvas);
+            QFont font(QStringLiteral("Arial"));
+            font.setPixelSize(32);
+            p.setFont(font);
+            p.setPen(Qt::black);
+            p.drawText(40, 80, QStringLiteral("alice.brown927@qq.com"));
+            p.drawText(40, 170, QStringLiteral("https://pixpin.cn/docs/"));
+            p.drawText(40, 260, QStringLiteral("ABC123"));
+        }
+        overlay->setImage(canvas);
+        overlay->presetSelection(QRect(0, 0, 1000, 400));
+        overlay->m_mode = Adjusting;
+        const QString assets = QCoreApplication::applicationDirPath();
+        if (OcrEngine::assetError(assets).isEmpty()) {
+            overlay->selectAutoMosaic();
+            check(waitUntil([&overlay] { return !overlay->m_autoPending; }),
+                  "the overlay scan finishes");
+            const Annotation *found = overlay->autoMosaicAnnotation();
+            check(found && found->autoBlocks.size() >= 2,
+                  "activation installs the recognized blocks");
+            int email = 0, url = 0;
+            for (const Annotation::AutoBlock &block : found->autoBlocks) {
+                check(QRect(0, 0, 1000, 400).contains(block.rect), "blocks map into the capture");
+                check(!block.included, "detected blocks start as uncovered candidates");
+                if (block.key.startsWith(QStringLiteral("email:"))) ++email;
+                if (block.key.startsWith(QStringLiteral("url:"))) ++url;
+            }
+            check(email > 0 && url > 0, "the overlay keeps e-mail and link blocks");
+            const QPoint at = found->autoBlocks.first().rect.center();
+            QMouseEvent click = mouse(QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton);
+            QMouseEvent up = mouse(QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton);
+            overlay->mousePressEvent(&click);
+            overlay->mouseReleaseEvent(&up);
+            check(overlay->autoMosaicAnnotation()->autoBlocks.first().included,
+                  "clicking a candidate applies its mosaic");
+            overlay->mousePressEvent(&click);
+            overlay->mouseReleaseEvent(&up);
+            check(!overlay->autoMosaicAnnotation()->autoBlocks.first().included,
+                  "clicking the covered block removes its mosaic");
+            for (int i = 0; i < 3 && overlay->autoMosaicAnnotation(); ++i) overlay->undoAnnotation();
+            check(!overlay->autoMosaicAnnotation(), "undo removes the detected candidate batch");
+        }
+        overlay->close();
+    }
+
+    {   // Native-to-logical mapping keeps blocks on the content at fractional DPR.
+        auto overlay = testOverlay();
+        AutoMosaic::Result result;
+        result.blocks.append({QRect(60, 120, 300, 45), QStringLiteral("email:a@b.com"), Kind::Email});
+        overlay->applyAutoMosaicResult(result, QRect(0, 0, 1000, 400), 1.5);
+        const Annotation *mapped = overlay->autoMosaicAnnotation();
+        check(mapped && mapped->autoBlocks.size() == 1
+                  && mapped->autoBlocks.first().rect == QRect(40, 80, 200, 30),
+              "native detections map back to logical blocks");
+        overlay->close();
+    }
+
+    {   // Toolbar entry and auto-only strip.
+        auto overlay = testOverlay();
+        overlay->m_frameSource = [] { return QVector<ScreenFrame>{}; };
+        QImage canvas(1000, 600, QImage::Format_RGB32);
+        canvas.fill(QColor(250, 250, 248));
+        overlay->setImage(canvas);
+        overlay->presetSelection(QRect(0, 0, 1000, 600));
+        overlay->m_mode = Adjusting;
+        check(overlay->m_autoMosaicButton != nullptr, "the auto mosaic button exists");
+        check(overlay->m_autoMosaicButton->objectName() == QStringLiteral("autoMosaic"),
+              "the auto button has a stable object name");
+        check(overlay->m_autoMosaicButton->property("lenssnipToolId").toString()
+                  == QStringLiteral("autoMosaic"),
+              "the auto button is a main-toolbar tool, not a mosaic sub-mode");
+        overlay->m_toolBtn[int(ATool::Mosaic)]->click();
+        check(overlay->m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicBrush")),
+              "the regular mosaic strip still has its brush entry");
+        check(!overlay->m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicAuto")),
+              "the auto entry is no longer a mosaic sub-mode");
+
+        check(overlay->m_autoMosaicButton->isChecked() == false,
+              "the auto button starts unarmed");
+        overlay->selectAutoMosaic();
+        check(overlay->m_autoMosaic && overlay->m_atool == ATool::Mosaic,
+              "auto mosaic arms the mosaic tool in auto mode");
+        check(overlay->m_autoMosaicButton->isChecked(),
+              "the standalone button highlights while active");
+        check(overlay->m_toolOptions->findChild<QComboBox *>(QStringLiteral("autoMosaicMode"))
+                  && overlay->m_toolOptions->findChild<QSlider *>(QStringLiteral("autoMosaicStrength"))
+                  && overlay->m_toolOptions->findChild<QCheckBox *>(QStringLiteral("autoMosaicSync")),
+              "the auto strip exposes mode, strength and sync");
+        check(!overlay->m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicBrush")),
+              "the auto strip drops the manual brush/rectangle entries");
+        overlay->selectMosaicMode(false);
+        check(!overlay->m_autoMosaic, "choosing a manual mosaic mode leaves auto");
+        overlay->selectAutoMosaic();
+
+        // Two identical e-mails must sync; a different identifier must not.
+        overlay->m_anns.clear();
+        Annotation ann;
+        ann.tool = ATool::Mosaic;
+        ann.autoMosaic = true;
+        ann.rect = QRect(20, 20, 400, 240);
+        ann.autoBlocks = {{QRect(40, 40, 260, 30), QStringLiteral("email:alice@example.com"), true},
+                          {QRect(40, 120, 260, 30), QStringLiteral("email:alice@example.com"), true},
+                          {QRect(40, 200, 260, 30), QStringLiteral("email:bob@example.com"), true}};
+        overlay->m_anns.append(ann);
+        overlay->m_autoMosaicSync = true;
+        overlay->toggleAutoMosaicBlock(0, 0);
+        check(!overlay->m_anns[0].autoBlocks[0].included
+                  && !overlay->m_anns[0].autoBlocks[1].included
+                  && overlay->m_anns[0].autoBlocks[2].included,
+              "sync toggles every identical block and only those");
+        overlay->undoAnnotation();
+        check(overlay->m_anns[0].autoBlocks[0].included
+                  && overlay->m_anns[0].autoBlocks[1].included,
+              "one undo restores the synced group");
+        overlay->m_autoMosaicSync = false;
+        overlay->toggleAutoMosaicBlock(0, 0);
+        check(!overlay->m_anns[0].autoBlocks[0].included
+                  && overlay->m_anns[0].autoBlocks[1].included,
+              "sync off toggles only the clicked block");
+        overlay->undoAnnotation();
+
+        // Hover and click: the block under the pointer is toggled, not moved.
+        overlay->m_sel = QRect(0, 0, 1000, 600);
+        overlay->m_autoHoverAnn = -1;
+        overlay->m_autoHoverBlock = -1;
+        QMouseEvent press = mouse(QEvent::MouseButtonPress, QPoint(80, 55), Qt::LeftButton, Qt::LeftButton);
+        QMouseEvent release = mouse(QEvent::MouseButtonRelease, QPoint(80, 55), Qt::LeftButton, Qt::NoButton);
+        overlay->mousePressEvent(&press);
+        overlay->mouseReleaseEvent(&release);
+        check(!overlay->m_anns[0].autoBlocks[0].included
+                  && overlay->m_anns[0].autoBlocks[1].included,
+              "a canvas click toggles only the block under the pointer");
+        overlay->undoAnnotation();
+
+        // Drag on empty canvas adds one manual block; undo removes it.
+        const int before = overlay->m_anns[0].autoBlocks.size();
+        QMouseEvent dragPress = mouse(QEvent::MouseButtonPress, QPoint(500, 400), Qt::LeftButton, Qt::LeftButton);
+        QMouseEvent dragMove = mouse(QEvent::MouseMove, QPoint(680, 500), Qt::NoButton, Qt::LeftButton);
+        QMouseEvent dragRelease = mouse(QEvent::MouseButtonRelease, QPoint(680, 500), Qt::LeftButton, Qt::NoButton);
+        overlay->mousePressEvent(&dragPress);
+        overlay->mouseMoveEvent(&dragMove);
+        overlay->mouseReleaseEvent(&dragRelease);
+        check(overlay->m_anns[0].autoBlocks.size() == before + 1,
+              "dragging on the canvas adds a manual block");
+        check(overlay->m_anns[0].autoBlocks.last().key.isEmpty(),
+              "manual blocks are outside the sync groups");
+        overlay->undoAnnotation();
+        check(overlay->m_anns[0].autoBlocks.size() == before,
+              "one undo removes the manual block");
+        overlay->close();
+    }
+
+    if (!previewPath.isEmpty()) std::printf("preview prefix: %s\n", qPrintable(previewPath));
+    std::printf("PASS: auto mosaic detection and interaction checks\n");
+    return 0;
+}

@@ -2,6 +2,7 @@
 
 #include "platform/window_detection.h"
 #include "platform/output.h"
+#include "capture/auto_mosaic.h"
 #include "capture/pixel_inspector.h"
 #include "capture/tool_layout_dialog.h"
 #include "shared/widgets.h"
@@ -45,7 +46,10 @@ class OcrDialog;
 #include <QPointer>
 #include <QCloseEvent>
 #include <QPolygonF>
+#include <QFutureWatcher>
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <qt_windows.h>
 
 class QVariantAnimation;
@@ -89,6 +93,7 @@ public:
     static int testColorPicker(const QString &previewPath);
     static int testMosaic(const QString &previewPath);
     static int testSmartErase(const QString &previewPath);
+    static int testAutoMosaic(const QString &previewPath);
     static int testWindowDetection();
     static int testTextAnnotation();
     static int testWatermark(const QString &previewPath = QString());
@@ -132,6 +137,11 @@ private:
         QRect smartRect;                              // Geometry the current result was computed for.
         QPolygonF smartStroke;
         int smartPen = -1;
+        // Auto mosaic: one item owns every recognized block; manual blocks use an
+        // empty key and never sync.
+        struct AutoBlock { QRect rect; QString key; bool included = true; };
+        bool autoMosaic = false;
+        QVector<AutoBlock> autoBlocks;
         QRect rect;                                  // Rect / Ellipse / Mosaic / Text / Number box.
         QPoint a, b;                                 // Arrow / straight highlighter endpoints.
         QPolygonF stroke;                            // Pen / brush polyline.
@@ -210,6 +220,20 @@ private:
     void switchMosaicEffect();
     void setMosaicStrength(int value);
     void selectMosaicMode(bool brush);
+    // Auto mosaic: a standalone toolbar tool that scans the capture for identifiers.
+    void selectAutoMosaic();
+    void startAutoMosaicDetection();
+    void cancelAutoMosaicDetection();
+    void applyAutoMosaicResult(const AutoMosaic::Result &result, const QRect &selection, qreal dpr);
+    Annotation *autoMosaicAnnotation();
+    const Annotation *autoMosaicAnnotation() const;
+    bool autoMosaicAt(const QPoint &pos, int *annIndex, int *blockIndex) const;
+    void toggleAutoMosaicBlock(int annIndex, int blockIndex);
+    void addAutoMosaicBlock(const QRect &rect);
+    void setAutoMosaicMode(bool blur);
+    void setAutoMosaicStrength(int value);
+    void paintAutoMosaicOverlay(QPainter &p) const;
+    void paintAutoMosaicStatus(QPainter &p) const;
     void selectMarkerMode(bool fill, bool ellipse = false);
     void scheduleSmartErase(int index, const QImage &source);   // Async erase for the annotation at index.
     static QImage smartEraseMask(const Annotation &ann, const QSize &deviceSize, qreal dpr);
@@ -439,6 +463,24 @@ private:
     int m_toolPens[11] = {0, 5, 5, 8, 5, 3, 15, 15, 15, 15, 20};
     int m_mosaicLevels[2] = {6, 6}, m_mosaicWidth = 15;
     bool m_mosaicBrush = true, m_mosaicBlur = false, m_mosaicDragUndo = false;
+    // Auto mosaic tool state. The annotation keeps the effect so every block shares it.
+    QToolButton *m_autoMosaicButton = nullptr;
+    QComboBox *m_autoModeCombo = nullptr;
+    QSlider *m_autoStrengthSlider = nullptr;
+    QCheckBox *m_autoSyncBox = nullptr;
+    bool m_autoMosaic = false, m_autoMosaicBlur = false, m_autoMosaicSync = true, m_autoDragUndo = false;
+    int m_autoMosaicLevels[2] = {6, 6}, m_autoMosaicStrength = 6;
+    QFutureWatcher<AutoMosaic::Result> *m_autoWatcher = nullptr;
+    std::shared_ptr<std::atomic_bool> m_autoCancel;
+    int m_autoEpoch = 0;
+    bool m_autoPending = false;
+    QTimer m_autoSpinTimer;
+    int m_autoSpinAngle = 0;
+    int m_autoHoverAnn = -1, m_autoHoverBlock = -1;
+    int m_autoPressAnn = -1, m_autoPressBlock = -1;
+    bool m_autoPressMoved = false, m_autoDragging = false;
+    QPoint m_autoDragStart;
+    QRect m_autoDragRect;
     int m_smartEpoch = 0;                         // Bumped whenever the annotation list is rebuilt.
     qreal m_afont = 15;                              // Base text/number font size (pt).
     QString m_afamily = QStringLiteral("Microsoft YaHei UI");
