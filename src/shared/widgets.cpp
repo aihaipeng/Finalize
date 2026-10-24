@@ -236,23 +236,26 @@ void PopupItemDelegate::paintRow(QPainter *painter, const QStyleOptionViewItem &
 void PopupItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                               const QModelIndex &index) const
 {
-    paintRow(painter, option);
+    // Honor subclass initStyleOption(): glyph-only rows clear option.text there.
+    QStyleOptionViewItem opt = option;
+    initStyleOption(&opt, index);
+    paintRow(painter, opt);
     // Draw the row content directly so popup rows share the closed combo's
     // content inset instead of the style's smaller default item margin.
-    const QRect row = option.rect.adjusted(m_contentInset, 0, -10, 0);
+    const QRect row = opt.rect.adjusted(m_contentInset, 0, -10, 0);
     int textLeft = row.left();
     const QIcon icon = qvariant_cast<QIcon>(index.data(Qt::DecorationRole));
     if (!icon.isNull()) {
-        const int side = option.decorationSize.width();
+        const int side = opt.decorationSize.width();
         icon.paint(painter, QRect(QPoint(textLeft, row.center().y() - side / 2), QSize(side, side)));
         textLeft += side + 4;
     }
+    if (opt.text.isEmpty()) return;
     const QRect textRect(textLeft, row.top(), row.right() + 1 - textLeft, row.height());
-    painter->setFont(option.font);
-    painter->setPen(option.palette.color(QPalette::Text));
+    painter->setFont(opt.font);
+    painter->setPen(opt.palette.color(QPalette::Text));
     painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
-                      option.fontMetrics.elidedText(index.data(Qt::DisplayRole).toString(),
-                                                    Qt::ElideRight, textRect.width()));
+                      opt.fontMetrics.elidedText(opt.text, Qt::ElideRight, textRect.width()));
 }
 
 const QString darkSliderQss = QStringLiteral(

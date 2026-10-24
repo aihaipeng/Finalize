@@ -544,11 +544,12 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         const auto *strip = static_cast<QBoxLayout *>(overlay.m_toolOptions->layout());
         const auto *brushButton = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserBrush"));
         check(!overlay.eraserRect() && strip->count() == 4 && brushButton && brushButton->isChecked()
-                  && strip->itemAt(0)->widget() == brushButton
-                  && strip->itemAt(1)->widget()->objectName() == QStringLiteral("eraserRectangle")
-                  && strip->itemAt(2)->widget()->objectName() == QStringLiteral("eraserSmart")
-                  && strip->itemAt(3)->widget() == overlay.m_sizeButton && !overlay.m_colorBoard,
-              "the eraser starts in brush mode: brush, rectangle, smart, then the width button, no colors");
+                  && strip->itemAt(0)->widget() == overlay.m_sizeButton
+                  && strip->itemAt(1)->widget() == brushButton
+                  && strip->itemAt(2)->widget()->objectName() == QStringLiteral("eraserRectangle")
+                  && strip->itemAt(3)->widget()->objectName() == QStringLiteral("eraserSmart")
+                  && !overlay.m_colorBoard,
+              "the eraser starts in brush mode: width, brush, rectangle, smart, no colors");
     }
     overlay.selectEraserMode(true);
     check(overlay.m_sizeButton != nullptr, "rectangle erasing keeps the width button");
@@ -733,18 +734,33 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
     }
     overlay.m_afill = false;
     overlay.selectTool(ATool::Marker);
-    QToolButton *markerFill = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("fillButton"));
-    check(markerFill != nullptr, "the marker strip exposes a fill button");
-    if (markerFill) markerFill->click();
-    markerFill = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("fillButton"));
-    check(overlay.m_markerFill && markerFill && markerFill->isChecked(), "the marker fill button toggles and shows its state");
+    auto *markerBrush = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("markerBrush"));
+    auto *markerRect = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("markerRectangle"));
+    auto *markerCircle = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("markerEllipse"));
+    check(markerBrush && markerRect && markerCircle && markerBrush->isChecked()
+              && !markerRect->isChecked() && !markerCircle->isChecked() && overlay.m_sizeButton,
+          "the marker strip starts on its brush with three exclusive modes and a width control");
+    markerRect->click();
+    markerRect = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("markerRectangle"));
+    check(overlay.m_markerFill && !overlay.m_markerEllipse && markerRect && markerRect->isChecked()
+              && overlay.m_sizeButton,
+          "rectangle highlights select in place and keep the width control visible");
+    const int markerWidth = overlay.m_toolPens[int(ATool::Marker)];
+    const QPointF markerAt = annOrigin + QPoint(30, 20);
+    QWheelEvent areaWheel(markerAt, QPointF(overlay.mapToGlobal(markerAt.toPoint())),
+                          QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                          Qt::ScrollUpdate, false);
+    QApplication::sendEvent(&overlay, &areaWheel);
+    check(overlay.m_toolPens[int(ATool::Marker)] == markerWidth && overlay.m_sizeButton,
+          "the wheel does not change thickness in rectangle-highlight mode");
     mouse(QEvent::MouseButtonPress, annOrigin + QPoint(10, 10));
     mouse(QEvent::MouseMove, annOrigin + QPoint(70, 30));
     mouse(QEvent::MouseButtonRelease, annOrigin + QPoint(70, 30));
     check(overlay.m_anns.last().tool == ATool::Marker && overlay.m_anns.last().fill
+              && !overlay.m_anns.last().markerEllipse
               && overlay.m_anns.last().rect == QRect(annOrigin + QPoint(10, 10), annOrigin + QPoint(70, 30)).normalized()
               && overlay.m_anns.last().stroke.isEmpty(),
-          "marker fill drags a highlight rectangle instead of a stroke");
+          "marker rectangle drags a highlight block instead of a stroke");
     {
         const QRect area = overlay.m_anns.last().rect;
         QImage block(area.width() + 20, area.height() + 20, QImage::Format_ARGB32);
@@ -754,10 +770,37 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         overlay.drawAnnotation(painter, overlay.m_anns.last(), QImage());
         painter.end();
         const int alpha = block.pixelColor(block.rect().center()).alpha();
-        check(alpha > 60 && alpha < 200, "the highlight rectangle is translucent");
+        check(alpha > 60 && alpha < 200 && block.pixelColor(11, 11).alpha() > 60,
+              "the highlight rectangle is translucent and keeps square corners");
+    }
+    markerCircle = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("markerEllipse"));
+    check(markerCircle != nullptr, "the marker strip exposes a circle button");
+    if (markerCircle) markerCircle->click();
+    markerCircle = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("markerEllipse"));
+    check(overlay.m_markerFill && overlay.m_markerEllipse && markerCircle && markerCircle->isChecked()
+              && overlay.m_sizeButton,
+          "circle highlights select in place and keep the width control visible");
+    mouse(QEvent::MouseButtonPress, annOrigin + QPoint(80, 10));
+    mouse(QEvent::MouseMove, annOrigin + QPoint(130, 60));
+    mouse(QEvent::MouseButtonRelease, annOrigin + QPoint(130, 60));
+    check(overlay.m_anns.last().tool == ATool::Marker && overlay.m_anns.last().fill
+              && overlay.m_anns.last().markerEllipse && overlay.m_anns.last().stroke.isEmpty(),
+          "marker circle drags a circular highlight block");
+    {
+        const QRect area = overlay.m_anns.last().rect;
+        QImage block(area.width() + 20, area.height() + 20, QImage::Format_ARGB32);
+        block.fill(Qt::transparent);
+        QPainter painter(&block);
+        painter.translate(QPoint(10, 10) - area.topLeft());
+        overlay.drawAnnotation(painter, overlay.m_anns.last(), QImage());
+        painter.end();
+        check(block.pixelColor(block.rect().center()).alpha() > 60
+                  && block.pixelColor(11, 11).alpha() == 0,
+              "the circle highlight is translucent inside and empty at its bounding corners");
     }
     overlay.toggleFill();
-    check(!overlay.m_markerFill, "the marker fill toggles back to straight highlights");
+    check(!overlay.m_markerFill && !overlay.m_markerEllipse,
+          "the marker fill toggle returns to straight brush highlights");
     check(numberLabel(4, 0) == QStringLiteral("4") && numberLabel(9, 1) == QStringLiteral("IX")
               && numberLabel(14, 1) == QStringLiteral("XIV") && numberLabel(27, 2) == QStringLiteral("AA")
               && numberLabel(3, 3) == QStringLiteral("c") && numberLabel(10, 4) == QStringLiteral("十")
@@ -1101,12 +1144,12 @@ int CaptureOverlay::testColorPicker(const QString &previewPath)
         const bool textSize = tool == ATool::Text;
         if (tool == ATool::Eraser) {
             const auto *strip = static_cast<QBoxLayout *>(overlay.m_toolOptions->layout());
-            check(strip->itemAt(strip->count() - 1)->widget() == overlay.m_sizeButton
+            check(strip->itemAt(0)->widget() == overlay.m_sizeButton
                       && overlay.m_sizeButton->text().toInt() == overlay.toolSize()
                       && overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserBrush"))
                       && overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserRectangle"))
                       && overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserSmart")),
-                  "the eraser strip is brush, rectangle, smart, then the width button");
+                  "the eraser strip starts with the width button, then brush, rectangle, smart");
         } else if (tool != ATool::Mosaic && tool != ATool::Text) {
             const auto *strip = static_cast<QBoxLayout *>(overlay.m_toolOptions->layout());
             check(!overlay.m_sizeInput && strip->itemAt(0)->widget() == overlay.m_sizeButton

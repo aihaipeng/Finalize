@@ -140,7 +140,7 @@ private:
         QString family = QStringLiteral("Microsoft YaHei UI");
         int arrowStyle = 0;                          // 0 straight, 1 straight bilateral, 2 line, 3 line bilateral,
                                                      // 4 hollow, 5 filled, 6 dimension line, 7 solid, 8 solid bilateral, 9 dimension arrow.
-        int strokeStyle = 0;                         // Rect/Ellipse/Arrow line: 0 solid, 1 dash, 2 dot, 3 dash-dot, 4 dash-dot-dot.
+        int strokeStyle = 0;                         // Rect/Ellipse/Arrow/Pen line: 0 solid, 1 dash, 2 dot, 3 dash-dot, 4 dash-dot-dot.
         int numberStyle = 0;                         // 0 filled disc, 1 ring, 2 bare label.
         int numberFormat = 0;                        // 0 "1 2 3", 1 "I II III", 2 "A B C", 3 "a b c", 4 Chinese numerals.
         bool bold = false;                           // Text weight / slant / underline.
@@ -148,6 +148,7 @@ private:
         bool underline = false;
         qreal rot = 0;                               // Rotation around the box center (degrees).
         bool fill = false;                           // Rect / Ellipse solid fill; Marker / Eraser rectangle mode.
+        bool markerEllipse = false;                  // Marker area drawn as a circle instead of a rectangle.
         qint64 createdAt = 0;                        // Watermark time token base (ms since epoch).
         int watermarkPosition = 0;                   // 0 tile; 1 bottom-right; 2 bottom-left; 3 top-right;
                                                      // 4 top-left; 5 top-center; 6 bottom-center; 7 center.
@@ -203,11 +204,13 @@ private:
     void nudgeSelected(int key);
     ATool optionsTool() const;
     bool mosaicBrush() const;
+    bool markerAreaMode() const;
     int mosaicStrength() const;
     bool mosaicBlur() const;
     void switchMosaicEffect();
     void setMosaicStrength(int value);
     void selectMosaicMode(bool brush);
+    void selectMarkerMode(bool fill, bool ellipse = false);
     void scheduleSmartErase(int index, const QImage &source);   // Async erase for the annotation at index.
     static QImage smartEraseMask(const Annotation &ann, const QSize &deviceSize, qreal dpr);
     void selectEraserMode(bool rect);
@@ -508,9 +511,10 @@ private:
     bool m_shapeEllipse = false;                     // Current sub-shape of the shape button.
     int m_arrowStyle = 0;                            // Shape, see Annotation::arrowStyle.
     int m_arrowLineStyle = 0;                        // Arrow line style, see Annotation::strokeStyle.
+    int m_penStyle = 0;                              // Pen line style, see Annotation::strokeStyle.
     int m_shapeStyle = 0;                            // Current rect / ellipse outline, see Annotation::strokeStyle.
     int m_numberStyle = 0, m_numberFormat = 0;       // See Annotation::numberStyle / numberFormat.
-    bool m_markerFill = false;                       // Marker drags a translucent rectangle.
+    bool m_markerFill = false, m_markerEllipse = false;   // Marker brush, rectangle, or circle.
     // Watermark defaults, persisted as the next watermark's starting style.
     QString m_wmText, m_wmFamily = QStringLiteral("Microsoft YaHei");
     QColor m_wmColor = QColor(QStringLiteral("#ed1c24"));

@@ -35,6 +35,7 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QWheelEvent>
+#include <QStyleOptionViewItem>
 #include "shared/settings.h"
 #include <QSettings>
 #include <qt_windows.h>
@@ -973,6 +974,27 @@ int CaptureOverlay::testSelectionBorders()
         check(shapes && shapes->count() == 10 && lines && lines->count() == 5
                   && !overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("dashedButton")),
               "the arrow strip offers ten shapes and five line styles without a dash toggle");
+        const auto glyphOnlyRow = [](QComboBox *combo) {
+            if (!combo || combo->count() == 0) return false;
+            QStyleOptionViewItem opt;
+            opt.rect = QRect(0, 0, 160, 26);
+            opt.state = QStyle::State_Enabled;
+            opt.decorationSize = QSize(40, 20);
+            opt.font = combo->font();
+            opt.fontMetrics = QFontMetrics(combo->font());
+            QImage row(opt.rect.size(), QImage::Format_ARGB32);
+            row.fill(Bar::surface);
+            QPainter painter(&row);
+            combo->itemDelegate()->paint(&painter, opt, combo->model()->index(0, 0));
+            painter.end();
+            // The icon ends at x=52 (12px inset + 40px glyph); names would ink the text area.
+            for (int y = 0; y < row.height(); ++y)
+                for (int x = 62; x < row.width(); ++x)
+                    if (row.pixelColor(x, y) != Bar::surface) return false;
+            return true;
+        };
+        check(glyphOnlyRow(shapes) && glyphOnlyRow(lines),
+              "arrow and line dropdowns render their glyphs without elided names");
         if (shapes) {
             QVector<QImage> glyphs;
             for (int i = 0; i < shapes->count(); ++i)
@@ -1064,6 +1086,11 @@ int CaptureOverlay::testSelectionBorders()
     }
     overlay.m_anns.clear(); overlay.m_selAnn = -1;
     overlay.selectTool(ATool::Pen);
+    auto *penLine = overlay.m_toolOptions->findChild<QComboBox *>(QStringLiteral("penLineStyleCombo"));
+    check(penLine && penLine->count() == 5,
+          "the pen strip offers the same five line styles as arrows");
+    if (penLine) penLine->activated(1);
+    check(overlay.m_penStyle == 1, "choosing a pen line style updates the armed pen");
     const auto mouse = [&](QEvent::Type type, const QPoint &point, Qt::KeyboardModifiers mods = Qt::NoModifier) {
         QMouseEvent event(type, point, overlay.mapToGlobal(point),
                           type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
@@ -1077,6 +1104,29 @@ int CaptureOverlay::testSelectionBorders()
         check(overlay.m_anns.size() == i + 1 && overlay.m_selAnn == -1,
               "a new pen stroke can start on an old stroke without selecting or moving it");
     }
+    check(overlay.m_anns[0].strokeStyle == 1, "new pen ink carries the selected line style");
+    const QImage penDashed = [&] {
+        Annotation sample;
+        sample.tool = ATool::Pen;
+        sample.color = QColor("#34c759");
+        sample.pen = 4;
+        sample.strokeStyle = 1;
+        sample.stroke = QPolygonF{QPointF(10, 20), QPointF(290, 20)};
+        QImage image(300, 40, QImage::Format_ARGB32);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        overlay.drawAnnotation(painter, sample, QImage());
+        painter.end();
+        return image;
+    }();
+    int penGaps = 0;
+    bool penInk = false;
+    for (int x = 12; x <= 288; ++x) {
+        const bool ink = penDashed.pixelColor(x, 20).alpha() > 128;
+        if (penInk && !ink) ++penGaps;
+        penInk = ink;
+    }
+    check(penGaps > 1, "pen dash styles alternate ink and gaps like arrow shafts");
     const QColor penColor = overlay.m_anns[0].color;
     const int penWidth = overlay.m_anns[0].pen;
     overlay.pickToolColor(Qt::green);
@@ -1089,6 +1139,10 @@ int CaptureOverlay::testSelectionBorders()
     check(overlay.m_anns.size() == 2 && overlay.m_selAnn == -1, "redo restores pen ink without adjustment controls");
     overlay.selectTool(ATool::Marker);
     overlay.m_markerFill = false;
+    auto *markerBrush = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("markerBrush"));
+    check(markerBrush && markerBrush->isChecked() && !overlay.m_markerFill && !overlay.m_markerEllipse
+              && overlay.m_sizeButton,
+          "entering the marker starts on its brush with a width control");
     mouse(QEvent::MouseButtonPress, QPoint(120, 240));
     mouse(QEvent::MouseMove, QPoint(180, 330));
     mouse(QEvent::MouseMove, QPoint(240, 180));
@@ -1130,7 +1184,52 @@ int CaptureOverlay::testSelectionBorders()
               && overlay.m_anns.last().rect == QRect(QPoint(450, 240), QPoint(550, 290))
               && overlay.m_anns.last().stroke.isEmpty() && overlay.annAnchors(overlay.m_anns.last()).size() == 8,
           "rectangle highlights remain available with eight boundary nodes and no freehand path");
-    overlay.toggleFill();
+    auto *markerCircle = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("markerEllipse"));
+    check(markerCircle != nullptr, "the marker strip exposes a circle button");
+    if (markerCircle) markerCircle->click();
+    markerCircle = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("markerEllipse"));
+    check(overlay.m_markerFill && overlay.m_markerEllipse && markerCircle && markerCircle->isChecked()
+              && overlay.m_sizeButton,
+          "circle highlights select in place and keep the width control visible");
+    const qreal shapeWidth = overlay.toolSize();
+    const QPoint shapeWheelAt(700, 400);
+    QWheelEvent shapeWheel(QPointF(shapeWheelAt), QPointF(overlay.mapToGlobal(shapeWheelAt)),
+                           QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                           Qt::ScrollUpdate, false);
+    QApplication::sendEvent(&overlay, &shapeWheel);
+    check(overlay.toolSize() == shapeWidth && overlay.m_sizeButton,
+          "the canvas wheel does not change thickness in circle-highlight mode");
+    QWheelEvent controlWheel(QPointF(10, 10),
+                             QPointF(overlay.m_sizeButton->mapToGlobal(QPoint(10, 10))),
+                             QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                             Qt::ScrollUpdate, false);
+    QApplication::sendEvent(overlay.m_sizeButton, &controlWheel);
+    check(overlay.toolSize() == shapeWidth,
+          "the wheel over the visible width control is also inert in circle-highlight mode");
+    mouse(QEvent::MouseButtonPress, QPoint(600, 240));
+    mouse(QEvent::MouseMove, QPoint(680, 300));
+    mouse(QEvent::MouseButtonRelease, QPoint(680, 300));
+    check(overlay.m_anns.last().tool == ATool::Marker && overlay.m_anns.last().fill
+              && overlay.m_anns.last().markerEllipse && overlay.m_anns.last().stroke.isEmpty(),
+          "circle highlights drag a circular translucent block");
+    {
+        const QRect area = overlay.m_anns.last().rect;
+        QImage block(area.width() + 20, area.height() + 20, QImage::Format_ARGB32);
+        block.fill(Qt::transparent);
+        QPainter painter(&block);
+        painter.translate(QPoint(10, 10) - area.topLeft());
+        overlay.drawAnnotation(painter, overlay.m_anns.last(), QImage());
+        painter.end();
+        check(block.pixelColor(block.rect().center()).alpha() > 60
+                  && block.pixelColor(11, 11).alpha() == 0,
+              "circle highlights stay translucent inside and empty at their bounding corners");
+    }
+    overlay.selectTool(ATool::Pen);
+    overlay.selectTool(ATool::Marker);
+    markerBrush = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("markerBrush"));
+    check(markerBrush && markerBrush->isChecked() && !overlay.m_markerFill && !overlay.m_markerEllipse
+              && overlay.m_sizeButton,
+          "re-entering the marker returns to its brush and width control");
     overlay.m_anns.clear(); overlay.m_selAnn = -1;
     mouse(QEvent::MouseButtonPress, QPoint(120, 240));
     mouse(QEvent::MouseMove, QPoint(260, 265), Qt::ShiftModifier);
@@ -1146,6 +1245,23 @@ int CaptureOverlay::testSelectionBorders()
     QApplication::sendEvent(&overlay, &finish);
     check(!overlay.m_live && overlay.m_selAnn == -1 && overlay.m_anns.last().tool == ATool::Pen,
           "right-click finishing also leaves completed pen ink without selection controls");
+    overlay.selectTool(ATool::Eraser);
+    const QPoint eraserAt(700, 400);
+    overlay.updateAnnotationCursor(eraserAt);
+    const QImage brushEraserCursor = overlay.cursor().pixmap().toImage();
+    const QColor eraserCenter = brushEraserCursor.pixelColor(brushEraserCursor.width() / 2,
+                                                             brushEraserCursor.height() / 2);
+    check(!brushEraserCursor.isNull() && eraserCenter.alpha() > 0 && eraserCenter.alpha() < 160
+              && brushEraserCursor.pixelColor(0, 0).alpha() == 0,
+          "the brush eraser shows the soft blurred disc cursor");
+    overlay.toggleEraserSmart();
+    overlay.updateAnnotationCursor(eraserAt);
+    check(overlay.cursor().pixmap().toImage() == brushEraserCursor,
+          "the magic eraser shares the same soft blurred disc cursor");
+    overlay.selectEraserMode(true);
+    overlay.updateAnnotationCursor(eraserAt);
+    check(overlay.cursor().shape() == Qt::CrossCursor,
+          "the rectangle eraser keeps its crosshair instead of a brush disc");
     overlay.m_anns.clear(); overlay.m_selAnn = -1;
     overlay.m_anns.clear(); overlay.m_selAnn = -1;
     overlay.m_atool = ATool::None;

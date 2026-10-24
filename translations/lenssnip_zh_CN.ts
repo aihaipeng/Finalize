@@ -149,6 +149,14 @@
         <translation>矩形高亮</translation>
     </message>
     <message>
+        <source>画笔高亮</source>
+        <translation>画笔高亮</translation>
+    </message>
+    <message>
+        <source>圆形高亮</source>
+        <translation>圆形高亮</translation>
+    </message>
+    <message>
         <source>直线箭头</source>
         <translation>直线箭头</translation>
     </message>
@@ -742,6 +750,10 @@
     <message>
         <source>时间：</source>
         <translation>时间：</translation>
+    </message>
+    <message>
+        <source>完成</source>
+        <translation>完成</translation>
     </message>
 </context>
 <context>

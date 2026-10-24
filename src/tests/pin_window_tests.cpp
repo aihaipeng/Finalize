@@ -518,6 +518,10 @@ int PinWindow::testPlacement()
         QObject::connect(&longEdit, &PinWindow::editorLeft, [&left](bool back) { left << back; });
         longEdit.openEditor(true);
         QApplication::processEvents();
+        longEdit.armPinTool(int(CaptureOverlay::ATool::Mosaic));
+        check(longEdit.m_canvas
+                  && longEdit.m_canvas->optionsStrip()->findChild<QToolButton *>(QStringLiteral("mosaicRectangle")),
+              "the long-capture editor inherits the shared mosaic strip");
         QLayout *row = longEdit.m_toolbar->layout();
         check(!longEdit.m_backBtn->isHidden() && row->indexOf(longEdit.m_backBtn) == row->count() - 2,
               "the back button sits just before done");
@@ -637,6 +641,14 @@ int PinWindow::testPlacement()
     check(windowCount() == topLevelsBefore + 1,
           "the strip is the only new top-level window");
     check(shapeBtn->isChecked(), "the armed tool button shows as checked");
+    QToolButton *mosaicBtn = nullptr;
+    for (QToolButton *b : barButtons)
+        if (b->property("pinTool").toInt() == int(CaptureOverlay::ATool::Mosaic)) mosaicBtn = b;
+    check(mosaicBtn != nullptr, "the pin toolbar retains its mosaic tool");
+    mosaicBtn->click();
+    check(editPin.m_canvas->optionsStrip()->findChild<QToolButton *>(QStringLiteral("mosaicRectangle")),
+          "pin editing inherits the shared mosaic strip without a second toolbar entry");
+    shapeBtn->click();
 
     QWidget *canvas = editPin.m_canvas.data();
     const auto canvasMouse = [canvas](QEvent::Type type, const QPoint &local) {

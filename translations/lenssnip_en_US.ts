@@ -193,6 +193,14 @@
         <translation>Rectangle highlight</translation>
     </message>
     <message>
+        <source>画笔高亮</source>
+        <translation>Brush highlight</translation>
+    </message>
+    <message>
+        <source>圆形高亮</source>
+        <translation>Circle highlight</translation>
+    </message>
+    <message>
         <source>直线箭头</source>
         <translation>Straight arrow</translation>
     </message>
@@ -786,6 +794,10 @@
     <message>
         <source>时间：</source>
         <translation>Time:</translation>
+    </message>
+    <message>
+        <source>完成</source>
+        <translation>Done</translation>
     </message>
 </context>
 <context>

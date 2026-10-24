@@ -30,6 +30,7 @@
 #include <QScreen>
 #include <QPainter>
 #include <QPainterPath>
+#include <QRadialGradient>
 #include <QPaintEvent>
 #include <QRandomGenerator>
 #include <QMouseEvent>
@@ -427,8 +428,13 @@ bool CaptureOverlay::annotationHit(const Annotation &ann, const QPoint &pos)
         return distToSegment(QPointF(pos), ann.stroke.first(), ann.stroke.first())
             <= tol + ann.pen / 2;
     case ATool::Marker:
-        return ann.fill ? ann.rect.adjusted(-tol, -tol, tol, tol).contains(pos)
-            : distToSegment(pos, ann.a, ann.b) <= ann.pen * 2.5 + tol;
+        if (ann.fill) {
+            if (!ann.markerEllipse) return ann.rect.adjusted(-tol, -tol, tol, tol).contains(pos);
+            const QPointF d = pos - ann.rect.center();
+            const qreal rx = ann.rect.width() / 2.0 + tol, ry = ann.rect.height() / 2.0 + tol;
+            return rx >= 1 && ry >= 1 && qPow(d.x() / rx, 2) + qPow(d.y() / ry, 2) <= 1.0;
+        }
+        return distToSegment(pos, ann.a, ann.b) <= ann.pen * 2.5 + tol;
     default:                                     // Area objects select anywhere inside.
         return ann.rect.adjusted(-tol, -tol, tol, tol).contains(pos);
     }
@@ -542,7 +548,8 @@ void CaptureOverlay::paintMosaicBorder(QPainter &p, const Annotation &ann, bool 
     p.restore();
 }
 
-QCursor CaptureOverlay::mosaicBrushCursor(qreal width, qreal dpr)
+namespace {
+QCursor softBrushCursor(qreal width, qreal dpr)
 {
     const int side = qCeil(width) | 1;
     QPixmap pixmap(qRound(side * dpr), qRound(side * dpr));
@@ -550,13 +557,28 @@ QCursor CaptureOverlay::mosaicBrushCursor(qreal width, qreal dpr)
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
+    const QPointF center(side / 2.0, side / 2.0);
+    const qreal radius = qMax(1.0, width / 2.0);
+    QRadialGradient gradient(center, radius + 1.5);
+    gradient.setColorAt(0.0, QColor(64, 64, 64, 100));
+    gradient.setColorAt(0.55, QColor(52, 52, 52, 82));
+    gradient.setColorAt(0.85, QColor(40, 40, 40, 60));
+    gradient.setColorAt(1.0, QColor(40, 40, 40, 0));
     painter.setPen(Qt::NoPen);
-    painter.setBrush(Qt::white);
-    QRectF circle(0, 0, width, width);
-    circle.moveCenter(QPointF(side / 2.0, side / 2.0));
-    painter.drawEllipse(circle);
+    painter.setBrush(gradient);                  // Soft blurred fill.
+    painter.drawEllipse(center, radius + 1.5, radius + 1.5);
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(QColor(96, 96, 96, 160), 1.0));    // Muted grey rim shows the brush extent.
+    const qreal rim = qMax(1.0, radius - 0.5);
+    painter.drawEllipse(center, rim, rim);
     painter.end();
     return QCursor(pixmap);
+}
+}
+
+QCursor CaptureOverlay::mosaicBrushCursor(qreal width, qreal dpr)
+{
+    return softBrushCursor(width, dpr);
 }
 
 void CaptureOverlay::updateAnnotationCursor(const QPoint &pos)
@@ -774,23 +796,9 @@ QPainterPath CaptureOverlay::strokeMask(const QPolygonF &stroke, qreal width)
     return stroker.createStroke(line);
 }
 
-QCursor CaptureOverlay::eraserCursor(qreal width, qreal dpr)   // Hollow ring, dark inside light, as wide as the brush.
+QCursor CaptureOverlay::eraserCursor(qreal width, qreal dpr)
 {
-    const int side = qCeil(width) + 5;
-    QPixmap pixmap(qRound(side * dpr), qRound(side * dpr));
-    pixmap.setDevicePixelRatio(dpr);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setBrush(Qt::NoBrush);
-    const QPointF c(side / 2.0, side / 2.0);
-    painter.setPen(QPen(Qt::white, 1));
-    painter.drawEllipse(c, width / 2 + 1, width / 2 + 1);
-    painter.setPen(QPen(QColor(0x20, 0x20, 0x20), 1));
-    painter.drawEllipse(c, width / 2, width / 2);
-    painter.drawEllipse(c, qMax(1.0, width / 2 - 2), qMax(1.0, width / 2 - 2));
-    painter.end();
-    return QCursor(pixmap);
+    return softBrushCursor(width, dpr);          // Match the mosaic brush's blurred disc.
 }
 
 void CaptureOverlay::deleteSelected()
@@ -944,6 +952,10 @@ bool CaptureOverlay::eventFilter(QObject *obj, QEvent *ev)
         return true;
     }
     if (((m_sizeSlider && obj == m_sizeSlider) || obj == m_sizeButton) && ev->type() == QEvent::Wheel) {
+        if (markerAreaMode()) {                  // Area highlights keep the control visible but ignore the wheel.
+            ev->accept();
+            return true;
+        }
         const int delta = static_cast<QWheelEvent *>(ev)->angleDelta().y();
         if (delta) setWidthControl(qRound(widthControlValue()) + (delta > 0 ? 1 : -1));
         ev->accept();
@@ -1254,6 +1266,11 @@ bool CaptureOverlay::mosaicBrush() const
     return m_mosaicBrush;
 }
 
+bool CaptureOverlay::markerAreaMode() const
+{
+    return optionsTool() == ATool::Marker && (m_live ? m_ann.fill : m_markerFill);
+}
+
 int CaptureOverlay::mosaicStrength() const
 {
     if (m_live) return m_ann.mosaicStrength;
@@ -1386,6 +1403,15 @@ void CaptureOverlay::scheduleSmartErase(int index, const QImage &source)
         const QImage erased = SmartErase::erase(source, mask, &error);
         return QPair<QImage, QString>(erased, error);
     }));
+}
+
+void CaptureOverlay::selectMarkerMode(bool fill, bool ellipse)
+{
+    if (m_live) { m_live = false; commitAnnotation(); }
+    selectTool(ATool::Marker);
+    m_markerFill = fill;
+    m_markerEllipse = fill && ellipse;
+    updateToolOptions();
 }
 
 void CaptureOverlay::selectEraserMode(bool rect)
@@ -1624,7 +1650,7 @@ void CaptureOverlay::setToolSize(qreal value)                    // Numeric edit
 void CaptureOverlay::tuneWidth(int dir, const QPoint &at)
 {
     const ATool tool = optionsTool();
-    if (tool == ATool::None) return;
+    if (tool == ATool::None || markerAreaMode()) return;
     const bool texty = tool == ATool::Text || tool == ATool::Number;
     setToolSize(toolSize() + dir * (texty ? 0.5 : 1));
     updateAnnotationCursor(at);                  // The bar's value is the only feedback; no floating text.
@@ -1668,7 +1694,11 @@ void CaptureOverlay::beginAnnotation(const QPoint &pos)
         m_ann.fill = m_afill;
         m_ann.strokeStyle = m_shapeStyle;
     }
-    if (m_atool == ATool::Marker) m_ann.fill = m_markerFill;
+    if (m_atool == ATool::Pen) m_ann.strokeStyle = m_penStyle;
+    if (m_atool == ATool::Marker) {
+        m_ann.fill = m_markerFill;
+        m_ann.markerEllipse = m_markerEllipse;
+    }
     if (m_atool == ATool::Marker && !m_ann.fill) m_ann.a = m_ann.b = pos;
     if (m_atool == ATool::Arrow) {
         m_ann.arrowStyle = m_arrowStyle;
@@ -1798,9 +1828,11 @@ void CaptureOverlay::selectTool(ATool tool)                      // Shared by to
         m_wmTextUndo = false;
         if (m_watermarkStylePopup) m_watermarkStylePopup->close();
     }
+    const bool resetMarker = tool == ATool::Marker && m_atool != ATool::Marker;
     m_atool = tool;
     if (tool == ATool::Rect) m_shapeEllipse = false;        // R/O/popup pick the sub-shape.
     else if (tool == ATool::Ellipse) m_shapeEllipse = true;
+    if (resetMarker) m_markerFill = m_markerEllipse = false;   // Entering the marker always starts as a brush.
     m_selAnn = -1;                               // Tools and item selection exclude each other.
     syncToolButtons();
     updateToolOptions();
@@ -1896,6 +1928,28 @@ void CaptureOverlay::showColorPalette()
 }
 
 namespace {
+QString lineStyleName(int style)
+{
+    const char *const names[] = {
+        QT_TRANSLATE_NOOP("CaptureOverlay", "实线"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "虚线"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "点线"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "点划线"),
+        QT_TRANSLATE_NOOP("CaptureOverlay", "双点划线")};
+    return QCoreApplication::translate("CaptureOverlay", names[qBound(0, style, 4)]);
+}
+
+void applyLineStyle(QPen &pen, int style)   // Arrow shafts and pen ink share the same five patterns.
+{
+    switch (qBound(0, style, 4)) {
+    case 1: pen.setDashPattern({4, 2}); break;
+    case 2: pen.setDashPattern({1, 2}); break;
+    case 3: pen.setDashPattern({4, 2, 1, 2}); break;
+    case 4: pen.setDashPattern({4, 2, 1, 2, 1, 2}); break;
+    default: break;
+    }
+}
+
 QIcon dashStyleIcon(int style, qreal dpr)   // 40x20 pen sample shared by the shape and arrow style combos.
 {
     QPixmap pm(qCeil(40 * dpr), qCeil(20 * dpr));
@@ -1956,8 +2010,10 @@ void CaptureOverlay::toggleFill()                                // Shapes: soli
         pushUndo();
         m_anns[m_selAnn].fill = m_afill = !m_anns[m_selAnn].fill;
         update();
-    } else if (marker) m_markerFill = !m_markerFill;   // A drawn highlight keeps its own form.
-    else m_afill = !m_afill;
+    } else if (marker) {
+        m_markerFill = !m_markerFill;                  // A drawn highlight keeps its own form.
+        m_markerEllipse = false;
+    } else m_afill = !m_afill;
     updateToolOptions();
 }
 
@@ -2988,6 +3044,24 @@ void CaptureOverlay::updateToolOptions()
         connect(m_colorBoard, &ColorBoard::customRequested, this, &CaptureOverlay::showColorPalette);
         l->addWidget(m_colorBoard);
     };
+    auto addLineStyle = [this](QHBoxLayout *l, const QString &name, int current,
+                               const std::function<void(int)> &pick) {
+        auto *combo = new FlatComboBox(true);
+        combo->setObjectName(name);
+        for (int k = 0; k < 5; ++k)
+            combo->addItem(dashStyleIcon(k, devicePixelRatioF()), lineStyleName(k));
+        combo->setCurrentIndex(qBound(0, current, 4));
+        combo->setFocusPolicy(Qt::NoFocus);
+        combo->setFixedSize(72, 24);
+        combo->setIconSize(QSize(40, 20));
+        combo->setAccessibleName(lineStyleName(current));
+        connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, combo, pick](int k) {
+            pick(k);
+            combo->setAccessibleName(combo->itemText(k));
+            setFocus();
+        });
+        l->addWidget(combo);
+    };
     const bool texty = tool == ATool::Text || tool == ATool::Number;
     auto addSize = [this, lay, texty, tool] {
         if (tool != ATool::Text) {               // Width button on the left; the slider pops up below it.
@@ -3202,16 +3276,22 @@ void CaptureOverlay::updateToolOptions()
         lay->addWidget(font);
         break;
     }
-    case ATool::Marker:
-        addOption(lay, Icon::MarkerRect, tr("矩形高亮"), m_markerFill, [this] { toggleFill(); });
-        if (auto *b = qobject_cast<QToolButton *>(lay->itemAt(lay->count() - 1)->widget())) {
-            b->setObjectName(QStringLiteral("fillButton"));
-            b->setIcon(barIcon(Icon::MarkerRect));
-        }
-        addSize();
+    case ATool::Marker: {
+        const bool fill = m_markerFill;
+        const bool ellipse = m_markerEllipse;
+        addOption(lay, Icon::Pen, tr("画笔高亮"), !fill, [this] { selectMarkerMode(false); });
+        lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("markerBrush"));
+        addOption(lay, Icon::MarkerRect, tr("矩形高亮"), fill && !ellipse,
+                  [this] { selectMarkerMode(true); });
+        lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("markerRectangle"));
+        addOption(lay, Icon::Ellipse, tr("圆形高亮"), fill && ellipse,
+                  [this] { selectMarkerMode(true, true); });
+        lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("markerEllipse"));
+        addSize();                               // Keep the control visible in every marker mode.
         addSeparator(lay);
         addSwatches(lay, ATool::Marker);
         break;
+    }
     case ATool::Arrow: {
         auto addCombo = [this](QHBoxLayout *l, int current, int count,
                                const std::function<QIcon(int)> &iconAt,
@@ -3261,28 +3341,25 @@ void CaptureOverlay::updateToolOptions()
         shapeCombo->setObjectName(QStringLiteral("arrowStyleCombo"));
         shapeCombo->setFixedSize(72, 24);
         shapeCombo->setIconSize(QSize(40, 20));
-        auto lineIcon = [this](int style) { return dashStyleIcon(style, devicePixelRatioF()); };
-        addCombo(lay, currentLine, 5,
-                 [&](int k) { return lineIcon(k); },
-                 [](int k) {
-                     const char *const names[] = {
-                         QT_TRANSLATE_NOOP("CaptureOverlay", "实线"),
-                         QT_TRANSLATE_NOOP("CaptureOverlay", "虚线"),
-                         QT_TRANSLATE_NOOP("CaptureOverlay", "点线"),
-                         QT_TRANSLATE_NOOP("CaptureOverlay", "点划线"),
-                         QT_TRANSLATE_NOOP("CaptureOverlay", "双点划线")};
-                     return QCoreApplication::translate("CaptureOverlay", names[k]);
-                 },
-                 [this](int k) { pickArrowLineStyle(k); });
-        auto *lineCombo = qobject_cast<QComboBox *>(lay->itemAt(lay->count() - 1)->widget());
-        lineCombo->setObjectName(QStringLiteral("arrowLineStyleCombo"));
-        lineCombo->setFixedSize(72, 24);
-        lineCombo->setIconSize(QSize(40, 20));
+        addLineStyle(lay, QStringLiteral("arrowLineStyleCombo"), currentLine,
+                     [this](int k) { pickArrowLineStyle(k); });
         addSize();
         addSeparator(lay);
         addSwatches(lay, ATool::Arrow);
         break;
     }
+    case ATool::Pen:
+        addSize();
+        addLineStyle(lay, QStringLiteral("penLineStyleCombo"), m_penStyle, [this](int k) {
+            m_penStyle = qBound(0, k, 4);
+            if (m_live) {
+                m_ann.strokeStyle = m_penStyle;
+                update();
+            }
+        });
+        addSeparator(lay);
+        addSwatches(lay, ATool::Pen);
+        break;
     case ATool::Text: {
         const bool selected = !editorActive() && m_selAnn >= 0 && m_selAnn < m_anns.size()
                               && m_anns[m_selAnn].tool == ATool::Text;
@@ -3333,12 +3410,12 @@ void CaptureOverlay::updateToolOptions()
     }
     case ATool::Mosaic: {
         const bool brush = mosaicBrush();
-        addOption(lay, Icon::Rect, tr("矩形马赛克"), !brush,
-                  [this] { selectMosaicMode(false); });
-        lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("mosaicRectangle"));
         addOption(lay, Icon::Pen, tr("马赛克笔：滚轮调节笔宽"), brush,
                   [this] { selectMosaicMode(true); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("mosaicBrush"));
+        addOption(lay, Icon::Rect, tr("矩形马赛克"), !brush,
+                  [this] { selectMosaicMode(false); });
+        lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("mosaicRectangle"));
         m_mosaicPreview = barButton(Icon::Mosaic, tr("像素化 / 模糊"));
         m_mosaicPreview->setObjectName(QStringLiteral("mosaicEffectPreview"));
         m_mosaicPreview->setAccessibleName(tr("切换像素化 / 模糊"));
@@ -3382,9 +3459,7 @@ void CaptureOverlay::updateToolOptions()
                   tr("智能擦除：自动填补背景，使用当前画笔或矩形范围"), smart,
                   [this] { toggleEraserSmart(); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("eraserSmart"));
-        addSize();
-        lay->removeWidget(m_sizeButton);         // Brush, rectangle, smart, then the width button.
-        lay->addWidget(m_sizeButton);
+        addSize();                               // Width stays the first control of the strip.
         break;
     }
     case ATool::Number: {
@@ -3649,14 +3724,24 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         else p.drawEllipse(ann.rect);
         break;
     }
-    case ATool::Pen:
-        p.setPen(pen);
+    case ATool::Pen: {
+        QPen ink = pen;
+        applyLineStyle(ink, ann.strokeStyle);
+        p.setPen(ink);
         p.drawPolyline(ann.stroke);
         break;
+    }
     case ATool::Marker: {                        // Translucent fat stroke, marker style.
         QColor wash = ann.color;
         wash.setAlpha(110);
-        if (ann.fill) { p.fillRect(ann.rect, wash); break; }   // Rectangle highlight block.
+        if (ann.fill) {
+            if (ann.markerEllipse) {
+                p.setPen(Qt::NoPen);
+                p.setBrush(wash);
+                p.drawEllipse(ann.rect);
+            } else p.fillRect(ann.rect, wash);   // Rectangle highlight block.
+            break;
+        }
         QPen washPen(wash, ann.pen * 5);
         washPen.setCapStyle(Qt::RoundCap);
         washPen.setJoinStyle(Qt::RoundJoin);
@@ -3752,13 +3837,7 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
         QPen shaft(ann.color, w);
         shaft.setCapStyle(both ? Qt::FlatCap : Qt::RoundCap);
         shaft.setJoinStyle(Qt::MiterJoin);
-        switch (style) {
-        case 1: shaft.setDashPattern({4, 2}); break;
-        case 2: shaft.setDashPattern({1, 2}); break;
-        case 3: shaft.setDashPattern({4, 2, 1, 2}); break;
-        case 4: shaft.setDashPattern({4, 2, 1, 2, 1, 2}); break;
-        default: break;
-        }
+        applyLineStyle(shaft, style);
         auto solidPen = [&] {
             QPen pen = shaft;
             pen.setStyle(Qt::SolidLine);

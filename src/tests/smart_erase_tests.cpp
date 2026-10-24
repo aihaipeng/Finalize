@@ -172,9 +172,9 @@ int CaptureOverlay::testSmartErase(const QString &previewPath)
             auto *smart = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserSmart"));
             const auto *strip = static_cast<QBoxLayout *>(overlay.m_toolOptions->layout());
             check(smart && overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("eraserRectangle"))
-                      && strip->count() == 4 && strip->itemAt(2)->widget() == smart
-                      && strip->itemAt(3)->widget() == overlay.m_sizeButton,
-                  "the eraser strip places smart erase before the width button");
+                      && strip->count() == 4 && strip->itemAt(0)->widget() == overlay.m_sizeButton
+                      && strip->itemAt(3)->widget() == smart,
+                  "the eraser strip places the width button first and smart erase last");
             check(smart->icon().pixmap(QSize(16, 16)).toImage()
                       != barIcon(Icon::Eraser).pixmap(QSize(16, 16)).toImage(),
                   "the smart erase icon differs from the plain eraser");

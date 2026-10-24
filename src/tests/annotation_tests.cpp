@@ -30,6 +30,7 @@
 #include <QToolButton>
 #include <QComboBox>
 #include <QSlider>
+#include <QBoxLayout>
 #include <QDoubleValidator>
 #include <QLineEdit>
 #include <QFontInfo>
@@ -131,6 +132,17 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
         overlay.m_toolBtn[int(ATool::Mosaic)]->click();
         check(overlay.mosaicBrush() && overlay.toolSize() == 15 && overlay.mosaicStrength() == 6,
               "mosaic starts as a brush with width 15 and strength 6");
+        check(!overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicFit")),
+              "the mosaic strip no longer exposes the text-fitting mode");
+        const auto *mosaicStrip = static_cast<QBoxLayout *>(overlay.m_toolOptions->layout());
+        int mosaicBrushAt = -1, mosaicRectAt = -1;
+        for (int i = 0; i < mosaicStrip->count(); ++i) {
+            const QString name = mosaicStrip->itemAt(i)->widget()->objectName();
+            if (name == QStringLiteral("mosaicBrush")) mosaicBrushAt = i;
+            if (name == QStringLiteral("mosaicRectangle")) mosaicRectAt = i;
+        }
+        check(mosaicBrushAt >= 0 && mosaicRectAt >= 0 && mosaicBrushAt < mosaicRectAt,
+              "the mosaic strip puts the brush before the rectangle");
         auto *brushButton = overlay.m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicBrush"));
         check(brushButton && brushButton->isChecked()
                   && brushButton->icon().pixmap(QSize(16, 16)).toImage()
@@ -154,9 +166,12 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
         const QImage initialCursor = overlay.cursor().pixmap().toImage();
         if (!previewPath.isEmpty() && dpr == 1)
             check(initialCursor.save(previewPath + QStringLiteral(".cursor.png")), "save circular brush cursor preview");
+        const QColor cursorCenter = initialCursor.pixelColor(initialCursor.width() / 2, initialCursor.height() / 2);
         check(!initialCursor.isNull() && initialCursor.pixelColor(0, 0).alpha() == 0
-                  && initialCursor.pixelColor(initialCursor.width() / 2, initialCursor.height() / 2) == QColor(Qt::white),
-              "brush cursor is a centered solid dot with transparent corners");
+                  && cursorCenter.red() < 160 && cursorCenter.red() == cursorCenter.green()
+                  && cursorCenter.green() == cursorCenter.blue()
+                  && cursorCenter.alpha() > 0 && cursorCenter.alpha() < 160,
+              "brush cursor is a dark soft blurred disc with transparent corners");
         const auto scrollBrush = [&](int delta) {
             QWheelEvent event(cursorPoint, overlay.mapToGlobal(cursorPoint), QPoint(), QPoint(0, delta),
                               Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false);
@@ -175,13 +190,19 @@ int CaptureOverlay::testMosaic(const QString &previewPath)
                       && cursor.devicePixelRatio() == dpr,
                   "circle cursor scales its native pixels with DPR while keeping logical brush size");
             const QImage dot = cursor.toImage();
+            int maximumAlpha = 0;
+            QColor rim;
             for (int y = 0; y < dot.height(); ++y)
                 for (int x = 0; x < dot.width(); ++x) {
                     const QColor color = dot.pixelColor(x, y);
-                    if (color.alpha())
-                        check(color.red() == 255 && color.green() == 255 && color.blue() == 255,
-                              "solid brush dots contain no contrasting outline pixels");
+                    if (color.alpha() > maximumAlpha) {
+                        maximumAlpha = color.alpha();
+                        rim = color;
+                    }
                 }
+            check(maximumAlpha >= 80 && maximumAlpha < 200
+                      && rim.red() < 220 && rim.green() < 220 && rim.blue() < 220,
+                  "soft brush cursors keep a muted grey boundary without a bright rim");
         }
         mode(false);
         check(overlay.m_toolOptions->isVisible() && overlay.m_mosaicSlider && !overlay.mosaicBrush()
