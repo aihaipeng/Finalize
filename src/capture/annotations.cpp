@@ -721,6 +721,11 @@ QVector<CaptureOverlay::Annotation> CaptureOverlay::annotationSnapshot() const
         ann.mosaicCacheStrength = 0;
         ann.smartResult = {};
         ann.mosaicSource = {};
+        for (Annotation::AutoBlock &block : ann.autoBlocks) {
+            block.effect = {};
+            block.effectStrength = 0;
+            block.effectSource = 0;
+        }
         ann.smartPending = ann.smartFailed = false;
     }
     return snapshot;
@@ -3038,6 +3043,7 @@ void CaptureOverlay::updateToolOptions()
     m_mosaicStrengthLabel = nullptr;
     m_mosaicPreview = nullptr;
     m_mosaicDragUndo = false;
+    m_autoMosaicButton = nullptr;
     m_autoModeCombo = nullptr;
     m_autoStrengthSlider = nullptr;
     m_autoSyncBox = nullptr;
@@ -3082,6 +3088,19 @@ void CaptureOverlay::updateToolOptions()
             setFocus();
         });
         l->addWidget(combo);
+    };
+    auto addAutoMosaicButton = [this, lay] {
+        auto *button = barButton(Icon::AutoMosaic,
+                                 tr("自动马赛克：识别文字、二维码、图片等元素，点击遮挡"));
+        button->setObjectName(QStringLiteral("autoMosaic"));
+        button->setCheckable(true);
+        button->setChecked(m_autoMosaic);
+        connect(button, &QToolButton::clicked, this, [this] {
+            if (m_autoMosaic) selectMosaicMode(false);   // Back to the manual rectangle mode.
+            else selectAutoMosaic();
+        });
+        lay->addWidget(button);
+        m_autoMosaicButton = button;
     };
     const bool texty = tool == ATool::Text || tool == ATool::Number;
     auto addSize = [this, lay, texty, tool] {
@@ -3140,7 +3159,10 @@ void CaptureOverlay::updateToolOptions()
         lay->addWidget(m_sizeInput);
     };
     if (tool == ATool::Mosaic && m_autoMosaic) {
-        // Auto mosaic bar: effect, strength, synchronous toggling.
+        // Auto mosaic bar: the mode button (checked, click to leave), then effect,
+        // strength and synchronous toggling.
+        addAutoMosaicButton();
+        addSeparator(lay);
         m_autoModeCombo = new FlatComboBox;
         m_autoModeCombo->setObjectName(QStringLiteral("autoMosaicMode"));
         m_autoModeCombo->addItem(tr("马赛克"));
@@ -3485,6 +3507,7 @@ void CaptureOverlay::updateToolOptions()
         addOption(lay, Icon::Rect, tr("矩形马赛克"), !brush,
                   [this] { selectMosaicMode(false); });
         lay->itemAt(lay->count() - 1)->widget()->setObjectName(QStringLiteral("mosaicRectangle"));
+        addAutoMosaicButton();
         m_mosaicPreview = barButton(Icon::Mosaic, tr("像素化 / 模糊"));
         m_mosaicPreview->setObjectName(QStringLiteral("mosaicEffectPreview"));
         m_mosaicPreview->setAccessibleName(tr("切换像素化 / 模糊"));
@@ -4043,16 +4066,40 @@ void CaptureOverlay::drawAnnotation(QPainter &p, const Annotation &ann, const QI
     }
     case ATool::Mosaic: {                        // Redact lower layers through the object's mask.
         const qreal dpr = m_shot.devicePixelRatioF();
-        const QRect area = annotationRect(ann).intersected(
-            QRect(0, 0, qFloor(m_shot.width() / dpr), qFloor(m_shot.height() / dpr)));
+        const QRect bounds(0, 0, qFloor(m_shot.width() / dpr), qFloor(m_shot.height() / dpr));
+        const QRect area = annotationRect(ann).intersected(bounds);
         if (area.isEmpty() || (!ann.autoMosaic && ann.mosaicBrush && ann.stroke.isEmpty())) break;
-        QPainterPath mask;
         if (ann.autoMosaic) {
-            mask.setFillRule(Qt::WindingFill);   // Overlapping blocks must not cancel out.
-            for (const Annotation::AutoBlock &block : ann.autoBlocks)
-                if (block.included) mask.addRect(QRectF(block.rect));
-            if (mask.isEmpty()) break;
-        } else if (ann.mosaicBrush) mask = strokeMask(ann.stroke, ann.pen);
+            // Each block keeps a small effect image. Toggling, hovering and wheel
+            // tuning never rebuild the full capture, and untouched blocks stay cached.
+            const qint64 sourceKey = source.cacheKey();
+            p.setRenderHint(QPainter::SmoothPixmapTransform, false);
+            for (const Annotation::AutoBlock &block : ann.autoBlocks) {
+                if (!block.included) continue;
+                const QRect box = block.rect.normalized().intersected(bounds);
+                if (box.width() < 2 || box.height() < 2) continue;
+                const QRect device(qRound(box.left() * dpr), qRound(box.top() * dpr),
+                                   qRound(box.width() * dpr), qRound(box.height() * dpr));
+                if (block.effect.isNull() || block.effectSource != sourceKey
+                    || block.effectStrength != ann.mosaicStrength
+                    || block.effectSeed != ann.mosaicSeed
+                    || block.effectBlur != ann.mosaicBlur) {
+                    const QImage crop = source.copy(device.intersected(source.rect()));
+                    block.effect = ann.mosaicBlur
+                        ? mosaicBlurred(crop, ann.mosaicStrength)
+                        : mosaicTiles(crop, qMax(3, qRound(ann.mosaicStrength * dpr)), ann.mosaicSeed);
+                    block.effectSource = sourceKey;
+                    block.effectStrength = ann.mosaicStrength;
+                    block.effectSeed = ann.mosaicSeed;
+                    block.effectBlur = ann.mosaicBlur;
+                }
+                if (block.effect.isNull()) p.fillRect(box, Qt::black);   // Never expose the source.
+                else p.drawImage(QRectF(box), block.effect);
+            }
+            break;
+        }
+        QPainterPath mask;
+        if (ann.mosaicBrush) mask = strokeMask(ann.stroke, ann.pen);
         else mask.addRect(QRectF(ann.rect));
         p.setClipPath(mask, Qt::IntersectClip);
         if (ann.mosaicSmart) {

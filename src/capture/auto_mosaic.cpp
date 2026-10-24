@@ -284,6 +284,8 @@ void CaptureOverlay::selectAutoMosaic()
     selectTool(ATool::Mosaic);              // Clears any previous auto state and rebuilds the regular bar.
     m_autoMosaic = true;
     m_mosaicBrush = false;
+    m_autoHoverAnn = -1;
+    m_autoHoverBlock = -1;
     syncToolButtons();
     updateToolOptions();
     startAutoMosaicDetection();
@@ -431,13 +433,18 @@ void CaptureOverlay::toggleAutoMosaicBlock(int annIndex, int blockIndex)
     pushUndo();
     const bool included = !ann.autoBlocks[blockIndex].included;
     const QString key = ann.autoBlocks[blockIndex].key;
+    QRect dirty;
     if (m_autoMosaicSync && !key.isEmpty()) {
         for (auto &block : ann.autoBlocks)
-            if (block.key == key) block.included = included;
+            if (block.key == key) {
+                block.included = included;
+                dirty |= block.rect;
+            }
     } else {
         ann.autoBlocks[blockIndex].included = included;
+        dirty = ann.autoBlocks[blockIndex].rect;
     }
-    update();
+    if (!dirty.isNull()) update(dirty.adjusted(-4, -4, 4, 4));
 }
 
 void CaptureOverlay::addAutoMosaicBlock(const QRect &rect)
@@ -465,7 +472,7 @@ void CaptureOverlay::addAutoMosaicBlock(const QRect &rect)
     ann->autoBlocks.append({block, QString(), true});
     ann->rect = ann->rect.united(block);
     m_selAnn = -1;
-    update();
+    update(block.adjusted(-4, -4, 4, 4));
 }
 
 void CaptureOverlay::setAutoMosaicMode(bool blur)
@@ -475,11 +482,14 @@ void CaptureOverlay::setAutoMosaicMode(bool blur)
     m_autoMosaicBlur = blur;
     m_autoMosaicStrength = m_autoMosaicLevels[blur ? 1 : 0];
     Annotation *ann = autoMosaicAnnotation();
+    QRect dirty;
     if (ann) {
         pushUndo();
         ann->mosaicBlur = blur;
         ann->mosaicStrength = m_autoMosaicStrength;
         ann->mosaicCacheStrength = 0;
+        for (const auto &block : ann->autoBlocks)
+            if (block.included) dirty |= block.rect;
     }
     if (m_autoStrengthSlider) {
         const QSignalBlocker lock(m_autoStrengthSlider);   // The combo is mid-click; do not rebuild the strip.
@@ -489,7 +499,7 @@ void CaptureOverlay::setAutoMosaicMode(bool blur)
     settings.setValue(QStringLiteral("Capture/AutoMosaicBlur"), blur);
     settings.setValue(QStringLiteral("Capture/AutoMosaicStrength"), m_autoMosaicLevels[0]);
     settings.setValue(QStringLiteral("Capture/AutoMosaicBlurStrength"), m_autoMosaicLevels[1]);
-    update();
+    if (!dirty.isNull()) update(dirty.adjusted(-4, -4, 4, 4));
 }
 
 void CaptureOverlay::setAutoMosaicStrength(int value)
@@ -498,6 +508,7 @@ void CaptureOverlay::setAutoMosaicStrength(int value)
     m_autoMosaicLevels[m_autoMosaicBlur ? 1 : 0] = value;
     if (value == m_autoMosaicStrength) return;
     m_autoMosaicStrength = value;
+    QRect dirty;
     Annotation *ann = autoMosaicAnnotation();
     if (ann) {
         const bool dragging = m_autoStrengthSlider && m_autoStrengthSlider->isSliderDown();
@@ -506,44 +517,46 @@ void CaptureOverlay::setAutoMosaicStrength(int value)
         ann->mosaicStrength = value;
         ann->mosaicSeed = QRandomGenerator::global()->generate();
         ann->mosaicCacheStrength = 0;
+        for (const auto &block : ann->autoBlocks)
+            if (block.included) dirty |= block.rect;
+    }
+    if (m_autoStrengthSlider) {
+        const QSignalBlocker lock(m_autoStrengthSlider);
+        m_autoStrengthSlider->setValue(value);
     }
     LensSnipSettings settings;
     settings.setValue(QStringLiteral("Capture/AutoMosaicStrength"), m_autoMosaicLevels[0]);
     settings.setValue(QStringLiteral("Capture/AutoMosaicBlurStrength"), m_autoMosaicLevels[1]);
-    update();
+    if (!dirty.isNull()) update(dirty.adjusted(-4, -4, 4, 4));
 }
 
 void CaptureOverlay::paintAutoMosaicOverlay(QPainter &p) const
 {
     if (!m_autoMosaic || m_atool != ATool::Mosaic || m_mode != Adjusting) return;
+    if (m_autoHoverAnn < 0 || m_autoHoverAnn >= m_anns.size()) return;
+    const Annotation &ann = m_anns[m_autoHoverAnn];
+    if (!ann.autoMosaic || m_autoHoverBlock < 0 || m_autoHoverBlock >= ann.autoBlocks.size()) return;
+    // Only the block under the pointer is outlined; the rest stay invisible until
+    // hovered so the capture is not covered by a wall of candidate frames.
+    const Annotation::AutoBlock &block = ann.autoBlocks[m_autoHoverBlock];
+    const QRect r = block.rect.normalized();
     p.save();
     p.setRenderHint(QPainter::Antialiasing, false);
-    for (int i = 0; i < m_anns.size(); ++i) {
-        const Annotation &ann = m_anns[i];
-        if (!ann.autoMosaic) continue;
-        for (int b = 0; b < ann.autoBlocks.size(); ++b) {
-            const Annotation::AutoBlock &block = ann.autoBlocks[b];
-            const QRect r = block.rect.normalized();
-            const bool hover = i == m_autoHoverAnn && b == m_autoHoverBlock;
-            QColor edge(91, 140, 255);           // Candidates stay blue until hovered.
-            if (hover) {
-                p.fillRect(r, block.included ? QColor(80, 190, 120, 70) : QColor(229, 57, 53, 55));
-                edge = block.included ? QColor(96, 220, 140) : QColor(255, 110, 120);
-            }
-            p.setPen(QPen(edge, hover ? 1.6 : 1.0, Qt::SolidLine));
-            p.setBrush(Qt::NoBrush);
-            p.drawRect(QRectF(r).adjusted(0, 0, -1, -1));
-            if (r.width() < 10 || r.height() < 10) continue;
-            const int tick = qMin(6, qMin(r.width(), r.height()) / 3);
-            p.drawLine(r.topLeft(), r.topLeft() + QPoint(tick, 0));
-            p.drawLine(r.topLeft(), r.topLeft() + QPoint(0, tick));
-            p.drawLine(r.topRight(), r.topRight() + QPoint(-tick, 0));
-            p.drawLine(r.topRight(), r.topRight() + QPoint(0, tick));
-            p.drawLine(r.bottomLeft(), r.bottomLeft() + QPoint(tick, 0));
-            p.drawLine(r.bottomLeft(), r.bottomLeft() + QPoint(0, -tick));
-            p.drawLine(r.bottomRight(), r.bottomRight() + QPoint(-tick, 0));
-            p.drawLine(r.bottomRight(), r.bottomRight() + QPoint(0, -tick));
-        }
+    p.fillRect(r, block.included ? QColor(80, 190, 120, 70) : QColor(229, 57, 53, 55));
+    const QColor edge = block.included ? QColor(96, 220, 140) : QColor(255, 110, 120);
+    p.setPen(QPen(edge, 1.6, Qt::SolidLine));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(QRectF(r).adjusted(0, 0, -1, -1));
+    if (r.width() >= 10 && r.height() >= 10) {
+        const int tick = qMin(6, qMin(r.width(), r.height()) / 3);
+        p.drawLine(r.topLeft(), r.topLeft() + QPoint(tick, 0));
+        p.drawLine(r.topLeft(), r.topLeft() + QPoint(0, tick));
+        p.drawLine(r.topRight(), r.topRight() + QPoint(-tick, 0));
+        p.drawLine(r.topRight(), r.topRight() + QPoint(0, tick));
+        p.drawLine(r.bottomLeft(), r.bottomLeft() + QPoint(tick, 0));
+        p.drawLine(r.bottomLeft(), r.bottomLeft() + QPoint(0, -tick));
+        p.drawLine(r.bottomRight(), r.bottomRight() + QPoint(-tick, 0));
+        p.drawLine(r.bottomRight(), r.bottomRight() + QPoint(0, -tick));
     }
     p.restore();
 }

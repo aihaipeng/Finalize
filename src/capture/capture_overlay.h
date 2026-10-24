@@ -138,8 +138,18 @@ private:
         QPolygonF smartStroke;
         int smartPen = -1;
         // Auto mosaic: one item owns every recognized block; manual blocks use an
-        // empty key and never sync.
-        struct AutoBlock { QRect rect; QString key; bool included = true; };
+        // empty key and never sync. The effect is cached per block so toggling and
+        // wheel tuning never rebuild the whole capture.
+        struct AutoBlock {
+            QRect rect;
+            QString key;
+            bool included = true;
+            mutable QImage effect;
+            mutable int effectStrength = 0;
+            mutable quint32 effectSeed = 0;
+            mutable bool effectBlur = false;
+            mutable qint64 effectSource = 0;
+        };
         bool autoMosaic = false;
         QVector<AutoBlock> autoBlocks;
         QRect rect;                                  // Rect / Ellipse / Mosaic / Text / Number box.
@@ -220,7 +230,7 @@ private:
     void switchMosaicEffect();
     void setMosaicStrength(int value);
     void selectMosaicMode(bool brush);
-    // Auto mosaic: a standalone toolbar tool that scans the capture for identifiers.
+    // Auto mosaic: a mosaic sub-mode that scans the capture for identifiers.
     void selectAutoMosaic();
     void startAutoMosaicDetection();
     void cancelAutoMosaicDetection();
@@ -463,7 +473,8 @@ private:
     int m_toolPens[11] = {0, 5, 5, 8, 5, 3, 15, 15, 15, 15, 20};
     int m_mosaicLevels[2] = {6, 6}, m_mosaicWidth = 15;
     bool m_mosaicBrush = true, m_mosaicBlur = false, m_mosaicDragUndo = false;
-    // Auto mosaic tool state. The annotation keeps the effect so every block shares it.
+    // Auto mosaic tool state. The mode button lives in the mosaic sub-strip; the
+    // annotation keeps the shared effect settings, each block caches its own image.
     QToolButton *m_autoMosaicButton = nullptr;
     QComboBox *m_autoModeCombo = nullptr;
     QSlider *m_autoStrengthSlider = nullptr;

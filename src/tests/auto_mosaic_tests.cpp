@@ -17,6 +17,7 @@
 #include <QSlider>
 #include <QTimer>
 #include <QToolButton>
+#include <QWheelEvent>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -232,7 +233,7 @@ int CaptureOverlay::testAutoMosaic(const QString &previewPath)
         overlay->close();
     }
 
-    {   // Toolbar entry and auto-only strip.
+    {   // Mosaic sub-strip entry and auto-only strip.
         auto overlay = testOverlay();
         overlay->m_frameSource = [] { return QVector<ScreenFrame>{}; };
         QImage canvas(1000, 600, QImage::Format_RGB32);
@@ -240,33 +241,32 @@ int CaptureOverlay::testAutoMosaic(const QString &previewPath)
         overlay->setImage(canvas);
         overlay->presetSelection(QRect(0, 0, 1000, 600));
         overlay->m_mode = Adjusting;
-        check(overlay->m_autoMosaicButton != nullptr, "the auto mosaic button exists");
-        check(overlay->m_autoMosaicButton->objectName() == QStringLiteral("autoMosaic"),
-              "the auto button has a stable object name");
-        check(overlay->m_autoMosaicButton->property("lenssnipToolId").toString()
-                  == QStringLiteral("autoMosaic"),
-              "the auto button is a main-toolbar tool, not a mosaic sub-mode");
+        check(overlay->m_autoMosaicButton == nullptr,
+              "no standalone auto button is created on the main toolbar");
         overlay->m_toolBtn[int(ATool::Mosaic)]->click();
+        QToolButton *autoButton = overlay->m_toolOptions->findChild<QToolButton *>(
+            QStringLiteral("autoMosaic"));
+        check(autoButton != nullptr, "the auto entry lives in the mosaic sub-strip");
+        check(autoButton->property("lenssnipToolId").isNull(),
+              "the sub-strip entry is not a main-toolbar tool");
         check(overlay->m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicBrush")),
               "the regular mosaic strip still has its brush entry");
-        check(!overlay->m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicAuto")),
-              "the auto entry is no longer a mosaic sub-mode");
-
-        check(overlay->m_autoMosaicButton->isChecked() == false,
-              "the auto button starts unarmed");
-        overlay->selectAutoMosaic();
+        check(autoButton->isChecked() == false, "the auto entry starts unarmed");
+        autoButton->click();
         check(overlay->m_autoMosaic && overlay->m_atool == ATool::Mosaic,
-              "auto mosaic arms the mosaic tool in auto mode");
-        check(overlay->m_autoMosaicButton->isChecked(),
-              "the standalone button highlights while active");
+              "the sub-strip entry arms the mosaic tool in auto mode");
+        check(overlay->m_autoMosaicButton != nullptr && overlay->m_autoMosaicButton->isChecked(),
+              "the sub-strip entry highlights while active");
         check(overlay->m_toolOptions->findChild<QComboBox *>(QStringLiteral("autoMosaicMode"))
                   && overlay->m_toolOptions->findChild<QSlider *>(QStringLiteral("autoMosaicStrength"))
                   && overlay->m_toolOptions->findChild<QCheckBox *>(QStringLiteral("autoMosaicSync")),
               "the auto strip exposes mode, strength and sync");
-        check(!overlay->m_toolOptions->findChild<QToolButton *>(QStringLiteral("mosaicBrush")),
-              "the auto strip drops the manual brush/rectangle entries");
+        check(overlay->m_toolOptions->findChild<QToolButton *>(QStringLiteral("autoMosaic")),
+              "the auto strip keeps its mode button visible for leaving");
         overlay->selectMosaicMode(false);
         check(!overlay->m_autoMosaic, "choosing a manual mosaic mode leaves auto");
+        check(overlay->m_toolOptions->findChild<QToolButton *>(QStringLiteral("autoMosaic")),
+              "the auto entry returns to the manual mosaic strip");
         overlay->selectAutoMosaic();
 
         // Two identical e-mails must sync; a different identifier must not.
@@ -324,6 +324,67 @@ int CaptureOverlay::testAutoMosaic(const QString &previewPath)
         overlay->undoAnnotation();
         check(overlay->m_anns[0].autoBlocks.size() == before,
               "one undo removes the manual block");
+
+        // Per-block effect images are reused between repaints instead of being
+        // rebuilt from the full capture on every click.
+        QImage source = overlay->m_shot.toImage().convertToFormat(QImage::Format_ARGB32);
+        source.setDevicePixelRatio(1);
+        QImage target(500, 300, QImage::Format_ARGB32_Premultiplied);
+        target.fill(Qt::transparent);
+        {
+            QPainter painter(&target);
+            overlay->drawAnnotation(painter, overlay->m_anns[0], source, 0);
+        }
+        const qint64 effectKey = overlay->m_anns[0].autoBlocks[0].effect.cacheKey();
+        check(!overlay->m_anns[0].autoBlocks[0].effect.isNull(),
+              "included blocks build their own effect image");
+        {
+            QPainter painter(&target);
+            overlay->drawAnnotation(painter, overlay->m_anns[0], source, 0);
+        }
+        check(overlay->m_anns[0].autoBlocks[0].effect.cacheKey() == effectKey,
+              "block effects stay cached between repaints");
+
+        // Candidates stay invisible until the pointer reaches them.
+        overlay->m_autoMosaic = true;
+        overlay->m_atool = ATool::Mosaic;
+        overlay->m_mode = Adjusting;
+        overlay->m_autoHoverAnn = -1;
+        overlay->m_autoHoverBlock = -1;
+        QMouseEvent hoverEvent(QEvent::MouseMove, QPointF(80, 55), Qt::NoButton, Qt::NoButton,
+                               Qt::NoModifier);
+        overlay->mouseMoveEvent(&hoverEvent);
+        check(overlay->m_autoHoverAnn == 0 && overlay->m_autoHoverBlock == 0,
+              "hovering a candidate records the block under the pointer");
+        QImage hovered(overlay->size(), QImage::Format_RGB32);
+        hovered.fill(Qt::black);
+        overlay->render(&hovered);
+        const QRgb wash = hovered.pixel(50, 50);
+        check(wash != qRgb(255, 255, 255),
+              "the hovered block paints a visible frame on the next repaint");
+        QImage layer(500, 300, QImage::Format_ARGB32_Premultiplied);
+        layer.fill(Qt::transparent);
+        {
+            QPainter painter(&layer);
+            overlay->paintAutoMosaicOverlay(painter);
+        }
+        check(qAlpha(layer.pixel(40, 40)) > 0, "the hovered block gets a frame and wash");
+        check(qAlpha(layer.pixel(40, 120)) == 0, "unhovered candidates stay invisible");
+        QMouseEvent leaveEvent(QEvent::MouseMove, QPointF(1200, 700), Qt::NoButton, Qt::NoButton,
+                               Qt::NoModifier);
+        overlay->mouseMoveEvent(&leaveEvent);
+        check(overlay->m_autoHoverAnn == -1 && overlay->m_autoHoverBlock == -1,
+              "leaving the candidate area retires the hover frame");
+
+        // Wheel adjusts the applied mosaic / blur strength.
+        overlay->m_autoMosaicLevels[0] = overlay->m_autoMosaicLevels[1] = 6;
+        overlay->m_autoMosaicStrength = 6;
+        overlay->m_anns[0].mosaicStrength = 6;
+        QWheelEvent wheel(QPointF(80, 55), QPointF(80, 55), QPoint(), QPoint(0, 120),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        overlay->wheelEvent(&wheel);
+        check(overlay->m_autoMosaicStrength == 7 && overlay->m_anns[0].mosaicStrength == 7,
+              "wheel tunes the applied mosaic strength");
         overlay->close();
     }
 
