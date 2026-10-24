@@ -257,6 +257,16 @@ int CaptureOverlay::testSmartErase(const QString &previewPath)
             check(failed.pixel(hole.center().x(), hole.center().y()) == qRgb(0, 0, 0)
                       && failed.pixel(2, 2) == original.pixel(2, 2),
                   "a failed erase renders black inside the hole only");
+            overlay.m_anns[0].smartFailed = false;   // Restore a real fill for the two-stroke repro.
+            overlay.m_anns[0].smartResult = {};
+            overlay.cropped();
+            QElapsedTimer restore;
+            restore.start();
+            while (overlay.m_anns[0].smartPending) {
+                QApplication::processEvents(QEventLoop::AllEvents, 50);
+                overlay.cropped();
+                if (restore.elapsed() > 120000) break;
+            }
             overlay.selectEraserMode(false);         // The same mode also erases along a brush stroke.
             overlay.toggleEraserSmart();
             mouse(QEvent::MouseButtonPress, QPoint(300, 220));
@@ -274,6 +284,79 @@ int CaptureOverlay::testSmartErase(const QString &previewPath)
                       && overlay.m_anns[1].mosaicSmart && !overlay.m_anns[1].smartPending
                       && !overlay.m_anns[1].smartFailed && !overlay.m_anns[1].smartResult.isNull(),
                   "the smart brush erases along its stroke");
+            {   // A later stroke must not disturb an earlier erase's fill while it runs.
+                const QImage settled = overlay.cropped().toImage();
+                const QPoint inFirst(qRound((200 - 40) * dpr), qRound((140 - 40) * dpr));
+                bool flash = false;
+                bool rescheduled = false;
+                const auto wasSettled = [&overlay, dpr] {
+                    return overlay.m_anns.size() == 2 && !overlay.m_anns[0].smartPending
+                        && !overlay.m_anns[0].smartResult.isNull();
+                };
+                check(wasSettled(), "the first erase is settled before the repro");
+                mouse(QEvent::MouseButtonPress, QPoint(320, 240));
+                for (const QPoint &step : {QPoint(330, 250), QPoint(340, 260), QPoint(350, 250), QPoint(360, 240)}) {
+                    mouse(QEvent::MouseMove, step);
+                    if (overlay.cropped().toImage().pixel(inFirst) != settled.pixel(inFirst)) flash = true;
+                }
+                mouse(QEvent::MouseButtonRelease, QPoint(360, 240));
+                QElapsedTimer second;
+                second.start();
+                overlay.cropped();
+                while (overlay.m_anns.size() == 3
+                       && (overlay.m_anns[2].smartPending || overlay.m_anns[0].smartPending)) {
+                    QApplication::processEvents(QEventLoop::AllEvents, 50);
+                    if (overlay.cropped().toImage().pixel(inFirst) != settled.pixel(inFirst)) {
+                        flash = true;
+                        if (overlay.m_anns[0].smartPending) rescheduled = true;
+                    }
+                    if (second.elapsed() > 120000) break;
+                }
+                check(overlay.m_anns.size() == 3 && !overlay.m_anns[2].smartPending
+                          && !overlay.m_anns[2].smartFailed && !overlay.m_anns[2].smartResult.isNull(),
+                      "the second erase completes");
+                check(!rescheduled, "the first erase is never re-scheduled by a second stroke");
+                check(!flash, "an earlier erase's fill stays put while a second erase runs");
+            }
+            overlay.undoAnnotation();
+            overlay.undoAnnotation();
+            overlay.undoAnnotation();
+            check(overlay.m_anns.isEmpty(), "the repro clears its strokes");
+            overlay.redoAnnotation();                // Interleaved timing: stroke 2 starts before fill 1 lands.
+            overlay.cropped();                       // Schedule the redone first stroke.
+            check(overlay.m_anns.size() == 1 && overlay.m_anns[0].smartPending,
+                  "the redone first erase is pending");
+            mouse(QEvent::MouseButtonPress, QPoint(320, 240));
+            mouse(QEvent::MouseMove, QPoint(340, 260));
+            mouse(QEvent::MouseButtonRelease, QPoint(360, 240));
+            QElapsedTimer inter;
+            inter.start();
+            overlay.cropped();
+            int firstFlips = 0;
+            bool firstWasFill = false, sawPending = false;
+            while (overlay.m_anns.size() == 2
+                   && (overlay.m_anns[0].smartPending || overlay.m_anns[1].smartPending)) {
+                QApplication::processEvents(QEventLoop::AllEvents, 50);
+                overlay.cropped();
+                const bool filled = !overlay.m_anns[0].smartPending && !overlay.m_anns[0].smartResult.isNull();
+                if (filled && !firstWasFill) { firstWasFill = true; }
+                if (!filled && firstWasFill) ++firstFlips;   // Fill reverting to wash would be the flash.
+                else if (!filled) sawPending = true;
+                if (inter.elapsed() > 120000) break;
+            }
+            check(overlay.m_anns.size() == 2 && !overlay.m_anns[0].smartPending
+                      && !overlay.m_anns[1].smartPending && !overlay.m_anns[1].smartFailed,
+                  "both interleaved erases complete");
+            check(firstFlips == 0,
+                  "a settled fill never reverts to the wash while a later erase is pending");
+            {   // A repaint clipped away from the first hole must not mark the second erase stale.
+                const QImage before = overlay.cropped().toImage();
+                const QPoint inSecond(qRound((340 - 40) * dpr), qRound((240 - 40) * dpr));
+                overlay.grab(QRect(origin + QPoint(150, 100), QSize(100, 80)));   // Clip covers the first hole only.
+                const QImage after = overlay.cropped().toImage();
+                check(!overlay.m_anns[1].smartPending && after.pixel(inSecond) == before.pixel(inSecond),
+                      "a clipped repaint keeps a completed erase without re-washing");
+            }
         }
     }
 

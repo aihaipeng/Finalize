@@ -3573,7 +3573,10 @@ void CaptureOverlay::paintAnnotations(QPainter &p, const QPointF &origin, qreal 
             QPainter layer(&lower);
             const qreal dpr = m_shot.devicePixelRatioF();
             layer.scale(dpr, dpr);
-            layer.setClipRect(clip);
+            // Bake the full effect extent, never the repaint clip: the composite beneath
+            // later mosaics must be identical across partial repaints, or completed smart
+            // erases fail their sampling-layer check, reschedule, and their wash flashes.
+            layer.setClipRect(QRectF(0, 0, m_mosaicFrame.width() / dpr, m_mosaicFrame.height() / dpr));
             if (ann.tool == ATool::Eraser) {     // Later mosaics see the original pixels through erasures.
                 layer.setClipPath(annTransform(ann).map(eraserMask(ann)), Qt::IntersectClip);
                 layer.drawImage(QRectF(0, 0, m_mosaicFrame.width() / dpr, m_mosaicFrame.height() / dpr),
